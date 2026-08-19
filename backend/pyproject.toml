@@ -23,6 +23,7 @@ dependencies = [
     "numpy",
     "scipy",
     "python-dotenv",
+    "sentry-sdk>=2.68.0",
 ]
 
 [dependency-groups]

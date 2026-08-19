@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
@@ -12,9 +13,12 @@ from app.auth.deps import SESSION_COOKIE_NAME
 from app.auth.jwt import encode_session_token
 from app.config import settings
 from app.db.session import get_db
+from app.logging_config import log_event
 from app.models.user import User
+from app.ratelimit import rate_limit_login
 
 router = APIRouter(prefix="/auth", tags=["auth"])
+logger = logging.getLogger(__name__)
 
 
 def _cookie_secure() -> bool:
@@ -49,14 +53,17 @@ async def callback(
     state: str | None = None,
     error: str | None = None,
     db: Session = Depends(get_db),
+    _: None = Depends(rate_limit_login),
 ) -> RedirectResponse:
     """Exchange the authorization code, verify the ID token, upsert the User,
     issue an app session JWT cookie, and redirect back to the frontend."""
     if error:
+        log_event(logger, "auth.login.failure", reason="oauth_error", detail=error)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail=f"Google OAuth error: {error}"
         )
     if not code or not state:
+        log_event(logger, "auth.login.failure", reason="missing_code_or_state")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Missing code or state parameter"
         )
@@ -64,6 +71,7 @@ async def callback(
     cookie_value = request.cookies.get(google_oauth.OAUTH_STATE_COOKIE)
     stored = google_oauth.decode_oauth_state_cookie(cookie_value) if cookie_value else None
     if stored is None or not _constant_time_eq(stored["state"], state):
+        log_event(logger, "auth.login.failure", reason="invalid_or_expired_state")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state"
         )
@@ -71,6 +79,7 @@ async def callback(
     tokens = await google_oauth.exchange_code_for_tokens(code)
     id_token = tokens.get("id_token")
     if not id_token:
+        log_event(logger, "auth.login.failure", reason="missing_id_token")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Google token response did not include an id_token",
@@ -79,10 +88,12 @@ async def callback(
     try:
         claims = await google_oauth.verify_id_token(id_token, stored["nonce"])
     except ValueError as exc:
+        log_event(logger, "auth.login.failure", reason="invalid_id_token")
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     google_sub = claims.get("sub")
     if not google_sub:
+        log_event(logger, "auth.login.failure", reason="missing_sub_claim")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="Google ID token missing sub claim"
         )
@@ -103,6 +114,8 @@ async def callback(
             user.avatar_url = picture
     db.commit()
     db.refresh(user)
+
+    log_event(logger, "auth.login.success", user_id=str(user.id))
 
     session_token = encode_session_token(user)
 

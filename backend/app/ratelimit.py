@@ -16,7 +16,7 @@ from __future__ import annotations
 import time
 from collections import defaultdict
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 
 from app.auth.deps import get_current_user
 from app.models.user import User
@@ -53,6 +53,12 @@ class RateLimiter:
 _upload_limiter = RateLimiter(max_calls=20, window_seconds=3600)  # 20 uploads / hour
 _vote_limiter = RateLimiter(max_calls=60, window_seconds=3600)  # 60 vote-toggles / hour
 _comment_limiter = RateLimiter(max_calls=30, window_seconds=3600)  # 30 comments / hour
+# Login attempts are pre-auth (there's no user id yet at the point a client
+# hits the OAuth callback), so this one is keyed by client IP rather than
+# user id — the only identifier available at that point. 10/hour is generous
+# for a legitimate user (who at most retries a handful of times) but tight
+# enough to blunt scripted brute-forcing of the callback endpoint.
+_login_limiter = RateLimiter(max_calls=10, window_seconds=3600)  # 10 login attempts / hour / IP
 
 
 def rate_limit_uploads(user: User = Depends(get_current_user)) -> None:
@@ -65,3 +71,8 @@ def rate_limit_votes(user: User = Depends(get_current_user)) -> None:
 
 def rate_limit_comments(user: User = Depends(get_current_user)) -> None:
     _comment_limiter.check(str(user.id))
+
+
+def rate_limit_login(request: Request) -> None:
+    client_host = request.client.host if request.client else "unknown"
+    _login_limiter.check(client_host)

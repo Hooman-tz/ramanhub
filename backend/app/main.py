@@ -1,8 +1,34 @@
-"""FastAPI app factory: wires up CORS and all module routers."""
+"""FastAPI app factory: wires up structured logging, error tracking, CORS,
+and all module routers."""
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
+from app.logging_config import configure_logging, log_event
+
+# Structured JSON logging is configured once, at import time, before
+# anything else in the app has a chance to log — see app/logging_config.py.
+configure_logging()
+logger = logging.getLogger(__name__)
+
+# Sentry error tracking (Module 5) — a true no-op when SENTRY_DSN is unset
+# (the default/current state, since there's no Sentry account yet): no
+# import errors, no behavior change. See docs/OPERATIONS.md for setup.
+if settings.SENTRY_DSN:
+    import sentry_sdk
+
+    sentry_sdk.init(
+        dsn=settings.SENTRY_DSN,
+        environment=settings.ENVIRONMENT,
+        # No performance tracing by default — this is error tracking only,
+        # matching the doc's "captures stack traces and request context"
+        # framing rather than a full APM product.
+        traces_sample_rate=0.0,
+    )
+
 from app.routers import (
     auth,
     comments,
@@ -21,7 +47,14 @@ from app.routers import (
     votes,
 )
 
-app = FastAPI(title="RamanHub API", version="0.1.0")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    log_event(logger, "app.startup", environment=settings.ENVIRONMENT)
+    yield
+
+
+app = FastAPI(title="RamanHub API", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

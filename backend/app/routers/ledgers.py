@@ -5,6 +5,7 @@ Mounted with no prefix — `POST /raw-files/{raw_file_id}/ledgers`.
 """
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -14,6 +15,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
 from app.db.session import get_db
+from app.logging_config import log_event
 from app.models.processing_ledger import ProcessingLedger
 from app.models.raw_file import RawFile
 from app.models.user import User
@@ -23,6 +25,7 @@ from app.processing.ledger import LedgerValidationError, compute_ledger_hash, va
 from app.schemas.ledger import Ledger, LedgerStep
 
 router = APIRouter(tags=["ledgers"])
+logger = logging.getLogger(__name__)
 
 
 class LedgerStepIn(BaseModel):
@@ -116,6 +119,15 @@ def build_and_persist_ledger(
     db.add(ledger_row)
     db.commit()
     db.refresh(ledger_row)
+
+    log_event(
+        logger,
+        "ledger.created",
+        ledger_id=str(ledger_row.id),
+        raw_file_id=str(raw_file.id),
+        user_id=str(user.id),
+        step_count=len(steps),
+    )
 
     ledger_pydantic = Ledger(schema_version=1, raw_file_id=raw_file.id, steps=steps)
     return ledger_row, ledger_pydantic, False

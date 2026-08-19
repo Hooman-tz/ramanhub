@@ -46,5 +46,14 @@ class Settings(BaseSettings):
     # Uploads
     MAX_UPLOAD_SIZE_MB: int = 50
 
+    # Ingestion — wall-clock timeout around the parsing step (vendor parser
+    # or LLM fallback), so a malformed/adversarial file can't hang the
+    # background job indefinitely. See app/ingestion/jobs.py.
+    INGESTION_PARSE_TIMEOUT_SECONDS: int = 30
+
+    # Error tracking (Module 5). Empty by default — a true no-op until a
+    # real Sentry project DSN is set (see docs/OPERATIONS.md).
+    SENTRY_DSN: str = ""
+
 
 settings = Settings()

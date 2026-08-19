@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import re
 import uuid
 
@@ -16,40 +17,17 @@ from app.auth.deps import get_current_user
 from app.config import settings
 from app.db.session import get_db
 from app.ingestion.jobs import enqueue_ingestion_job
+from app.logging_config import log_event
 from app.models.enums import IngestionStatus, Modality, UploadStatus
 from app.models.ingestion_job import IngestionJob
 from app.models.raw_file import RawFile
 from app.models.user import User
 from app.ratelimit import rate_limit_uploads
+from app.security.file_validation import validate_upload_content, validate_upload_size
 from app.storage.s3_client import upload_bytes
 
 router = APIRouter(prefix="/raw-files", tags=["raw-files"])
-
-# A handful of known binary magic-byte signatures (vendor formats) that are
-# always acceptable even though they're not plausible text.
-_KNOWN_BINARY_MAGICS: tuple[bytes, ...] = (
-    b"WDF1",  # Renishaw WiRE
-    b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",  # OLE2 compound file (WITec, legacy Office)
-    b"\x0a\x0a\xfe\xfe",  # Bruker OPUS
-)
-
-
-def _looks_like_plausible_upload(raw_bytes: bytes) -> bool:
-    """Cheap content sniff: accept known binary vendor magics outright;
-    otherwise require the leading chunk to look like plausible text (mostly
-    printable/whitespace bytes) so we reject obviously wrong content (e.g. an
-    HTML error page saved with a .txt extension, or random garbage) without
-    trusting the filename extension.
-    """
-    if not raw_bytes:
-        return False
-    if any(raw_bytes.startswith(magic) for magic in _KNOWN_BINARY_MAGICS):
-        return True
-
-    sample = raw_bytes[:8192]
-    printable = sum(1 for b in sample if b == 9 or b == 10 or b == 13 or 32 <= b <= 126)
-    ratio = printable / len(sample)
-    return ratio >= 0.85
+logger = logging.getLogger(__name__)
 
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
@@ -62,20 +40,11 @@ async def upload_raw_file(
 ) -> dict:
     raw_bytes = await file.read()
 
-    max_bytes = settings.MAX_UPLOAD_SIZE_MB * 1024 * 1024
-    if len(raw_bytes) > max_bytes:
-        raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            detail=f"File exceeds the {settings.MAX_UPLOAD_SIZE_MB}MB upload limit",
-        )
-    if not raw_bytes:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file")
-
-    if not _looks_like_plausible_upload(raw_bytes):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="File content does not look like a recognizable spectral data file",
-        )
+    # Content-based validation (never trust the filename/extension) — see
+    # app/security/file_validation.py. Size is checked first since it's the
+    # cheapest possible rejection.
+    validate_upload_size(len(raw_bytes))
+    validate_upload_content(raw_bytes)
 
     content_hash = hashlib.sha256(raw_bytes).hexdigest()
     filename = file.filename or "upload"
@@ -112,6 +81,15 @@ async def upload_raw_file(
     db.refresh(ingestion_job)
 
     enqueue_ingestion_job(background_tasks, raw_file.id)
+
+    log_event(
+        logger,
+        "raw_file.upload.accepted",
+        raw_file_id=str(raw_file.id),
+        ingestion_job_id=str(ingestion_job.id),
+        user_id=str(user.id),
+        size_bytes=raw_file.file_size_bytes,
+    )
 
     return {"raw_file_id": raw_file.id, "ingestion_job_id": ingestion_job.id}
 

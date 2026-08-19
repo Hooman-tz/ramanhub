@@ -7,6 +7,7 @@ import RoutinesPage from './pages/RoutinesPage';
 import SearchPage from './pages/SearchPage';
 import LibraryPage from './pages/LibraryPage';
 import TrendingPage from './pages/TrendingPage';
+import ReportBugButton from './components/ReportBugButton';
 
 export default function App() {
   return (
@@ -18,6 +19,7 @@ export default function App() {
         <Link to="/trending">Trending</Link>
         <Link to="/routines">Routines</Link>
         <Link to="/login">Login</Link>
+        <ReportBugButton />
       </nav>
       <hr />
       <Routes>
