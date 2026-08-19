@@ -1,0 +1,237 @@
+// Thin typed fetch wrapper for the RamanHub API.
+//
+// ASSUMPTIONS: The backend is being built concurrently by other agents.
+// Every interface/endpoint shape below is "best effort" based on the spec
+// handed to the frontend agent, NOT confirmed against a live backend.
+// Search for "ASSUMPTION:" comments for the specific spots most likely to
+// need reconciliation once real backend responses are available.
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+
+// ---------------------------------------------------------------------------
+// Shared types
+// ---------------------------------------------------------------------------
+
+export interface User {
+  id: string;
+  email: string;
+  name?: string;
+  avatar_url?: string;
+}
+
+export interface RawFileUploadResponse {
+  raw_file_id: string;
+  // ASSUMPTION: ingestion is kicked off synchronously on upload and the
+  // job id is returned immediately. Field name could also be `job_id`.
+  ingestion_job_id: string;
+}
+
+export interface IngestionJob {
+  id: string;
+  raw_file_id: string;
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  // Generic bag of extracted metadata fields; shape varies by
+  // modality/vendor, so we treat it as an untyped record and render it
+  // generically rather than hardcoding field names.
+  extracted_metadata_raw?: Record<string, unknown>;
+  // ASSUMPTION: sanity_check_flags maps a field key (matching a key in
+  // extracted_metadata_raw) to a human-readable flag reason. Could also be
+  // an array of { field, reason } objects — adjust `SanityFlags` below if so.
+  sanity_check_flags?: Record<string, string>;
+  error_message?: string;
+}
+
+export interface LedgerStep {
+  type: 'raman.snv' | 'raman.msc' | 'raman.fluorescence_suppression.airpls' | string;
+  version: string;
+  params: Record<string, unknown>;
+}
+
+export interface Ledger {
+  id: string;
+  steps: LedgerStep[];
+}
+
+export interface Spectrum {
+  id: string;
+  title?: string;
+  description?: string;
+  state: 'draft' | 'published' | 'embargoed';
+  raw_file_id?: string;
+  current_ledger?: Ledger;
+  license_id?: string;
+  embargo_release_at?: string | null;
+  // Generic axes dump — charting is out of scope, a plain array/table is fine.
+  wavenumbers?: number[];
+  intensities?: number[];
+}
+
+export interface Routine {
+  id: string;
+  name: string;
+  description?: string;
+  steps: LedgerStep[];
+}
+
+export interface License {
+  id: string;
+  name: string;
+  spdx_identifier?: string;
+  url?: string;
+}
+
+// ---------------------------------------------------------------------------
+// Low-level request helper
+// ---------------------------------------------------------------------------
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(`${API_BASE_URL}${path}`, {
+    credentials: 'include', // httpOnly cookie auth
+    ...init,
+    headers: {
+      ...(init?.body && !(init.body instanceof FormData)
+        ? { 'Content-Type': 'application/json' }
+        : {}),
+      ...init?.headers,
+    },
+  });
+
+  if (!res.ok) {
+    let detail: string | undefined;
+    try {
+      const body = await res.json();
+      detail = body?.detail ?? body?.message ?? JSON.stringify(body);
+    } catch {
+      detail = await res.text().catch(() => undefined);
+    }
+    throw new Error(`API error ${res.status}: ${detail ?? res.statusText}`);
+  }
+
+  // Some endpoints (e.g. publish) may return 204 No Content.
+  if (res.status === 204) return undefined as T;
+
+  return (await res.json()) as T;
+}
+
+// ---------------------------------------------------------------------------
+// Auth
+// ---------------------------------------------------------------------------
+
+/** Full-page redirect URL for "Sign in with Google" — navigate, don't fetch. */
+export function getGoogleLoginUrl(): string {
+  return `${API_BASE_URL}/auth/login`;
+}
+
+export async function getCurrentUser(): Promise<User> {
+  return request<User>('/users/me');
+}
+
+// ---------------------------------------------------------------------------
+// Upload / ingestion
+// ---------------------------------------------------------------------------
+
+export async function uploadRawFile(file: File): Promise<RawFileUploadResponse> {
+  const formData = new FormData();
+  formData.append('file', file);
+  return request<RawFileUploadResponse>('/raw-files', {
+    method: 'POST',
+    body: formData,
+  });
+}
+
+export async function getIngestionJob(jobId: string): Promise<IngestionJob> {
+  return request<IngestionJob>(`/ingestion-jobs/${jobId}`);
+}
+
+export async function confirmIngestionJob(
+  jobId: string,
+  metadata: Record<string, unknown>,
+): Promise<IngestionJob> {
+  return request<IngestionJob>(`/ingestion-jobs/${jobId}`, {
+    method: 'PATCH',
+    // Backend wraps the edited metadata under a `metadata` key so it can
+    // reuse ExtractedMetadata's strict pydantic validation directly.
+    body: JSON.stringify({ metadata }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Spectra / ledgers
+// ---------------------------------------------------------------------------
+
+export async function getSpectrum(id: string): Promise<Spectrum> {
+  return request<Spectrum>(`/spectra/${id}`);
+}
+
+export async function updateSpectrum(
+  id: string,
+  payload: Partial<{
+    current_ledger_id: string;
+    title: string;
+    description: string;
+    confirmed_metadata: Record<string, unknown>;
+  }>,
+): Promise<Spectrum> {
+  return request<Spectrum>(`/spectra/${id}`, {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+}
+
+export interface CreateLedgerResponse {
+  ledger: { schema_version: number; raw_file_id: string; steps: LedgerStep[] };
+  ledger_id: string;
+  ledger_hash: string;
+  reused_existing: boolean;
+  processed: { length: number };
+}
+
+export async function createLedger(
+  rawFileId: string,
+  steps: Array<{ type: string; params: Record<string, unknown>; order: number }>,
+): Promise<CreateLedgerResponse> {
+  return request<CreateLedgerResponse>(`/raw-files/${rawFileId}/ledgers`, {
+    method: 'POST',
+    body: JSON.stringify({ steps }),
+  });
+}
+
+export async function getLicenses(): Promise<License[]> {
+  return request<License[]>('/licenses');
+}
+
+export async function publishSpectrum(
+  id: string,
+  payload: { license_id: string; embargo_release_at?: string | null },
+): Promise<Spectrum> {
+  return request<Spectrum>(`/spectra/${id}/publish`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Routines
+// ---------------------------------------------------------------------------
+
+export async function listRoutines(): Promise<Routine[]> {
+  return request<Routine[]>('/routines');
+}
+
+export async function createRoutine(
+  payload: Omit<Routine, 'id'>,
+): Promise<Routine> {
+  return request<Routine>('/routines', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function applyRoutineToRawFile(
+  rawFileId: string,
+  routineId: string,
+): Promise<Ledger> {
+  return request<Ledger>(`/raw-files/${rawFileId}/apply-routine/${routineId}`, {
+    method: 'POST',
+  });
+}

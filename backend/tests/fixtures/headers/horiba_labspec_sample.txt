@@ -1,0 +1,14 @@
+#Acquired:	01/31/2026 12:00:00
+#Title:	Sample 1
+#Acq. time (s):	10
+#Accumulations:	4
+#Range (cm-1):	100 - 3200
+#Windows:	1
+#Grating:	1800
+#Objective:	x50
+#ND Filter:	1
+#Laser:	532
+#Spectro:	iHR320
+#000000	000001
+100.0	52.3
+100.5	53.1

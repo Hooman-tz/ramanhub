@@ -1,0 +1,70 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: raman
+      POSTGRES_PASSWORD: changeme
+      POSTGRES_DB: ramanhub
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U raman"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "/init-buckets.sh"]
+    volumes:
+      - ./infra/minio/init-buckets.sh:/init-buckets.sh:ro
+    restart: "no"
+
+  backend:
+    build: ./backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    env_file:
+      # `required: false` lets `docker compose config` validate even before
+      # `.env` has been created (see README: `cp .env.example .env`).
+      - path: .env
+        required: false
+    environment:
+      # Override host-facing values from .env with in-network service names,
+      # since the backend runs inside the compose network here (see README).
+      DATABASE_URL: postgresql+psycopg://raman:changeme@postgres:5432/ramanhub
+      S3_ENDPOINT_URL: http://minio:9000
+    volumes:
+      - ./backend:/app
+    ports:
+      - "8000:8000"
+    command: ["uv", "run", "uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+volumes:
+  postgres-data:
+  minio-data:

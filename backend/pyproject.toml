@@ -1,0 +1,49 @@
+[project]
+name = "ramanhub-backend"
+version = "0.1.0"
+description = "RamanHub backend — FastAPI service for spectral data sharing"
+authors = [
+    { name = "Hooman", email = "hooman.iran97@gmail.com" }
+]
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "sqlalchemy>=2.0",
+    "alembic",
+    "psycopg[binary]",
+    "pydantic>=2.0",
+    "pydantic-settings",
+    "boto3",
+    "anthropic",
+    "authlib",
+    "httpx",
+    "pyjwt",
+    "python-multipart",
+    "numpy",
+    "scipy",
+    "python-dotenv",
+]
+
+[dependency-groups]
+dev = [
+    "pytest",
+    "pytest-cov",
+    "ruff",
+]
+
+[tool.uv]
+package = false
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# B008: FastAPI's dependency injection idiomatically requires `Depends(...)`
+# as an argument default (`db: Session = Depends(get_db)`), which this rule
+# otherwise flags as a bug on every route across the whole app.
+ignore = ["B008"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

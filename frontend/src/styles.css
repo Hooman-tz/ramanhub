@@ -1,0 +1,83 @@
+body {
+  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1.5rem;
+  color: #1a1a1a;
+}
+
+nav a {
+  margin-right: 1rem;
+}
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+}
+
+th, td {
+  border: 1px solid #ccc;
+  padding: 0.4rem 0.6rem;
+  text-align: left;
+}
+
+.field-row {
+  margin-bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  max-width: 400px;
+}
+
+.field-row label {
+  font-weight: 600;
+  margin-bottom: 0.2rem;
+}
+
+.field-row input,
+.field-row textarea,
+.field-row select {
+  padding: 0.35rem;
+  font-size: 1rem;
+}
+
+.field-row.flagged input {
+  border: 2px solid #c0392b;
+}
+
+.flag-reason {
+  color: #c0392b;
+  font-size: 0.85rem;
+  margin-top: 0.2rem;
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.6rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.badge.draft {
+  background: #eee;
+  color: #555;
+}
+
+.badge.published {
+  background: #d4edda;
+  color: #155724;
+}
+
+.badge.embargoed {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.error {
+  color: #c0392b;
+}
+
+fieldset {
+  margin-bottom: 1.5rem;
+}

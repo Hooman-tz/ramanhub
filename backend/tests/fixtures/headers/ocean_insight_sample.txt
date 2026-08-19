@@ -1,0 +1,19 @@
+Data from USB2000+H15466_0.txt
+
+Date: Thu Jan 01 00:00:00 GMT 2026
+User: raman_user
+Spectrometers: USB2000+H15466
+Trigger mode: 0
+Integration Time (usec): 100000
+Scans to average: 3
+Electric dark correction enabled: true
+Nonlinearity correction enabled: true
+Boxcar width: 2
+XAxis mode: Raman Shift
+Excitation Wavelength (nm): 785.0
+Number of Pixels in Processed Spectrum: 2048
+>>>>>Begin Spectral Data<<<<<
+185.375671	1023.456
+187.221313	1045.128
+189.066956	1102.774
+>>>>>End Spectral Data<<<<<
