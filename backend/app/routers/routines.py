@@ -106,12 +106,12 @@ def apply_routine(
     ledger_row, ledger_pydantic, reused = build_and_persist_ledger(
         raw_file, steps_in, db, user, derived_from_routine_id=routine.id
     )
-    array = get_or_compute(raw_file.id, ledger_pydantic, db)
+    _wavenumbers, intensities = get_or_compute(raw_file.id, ledger_pydantic, db)
 
     return LedgerCreateResponse(
         ledger=ledger_pydantic,
         ledger_id=ledger_row.id,
         ledger_hash=ledger_row.ledger_hash,
         reused_existing=reused,
-        processed={"length": int(array.shape[0])},
+        processed={"length": int(intensities.shape[0])},
     )

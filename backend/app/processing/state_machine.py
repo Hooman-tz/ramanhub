@@ -86,8 +86,16 @@ def effective_state(spectrum: Spectrum) -> str:
     return state.value if isinstance(state, SpectrumState) else state
 
 
-def publish(spectrum: Spectrum, license_id: str, db: Session) -> Spectrum:
-    """Draft -> published. Requires `license_id`. Sets `published_at=now()`."""
+def publish(spectrum: Spectrum, license_id: str, db: Session, doi: str | None = None) -> Spectrum:
+    """Draft -> published. Requires `license_id`. Sets `published_at=now()`.
+
+    `doi` (Module 4/Module 3 integration seam): if provided (non-empty),
+    sets `spectrum.doi` before committing. A non-null `doi` is what marks a
+    spectrum "DOI-verified" for the Module 4 trust-tier search filter, as
+    opposed to "community" (no DOI). `doi` is expected to come from Module
+    3's DOI lookup feature; this module doesn't validate/resolve it, just
+    stores whatever the caller passes.
+    """
     if spectrum.state != SpectrumState.draft:
         raise HTTPException(status_code=400, detail="Only draft spectra can be published")
     if not license_id:
@@ -95,15 +103,24 @@ def publish(spectrum: Spectrum, license_id: str, db: Session) -> Spectrum:
     spectrum.license_id = license_id
     spectrum.state = SpectrumState.published
     spectrum.published_at = datetime.now(UTC)
+    if doi:
+        spectrum.doi = doi
     db.add(spectrum)
     db.commit()
     db.refresh(spectrum)
     return spectrum
 
 
-def embargo(spectrum: Spectrum, license_id: str, embargo_release_at: datetime, db: Session) -> Spectrum:
+def embargo(
+    spectrum: Spectrum,
+    license_id: str,
+    embargo_release_at: datetime,
+    db: Session,
+    doi: str | None = None,
+) -> Spectrum:
     """Draft -> embargoed. Requires `license_id` and a future
-    `embargo_release_at`."""
+    `embargo_release_at`. `doi` behaves as in `publish` above — sets
+    `spectrum.doi` if provided, before committing."""
     if spectrum.state != SpectrumState.draft:
         raise HTTPException(status_code=400, detail="Only draft spectra can be embargoed")
     if not license_id:
@@ -114,6 +131,8 @@ def embargo(spectrum: Spectrum, license_id: str, embargo_release_at: datetime, d
     spectrum.license_id = license_id
     spectrum.state = SpectrumState.embargoed
     spectrum.embargo_release_at = release_at
+    if doi:
+        spectrum.doi = doi
     db.add(spectrum)
     db.commit()
     db.refresh(spectrum)

@@ -20,6 +20,7 @@ from app.models.enums import IngestionStatus, Modality, UploadStatus
 from app.models.ingestion_job import IngestionJob
 from app.models.raw_file import RawFile
 from app.models.user import User
+from app.ratelimit import rate_limit_uploads
 from app.storage.s3_client import upload_bytes
 
 router = APIRouter(prefix="/raw-files", tags=["raw-files"])
@@ -57,6 +58,7 @@ async def upload_raw_file(
     file: UploadFile,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    _: None = Depends(rate_limit_uploads),
 ) -> dict:
     raw_bytes = await file.read()
 

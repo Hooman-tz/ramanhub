@@ -17,11 +17,13 @@ from app.models.processed_cache import ProcessedCache
 from app.models.processing_ledger import ProcessingLedger
 from app.models.processing_routine import ProcessingRoutine
 from app.models.raw_file import RawFile
+from app.models.social import Comment, Vote
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.models.vendor_parse_cache import VendorParseCache
 
 __all__ = [
+    "Comment",
     "FieldDataType",
     "IngestionJob",
     "IngestionStatus",
@@ -39,4 +41,5 @@ __all__ = [
     "UploadStatus",
     "User",
     "VendorParseCache",
+    "Vote",
 ]

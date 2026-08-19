@@ -59,7 +59,15 @@ def engine():
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
     Base.metadata.create_all(eng)
     yield eng
-    Base.metadata.drop_all(eng)
+    # Deliberately NOT dropping tables here (used to call
+    # `Base.metadata.drop_all(eng)`) — see the identical note in
+    # tests/test_auth.py's `engine` fixture: this points at the same
+    # physical test DB as conftest.py's session-scoped `engine` fixture, and
+    # dropping tables at this module's teardown was wiping them out from
+    # under every DB-backed test file that runs later in the same pytest
+    # session, causing spurious `UndefinedTable` failures elsewhere.
+    # `create_all` above is idempotent; conftest.py's session fixture still
+    # drops everything once, at the very end of the whole suite.
 
 
 @pytest.fixture()

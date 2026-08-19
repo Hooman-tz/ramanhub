@@ -90,8 +90,13 @@ def make_user(db_session):
 @pytest.fixture()
 def fake_s3(monkeypatch):
     """In-memory stand-in for `app.storage.s3_client`, so tests don't need a
-    real MinIO/S3 endpoint. Patches the names as imported into
-    `app.processing.cache` (the only place this module's code calls them)."""
+    real MinIO/S3 endpoint. Patches the names as imported into every module
+    that calls them directly: `app.processing.cache` (processed-output
+    cache reads/writes) and `app.spectra_io` (raw-spectrum loading) — a
+    plain `monkeypatch.setattr("app.storage.s3_client.download_bytes", ...)`
+    would NOT be enough, since both modules did `from ... import
+    download_bytes`, which binds their own local name to the original
+    function object rather than looking it up on the module each call."""
     store: dict[tuple[str, str], bytes] = {}
 
     def upload_bytes(bucket, key, data, content_type=None):
@@ -102,6 +107,7 @@ def fake_s3(monkeypatch):
 
     monkeypatch.setattr("app.processing.cache.upload_bytes", upload_bytes)
     monkeypatch.setattr("app.processing.cache.download_bytes", download_bytes)
+    monkeypatch.setattr("app.spectra_io.download_bytes", download_bytes)
     return store
 
 

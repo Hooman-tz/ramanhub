@@ -142,14 +142,22 @@ def test_create_all_round_trip_against_live_postgres():
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
 
     Base.metadata.create_all(engine)
-    try:
-        with Session(engine) as session:
-            license_row = models.License(id="TEST-LICENSE", name="Test", url="https://example.com")
-            user_row = models.User(google_sub=str(uuid.uuid4()), email="test@example.com")
-            session.add_all([license_row, user_row])
-            session.commit()
+    with Session(engine) as session:
+        license_row = models.License(id="TEST-LICENSE", name="Test", url="https://example.com")
+        user_row = models.User(google_sub=str(uuid.uuid4()), email="test@example.com")
+        session.add_all([license_row, user_row])
+        session.commit()
 
-            assert session.get(models.License, "TEST-LICENSE") is not None
-            assert session.query(models.User).filter_by(email="test@example.com").one() is not None
-    finally:
-        Base.metadata.drop_all(engine)
+        assert session.get(models.License, "TEST-LICENSE") is not None
+        assert session.query(models.User).filter_by(email="test@example.com").one() is not None
+
+        # Clean up just the two rows this test inserted, rather than
+        # `Base.metadata.drop_all(engine)`: this points at the same shared
+        # `<dbname>_test` physical database as conftest.py's session-scoped
+        # `engine` fixture (see tests/_db_url.py). Dropping every table here
+        # was wiping them out from under every DB-backed test file that
+        # happens to run later in the same pytest session, causing spurious
+        # `UndefinedTable` failures unrelated to those files' own code.
+        session.delete(license_row)
+        session.delete(user_row)
+        session.commit()

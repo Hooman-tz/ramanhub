@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func, text
+from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -28,6 +28,13 @@ class Spectrum(Base):
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
     confirmed_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Denormalized, indexed search fields (Module 4) — populated from
+    # confirmed_metadata / a computed SNR at spectrum-update time (see
+    # app.spectra_io.compute_snr and app.routers.spectra), rather than
+    # queried out of JSONB on every search request.
+    material_type: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
+    excitation_wavelength_nm: Mapped[float | None] = mapped_column(Numeric, nullable=True, index=True)
+    snr: Mapped[float | None] = mapped_column(Numeric, nullable=True, index=True)
     current_ledger_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("processing_ledgers.id"), nullable=True
     )

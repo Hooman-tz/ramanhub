@@ -202,7 +202,7 @@ export async function getLicenses(): Promise<License[]> {
 
 export async function publishSpectrum(
   id: string,
-  payload: { license_id: string; embargo_release_at?: string | null },
+  payload: { license_id: string; embargo_release_at?: string | null; doi?: string | null },
 ): Promise<Spectrum> {
   return request<Spectrum>(`/spectra/${id}/publish`, {
     method: 'POST',

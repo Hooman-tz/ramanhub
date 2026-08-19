@@ -7,8 +7,11 @@ import {
   type Spectrum,
   type LedgerStep,
 } from '../api/client';
+import { getSpectrumData, type SpectrumData } from '../api/visualization';
 import LedgerStepList from '../components/LedgerStepList';
 import DraftPublishToggle from '../components/DraftPublishToggle';
+import SpectrumChart from '../components/SpectrumChart';
+import VoteCommentPanel from '../components/VoteCommentPanel';
 
 const KNOWN_STEP_TYPES: LedgerStep['type'][] = [
   'raman.snv',
@@ -27,6 +30,10 @@ export default function SpectrumViewPage() {
   const [addingStep, setAddingStep] = useState(false);
   const [stepError, setStepError] = useState<string | null>(null);
 
+  const [chartData, setChartData] = useState<SpectrumData | null>(null);
+  const [chartLoading, setChartLoading] = useState(true);
+  const [chartError, setChartError] = useState<string | null>(null);
+
   useEffect(() => {
     if (!id) return;
     loadSpectrum(id);
@@ -38,6 +45,16 @@ export default function SpectrumViewPage() {
       .then(setSpectrum)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
+    loadChartData(spectrumId);
+  }
+
+  function loadChartData(spectrumId: string) {
+    setChartLoading(true);
+    setChartError(null);
+    getSpectrumData(spectrumId)
+      .then(setChartData)
+      .catch((err) => setChartError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setChartLoading(false));
   }
 
   async function handleAddStep(e: React.FormEvent) {
@@ -128,27 +145,26 @@ export default function SpectrumViewPage() {
         {stepError && <p className="error">{stepError}</p>}
       </form>
 
-      {(spectrum.wavenumbers || spectrum.intensities) && (
+      <h2>Data</h2>
+      {chartError && <p className="error">{chartError}</p>}
+      {chartData && (
         <>
-          <h2>Data</h2>
-          <table>
-            <thead>
-              <tr>
-                <th>Wavenumber</th>
-                <th>Intensity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {(spectrum.wavenumbers ?? []).map((wn, i) => (
-                <tr key={i}>
-                  <td>{wn}</td>
-                  <td>{spectrum.intensities?.[i]}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          <SpectrumChart
+            wavenumbers={chartData.wavenumbers}
+            intensities={chartData.intensities}
+            loading={chartLoading}
+          />
+          {chartData.downsampled && (
+            <p className="hint">
+              Showing {chartData.wavenumbers.length.toLocaleString()} of{' '}
+              {chartData.total_points.toLocaleString()} points (downsampled for display).
+            </p>
+          )}
         </>
       )}
+      {!chartData && chartLoading && <p>Loading chart...</p>}
+
+      <VoteCommentPanel spectrumId={spectrum.id} />
     </div>
   );
 }
