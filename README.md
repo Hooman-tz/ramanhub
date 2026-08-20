@@ -36,6 +36,10 @@ NMR later without a rewrite.
    make up
    ```
 
+   No Docker available? Set `STORAGE_BACKEND=local` in `.env` and object
+   storage becomes plain files under `storage-data/` (dev only — you still
+   need a reachable Postgres). Everything else works identically.
+
 3. Run database migrations:
 
    ```bash
@@ -47,6 +51,15 @@ NMR later without a rewrite.
 
    ```bash
    make seed
+   ```
+
+   Optionally add demo content — three published synthetic spectra (one
+   fluorescence-swamped for the baseline tools, one with cosmic-ray spikes
+   for despiking), votes/comments for the Trending feed, and a
+   drag-and-droppable sample file at `sample-data/`:
+
+   ```bash
+   make seed-demo
    ```
 
 5. Run the backend with hot reload. For the fastest iteration loop, run it

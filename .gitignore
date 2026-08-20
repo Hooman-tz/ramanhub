@@ -33,3 +33,6 @@ infra/minio-data/
 
 # Logs
 *.log
+
+# Local-dev object storage (STORAGE_BACKEND=local)
+storage-data/

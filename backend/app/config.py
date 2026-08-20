@@ -20,6 +20,10 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # fallback lookup, not anything already working under docker.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
+# Public alias — other modules (e.g. the local storage backend) that need a
+# CWD-independent anchor should use this rather than re-deriving it.
+REPO_ROOT = _REPO_ROOT
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
@@ -33,6 +37,14 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "postgresql+psycopg://raman:changeme@localhost:5432/ramanhub"
+
+    # Storage backend: "s3" (MinIO locally, Cloudflare R2 in prod) or
+    # "local" (plain files under STORAGE_LOCAL_DIR — dev without Docker,
+    # never production). See app/storage/s3_client.py.
+    STORAGE_BACKEND: str = "s3"
+    # Relative paths resolve against the repo root, same anchoring rule as
+    # the .env file itself.
+    STORAGE_LOCAL_DIR: str = "storage-data"
 
     # Object storage (S3-compatible — Cloudflare R2 in prod, minio/localstack in dev)
     S3_ENDPOINT_URL: str = "http://localhost:9000"
