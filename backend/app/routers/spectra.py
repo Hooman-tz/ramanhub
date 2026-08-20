@@ -1,11 +1,13 @@
-"""Spectrum CRUD-lite + publish/embargo lifecycle endpoints.
+"""Spectrum CRUD-lite + publish/embargo lifecycle + fork endpoints.
 
 Mounted with no prefix (paths below are the full route) — `/spectra`,
 `/spectra/{spectrum_id}`, `/spectra/{spectrum_id}/publish`,
-`/spectra/{spectrum_id}/release-embargo`.
+`/spectra/{spectrum_id}/release-embargo`, `/spectra/{spectrum_id}/fork`.
 """
 from __future__ import annotations
 
+import logging
+import uuid as uuid_module
 from datetime import datetime
 from uuid import UUID
 
@@ -30,8 +32,10 @@ from app.processing.state_machine import (
 )
 from app.schemas.ledger import Ledger, LedgerStep
 from app.spectra_io import compute_snr, load_raw_spectrum
+from app.storage.s3_client import download_bytes, upload_bytes
 
 router = APIRouter(tags=["spectra"])
+logger = logging.getLogger(__name__)
 
 
 class SpectrumCreate(BaseModel):
@@ -255,6 +259,100 @@ def publish_spectrum(
     else:
         spectrum = publish(spectrum, body.license_id, db, doi=body.doi)
     return _serialize(spectrum, db)
+
+
+@router.post(
+    "/spectra/{spectrum_id}/fork",
+    response_model=SpectrumResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def fork_spectrum(
+    spectrum_id: UUID,
+    db: Session = Depends(get_db),
+    # Guests may fork — experimenting with the processing tools on public
+    # spectra is exactly the try-before-login loop. Publishing the fork is
+    # what needs a full account, and that's gated separately.
+    user: User = Depends(get_current_user),
+) -> SpectrumResponse:
+    """Copy a readable spectrum into the caller's own workspace as a new
+    draft — the GitHub-for-data fork, literally. Processing pipelines can
+    only be attached to raw files you own (see `create_ledger`'s ownership
+    check), so this is how anyone experiments on a *public* spectrum: fork
+    first, then process the copy freely.
+
+    What's copied: the raw bytes (to a forker-scoped storage key — a real
+    copy, so the fork's lifecycle is fully independent of the source),
+    title/description/confirmed_metadata/material_type, and the source's
+    current processing ledger, replayed onto the new raw file so the fork
+    opens looking identical. What's NOT copied: publish state (forks start
+    as drafts), license, DOI, and social signals — those belong to the
+    source, not the copy.
+    """
+    source = db.get(Spectrum, spectrum_id)
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    # Drafts/embargoed spectra stay unforkable by anyone but their owner —
+    # same visibility rule as every other read.
+    require_owner_or_public(source, user)
+
+    source_raw = db.get(RawFile, source.raw_file_id)
+    if source_raw is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Raw file not found")
+
+    raw_bytes = download_bytes(source_raw.storage_bucket, source_raw.storage_key)
+    fork_key = f"{user.id}/{source_raw.content_hash}/fork-{uuid_module.uuid4().hex[:8]}-{source_raw.original_filename}"
+    upload_bytes(source_raw.storage_bucket, fork_key, raw_bytes)
+
+    forked_raw = RawFile(
+        owner_id=user.id,
+        modality=source_raw.modality,
+        storage_bucket=source_raw.storage_bucket,
+        storage_key=fork_key,
+        original_filename=source_raw.original_filename,
+        content_hash=source_raw.content_hash,
+        file_size_bytes=source_raw.file_size_bytes,
+        vendor_format=source_raw.vendor_format,
+        upload_status=source_raw.upload_status,
+    )
+    db.add(forked_raw)
+    db.flush()
+
+    fork = Spectrum(
+        raw_file_id=forked_raw.id,
+        owner_id=user.id,
+        modality=source.modality,
+        title=f"{source.title} (fork)" if source.title else "Fork",
+        description=source.description,
+        confirmed_metadata=source.confirmed_metadata,
+        material_type=source.material_type,
+        state=SpectrumState.draft,
+    )
+    db.add(fork)
+    db.flush()
+
+    # Replay the source's current ledger onto the fork so it opens looking
+    # identical. Imported here (not at module top) to keep the router
+    # modules' import graph acyclic-by-construction.
+    if source.current_ledger_id is not None:
+        from app.routers.ledgers import LedgerStepIn, build_and_persist_ledger
+
+        source_ledger = db.get(ProcessingLedger, source.current_ledger_id)
+        if source_ledger is not None:
+            steps_in = [
+                LedgerStepIn(type=step["type"], params=step["params"], order=step["order"])
+                for step in source_ledger.steps
+            ]
+            ledger_row, _ledger, _reused = build_and_persist_ledger(
+                forked_raw, steps_in, db, user
+            )
+            fork.current_ledger_id = ledger_row.id
+
+    _recompute_derived_fields(fork, db)
+    db.add(fork)
+    db.commit()
+    db.refresh(fork)
+
+    return _serialize(fork, db)
 
 
 @router.post("/spectra/{spectrum_id}/release-embargo", response_model=SpectrumResponse)

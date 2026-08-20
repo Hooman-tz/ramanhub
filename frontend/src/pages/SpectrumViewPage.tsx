@@ -1,19 +1,24 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useParams } from 'react-router-dom';
-import { getSpectrum, type Spectrum } from '../api/client';
+import { useNavigate, useParams } from 'react-router-dom';
+import { forkSpectrum, getSpectrum, startGuestSession, type Spectrum } from '../api/client';
 import { getSpectrumData, type SpectrumData } from '../api/visualization';
+import { useAuth } from '../auth/useAuth';
 import LedgerStepList from '../components/LedgerStepList';
 import DraftPublishToggle from '../components/DraftPublishToggle';
 import PipelineBuilder from '../components/PipelineBuilder';
 import SpectrumChart from '../components/SpectrumChart';
 import VoteCommentPanel from '../components/VoteCommentPanel';
-import { Badge, Card, Skeleton } from '../components/ui';
+import { Badge, Button, Card, Skeleton } from '../components/ui';
 
 export default function SpectrumViewPage() {
   const { id } = useParams<{ id: string }>();
+  const navigate = useNavigate();
+  const { user, loading: authLoading } = useAuth();
   const [spectrum, setSpectrum] = useState<Spectrum | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [forking, setForking] = useState(false);
+  const [forkError, setForkError] = useState<string | null>(null);
 
   const [chartData, setChartData] = useState<SpectrumData | null>(null);
   const [rawData, setRawData] = useState<SpectrumData | null>(null);
@@ -51,11 +56,32 @@ export default function SpectrumViewPage() {
     loadChartData(updated.id);
   }
 
+  async function handleFork() {
+    if (!spectrum) return;
+    setForkError(null);
+    setForking(true);
+    try {
+      // Anonymous visitors get a guest session on the spot, same
+      // zero-friction rule as uploading.
+      if (!user) await startGuestSession();
+      const fork = await forkSpectrum(spectrum.id);
+      navigate(`/spectra/${fork.id}`);
+    } catch (err) {
+      setForkError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setForking(false);
+    }
+  }
+
   if (loading) return <Skeleton lines={4} height="2rem" />;
   if (error) return <p className="error">{error}</p>;
   if (!spectrum) return <p>Spectrum not found.</p>;
 
   const hasPipeline = (spectrum.current_ledger?.steps?.length ?? 0) > 0;
+  // Owner check gates the pipeline builder: ledgers only attach to raw
+  // files you own, so non-owners get a fork card instead of a builder
+  // whose Apply would 404.
+  const isOwner = !authLoading && user != null && user.id === spectrum.owner_id;
 
   return (
     <div>
@@ -105,9 +131,24 @@ export default function SpectrumViewPage() {
       )}
       {!chartData && chartLoading && <Skeleton height="380px" />}
 
-      <PipelineBuilder spectrum={spectrum} onApplied={handleApplied} />
-
-      <DraftPublishToggle spectrum={spectrum} onPublished={setSpectrum} />
+      {isOwner ? (
+        <>
+          <PipelineBuilder spectrum={spectrum} onApplied={handleApplied} />
+          <DraftPublishToggle spectrum={spectrum} onPublished={setSpectrum} />
+        </>
+      ) : (
+        <Card title="Try the processing tools on this spectrum">
+          <p className="hint">
+            Fork it into your own workspace — a private draft copy with the same data and
+            pipeline — and process it however you like. The original is untouched.
+            {!user && ' No account needed; you can start as a guest.'}
+          </p>
+          <Button variant="primary" onClick={handleFork} loading={forking}>
+            Fork to my workspace
+          </Button>
+          {forkError && <p className="error">{forkError}</p>}
+        </Card>
+      )}
 
       <h3>Applied ledger</h3>
       <LedgerStepList steps={spectrum.current_ledger?.steps} />

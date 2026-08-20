@@ -60,6 +60,7 @@ export interface Spectrum {
   title?: string;
   description?: string;
   state: 'draft' | 'published' | 'embargoed';
+  owner_id?: string;
   raw_file_id?: string;
   current_ledger?: Ledger;
   license_id?: string;
@@ -208,6 +209,13 @@ export async function createLedger(
 
 export async function getLicenses(): Promise<License[]> {
   return request<License[]>('/licenses');
+}
+
+/** Fork a readable spectrum into the caller's own workspace as a new draft
+ * (copied raw file + replayed pipeline) — the way to experiment on public
+ * spectra, since pipelines only attach to raw files you own. */
+export async function forkSpectrum(id: string): Promise<Spectrum> {
+  return request<Spectrum>(`/spectra/${id}/fork`, { method: 'POST' });
 }
 
 export async function publishSpectrum(

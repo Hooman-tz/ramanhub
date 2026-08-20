@@ -13,6 +13,11 @@ import pytest
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+import app.models  # noqa: F401 - registers every model on Base.metadata, so
+
+# `create_all` below builds the full schema even when running a single test
+# file that doesn't import any model itself (without this, which tables
+# exist depends on which test modules pytest happened to collect).
 from app.config import settings
 from app.db.base import Base
 from tests._db_url import get_test_database_url
@@ -108,6 +113,9 @@ def fake_s3(monkeypatch):
     monkeypatch.setattr("app.processing.cache.upload_bytes", upload_bytes)
     monkeypatch.setattr("app.processing.cache.download_bytes", download_bytes)
     monkeypatch.setattr("app.spectra_io.download_bytes", download_bytes)
+    # The fork endpoint copies raw bytes through its own imported names.
+    monkeypatch.setattr("app.routers.spectra.upload_bytes", upload_bytes)
+    monkeypatch.setattr("app.routers.spectra.download_bytes", download_bytes)
     return store
 
 
