@@ -60,3 +60,19 @@ def get_current_user_optional(
     """Same as `get_current_user` but returns None instead of raising when
     there's no valid session."""
     return _user_from_request(request, db)
+
+
+def get_current_full_user(user: User = Depends(get_current_user)) -> User:
+    """Like `get_current_user`, but additionally rejects guest sessions with
+    403. Gate for identity-carrying actions — publishing (a license grant
+    from a real person), votes/comments (social signals), profile/ORCID
+    linking — while guests keep full access to upload + the processing
+    tools."""
+    if user.is_guest:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Sign in with Google to do this — guest sessions can upload and "
+            "process spectra, but publishing, voting, commenting, and profile "
+            "linking need a full account.",
+        )
+    return user

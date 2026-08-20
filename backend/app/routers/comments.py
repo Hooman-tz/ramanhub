@@ -14,7 +14,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.auth.deps import get_current_user, get_current_user_optional
+from app.auth.deps import get_current_full_user, get_current_user_optional
 from app.db.session import get_db
 from app.models.social import Comment
 from app.models.spectrum import Spectrum
@@ -58,7 +58,7 @@ def post_comment(
     spectrum_id: UUID,
     body: CommentCreate,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_full_user),
     _: None = Depends(rate_limit_comments),
 ) -> CommentResponse:
     spectrum = _get_visible_spectrum_or_404(spectrum_id, user, db)

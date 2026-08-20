@@ -4,7 +4,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
-from app.auth.deps import get_current_user
+from app.auth.deps import get_current_full_user, get_current_user
 from app.db.session import get_db
 from app.models.user import User
 from app.schemas.auth import UserOut, UserUpdate
@@ -20,7 +20,7 @@ def get_me(current_user: User = Depends(get_current_user)) -> User:
 @router.patch("/me", response_model=UserOut)
 def patch_me(
     payload: UserUpdate,
-    current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_full_user),
     db: Session = Depends(get_db),
 ) -> User:
     if payload.display_name is not None:

@@ -69,6 +69,7 @@ def test_user_expected_columns():
         "avatar_url",
         "orcid_id",
         "is_active",
+        "is_guest",
         "created_at",
         "updated_at",
     }

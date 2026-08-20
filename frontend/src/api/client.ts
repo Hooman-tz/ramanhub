@@ -17,6 +17,9 @@ export interface User {
   email: string;
   name?: string;
   avatar_url?: string;
+  /** True for try-before-login guest sessions: can upload and process, but
+   * publishing/votes/comments/profile linking need a full Google account. */
+  is_guest?: boolean;
 }
 
 export interface RawFileUploadResponse {
@@ -124,6 +127,13 @@ export function getGoogleLoginUrl(): string {
 
 export async function getCurrentUser(): Promise<User> {
   return request<User>('/users/me');
+}
+
+/** Mint a guest session (server sets the same session cookie the OAuth flow
+ * would). Signing in with Google later migrates the guest's work to the
+ * real account. */
+export async function startGuestSession(): Promise<User> {
+  return request<User>('/auth/guest', { method: 'POST' });
 }
 
 // ---------------------------------------------------------------------------

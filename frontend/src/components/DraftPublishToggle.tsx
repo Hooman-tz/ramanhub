@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { getLicenses, publishSpectrum, updateSpectrum, type License, type Spectrum } from '../api/client';
 import { lookupDoi, type DoiMetadata } from '../api/visualization';
+import { useAuth } from '../auth/useAuth';
 import { Button, Card, InputField, SelectField } from './ui';
 
 interface Props {
@@ -12,6 +14,7 @@ interface Props {
  * metadata for review — never auto-submitted), mandatory license, optional
  * embargo. Renders nothing beyond the state badge once published. */
 export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
+  const { user } = useAuth();
   const [licenses, setLicenses] = useState<License[]>([]);
   const [licenseId, setLicenseId] = useState('');
   const [embargoDate, setEmbargoDate] = useState('');
@@ -108,6 +111,24 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
   }
 
   if (spectrum.state !== 'draft') return null;
+
+  // Guests keep drafts + the full processing toolbox, but publishing grants
+  // a license to the commons — that needs a real identity. Their work
+  // migrates to the account automatically on sign-in.
+  if (user?.is_guest) {
+    return (
+      <Card title="Publish to the commons">
+        <p className="hint">
+          You're working as a guest. Sign in with Google to publish this spectrum, link a
+          paper DOI, and keep it in your private library — everything you've done here
+          carries over to your account.
+        </p>
+        <Link to="/login" className="ui-button ui-button--primary">
+          Sign in to publish
+        </Link>
+      </Card>
+    );
+  }
 
   return (
     <Card title="Publish to the commons">

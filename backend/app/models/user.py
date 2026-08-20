@@ -20,6 +20,14 @@ class User(Base):
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     orcid_id: Mapped[str | None] = mapped_column(String, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    # Guest sessions: a real User row (so every ownership/row-level-access
+    # check works unchanged) minted without Google login, with synthetic
+    # google_sub/email. Guests can upload and run the processing tools;
+    # identity-carrying actions (publish, vote, comment, profile/ORCID)
+    # require a full account — see app.auth.deps.get_current_full_user.
+    # Signing in with Google migrates a guest's work to the real account
+    # (see app.routers.auth).
+    is_guest: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

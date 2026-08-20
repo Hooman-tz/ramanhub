@@ -80,7 +80,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
               {item.label}
             </NavLink>
           ))}
-          {!user && (
+          {(!user || user.is_guest) && (
             <NavLink to="/login" className="shell__nav-link">
               {icons.login}
               Sign in
@@ -90,13 +90,17 @@ export default function AppShell({ children }: { children: ReactNode }) {
 
         <div className="shell__footer">
           {user && (
-            <div className="shell__user" title={user.email}>
+            <div className="shell__user" title={user.is_guest ? 'Guest session' : user.email}>
               {user.avatar_url ? (
                 <img src={user.avatar_url} alt="" className="shell__user-avatar" />
               ) : (
-                <span className="shell__user-avatar">{initials(user.name ?? user.email)}</span>
+                <span className="shell__user-avatar">
+                  {user.is_guest ? 'G' : initials(user.name ?? user.email)}
+                </span>
               )}
-              <span className="shell__user-name">{user.name ?? user.email}</span>
+              <span className="shell__user-name">
+                {user.is_guest ? 'Guest session' : (user.name ?? user.email)}
+              </span>
             </div>
           )}
           <ReportBugButton />

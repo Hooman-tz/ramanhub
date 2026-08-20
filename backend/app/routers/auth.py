@@ -3,19 +3,25 @@ from __future__ import annotations
 
 import hmac
 import logging
+import uuid
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.auth import google_oauth
-from app.auth.deps import SESSION_COOKIE_NAME
+from app.auth.deps import SESSION_COOKIE_NAME, get_current_user_optional
 from app.auth.jwt import encode_session_token
 from app.config import settings
 from app.db.session import get_db
 from app.logging_config import log_event
+from app.models.processing_ledger import ProcessingLedger
+from app.models.processing_routine import ProcessingRoutine
+from app.models.raw_file import RawFile
+from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.ratelimit import rate_limit_login
+from app.schemas.auth import UserOut
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
@@ -25,6 +31,66 @@ def _cookie_secure() -> bool:
     # Allow non-Secure cookies in local dev (plain http://localhost), require
     # Secure everywhere else.
     return settings.ENVIRONMENT != "development"
+
+
+def migrate_guest_data(guest: User, target: User, db: Session) -> int:
+    """Reassign everything a guest session created to `target`, so "sign in
+    to keep your work" is literal. Returns the number of rows moved. The
+    guest row itself is deactivated (not deleted) so its id stays valid in
+    any logs/history. Commit is left to the caller."""
+    moved = 0
+    for model, column in (
+        (RawFile, RawFile.owner_id),
+        (Spectrum, Spectrum.owner_id),
+        (ProcessingRoutine, ProcessingRoutine.owner_id),
+        (ProcessingLedger, ProcessingLedger.created_by),
+    ):
+        moved += (
+            db.query(model)
+            .filter(column == guest.id)
+            .update({column: target.id}, synchronize_session=False)
+        )
+    guest.is_active = False
+    db.add(guest)
+    return moved
+
+
+@router.post("/guest", response_model=UserOut)
+async def start_guest_session(
+    db: Session = Depends(get_db),
+    _: None = Depends(rate_limit_login),
+) -> JSONResponse:
+    """Mint a guest session: a real (is_guest) User row plus the same session
+    cookie the OAuth flow issues, so every downstream ownership check works
+    unchanged. Guests can upload and use the processing tools; publishing,
+    votes, comments, and profile linking are gated to full accounts
+    (app.auth.deps.get_current_full_user). Signing in with Google later
+    migrates the guest's work to the real account (see `callback`)."""
+    token = uuid.uuid4().hex
+    guest = User(
+        google_sub=f"guest:{token}",
+        # email is NOT NULL + unique; .invalid is the RFC 2606 reserved TLD,
+        # so this can never collide with a real address.
+        email=f"guest-{token}@guest.invalid",
+        display_name="Guest",
+        is_guest=True,
+    )
+    db.add(guest)
+    db.commit()
+    db.refresh(guest)
+
+    log_event(logger, "auth.guest.created", user_id=str(guest.id))
+
+    response = JSONResponse(UserOut.model_validate(guest).model_dump(mode="json"))
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        encode_session_token(guest),
+        httponly=True,
+        secure=_cookie_secure(),
+        samesite="lax",
+        max_age=settings.JWT_EXPIRES_HOURS * 3600,
+    )
+    return response
 
 
 @router.get("/login")
@@ -54,6 +120,9 @@ async def callback(
     error: str | None = None,
     db: Session = Depends(get_db),
     _: None = Depends(rate_limit_login),
+    # A pre-existing session at callback time is how we notice "this browser
+    # was a guest" and migrate that guest's work to the real account.
+    prior_session: User | None = Depends(get_current_user_optional),
 ) -> RedirectResponse:
     """Exchange the authorization code, verify the ID token, upsert the User,
     issue an app session JWT cookie, and redirect back to the frontend."""
@@ -114,6 +183,17 @@ async def callback(
             user.avatar_url = picture
     db.commit()
     db.refresh(user)
+
+    if prior_session is not None and prior_session.is_guest and prior_session.id != user.id:
+        moved = migrate_guest_data(prior_session, user, db)
+        db.commit()
+        log_event(
+            logger,
+            "auth.guest.migrated",
+            guest_id=str(prior_session.id),
+            user_id=str(user.id),
+            rows_moved=moved,
+        )
 
     log_event(logger, "auth.login.success", user_id=str(user.id))
 

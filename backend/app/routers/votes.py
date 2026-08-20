@@ -15,7 +15,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.auth.deps import get_current_user, get_current_user_optional
+from app.auth.deps import get_current_full_user, get_current_user_optional
 from app.db.session import get_db
 from app.models.social import Vote
 from app.models.spectrum import Spectrum
@@ -52,7 +52,7 @@ def _vote_count(spectrum_id: UUID, db: Session) -> int:
 def toggle_vote(
     spectrum_id: UUID,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_current_full_user),
     _: None = Depends(rate_limit_votes),
 ) -> VoteToggleResponse:
     spectrum = _get_visible_spectrum_or_404(spectrum_id, user, db)

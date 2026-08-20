@@ -19,6 +19,7 @@ class UserOut(BaseModel):
     avatar_url: str | None = None
     orcid_id: str | None = None
     is_active: bool
+    is_guest: bool = False
     created_at: datetime
 
 

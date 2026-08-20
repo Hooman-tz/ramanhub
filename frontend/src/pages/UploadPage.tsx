@@ -1,6 +1,6 @@
 import { useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { uploadRawFile, getIngestionJob } from '../api/client';
+import { uploadRawFile, getIngestionJob, startGuestSession } from '../api/client';
 import { useAuth } from '../auth/useAuth';
 import { Spinner } from '../components/ui';
 
@@ -20,9 +20,20 @@ export default function UploadPage() {
   const { user, loading: authLoading } = useAuth();
 
   const busy = phase === 'uploading' || phase === 'polling';
+  // Tracks a guest session started by this page, so the sign-in hint can
+  // switch to "you're trying it as a guest" without refetching /users/me.
+  const [guestStarted, setGuestStarted] = useState(false);
 
   async function ingest(file: File) {
     try {
+      // No account? Start a guest session on the spot — trying the tools
+      // should be zero-friction; identity is only needed to publish.
+      if (!authLoading && !user && !guestStarted) {
+        setPhase('uploading');
+        setMessage('Starting a guest session...');
+        await startGuestSession();
+        setGuestStarted(true);
+      }
       setPhase('uploading');
       setMessage(`Uploading ${file.name}...`);
       const { ingestion_job_id: jobId } = await uploadRawFile(file);
@@ -133,9 +144,19 @@ export default function UploadPage() {
       </div>
 
       {phase === 'error' && <p className="error" style={{ marginTop: 'var(--sp-3)' }}>{message}</p>}
-      {signedOut && (
+      {(signedOut || guestStarted || user?.is_guest) && (
         <p className="hint" style={{ marginTop: 'var(--sp-3)' }}>
-          You'll need to <Link to="/login">sign in</Link> before uploading.
+          {guestStarted || user?.is_guest ? (
+            <>
+              You're trying RamanHub as a guest. <Link to="/login">Sign in with Google</Link> to
+              publish, vote, and keep this work in your account.
+            </>
+          ) : (
+            <>
+              No account needed — drop a file to try it as a guest.{' '}
+              <Link to="/login">Sign in</Link> to publish and keep a private library.
+            </>
+          )}
         </p>
       )}
 

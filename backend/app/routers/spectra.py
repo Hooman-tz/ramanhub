@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.auth.deps import get_current_user, get_current_user_optional
+from app.auth.deps import get_current_full_user, get_current_user, get_current_user_optional
 from app.db.session import get_db
 from app.models.enums import SpectrumState
 from app.models.processing_ledger import ProcessingLedger
@@ -244,7 +244,9 @@ def publish_spectrum(
     spectrum_id: UUID,
     body: PublishRequest,
     db: Session = Depends(get_db),
-    user: User = Depends(get_current_user),
+    # Publishing grants a license to the public commons — an identity-carrying
+    # act, so guests are gated out (they keep drafts + the processing tools).
+    user: User = Depends(get_current_full_user),
 ) -> SpectrumResponse:
     spectrum = _get_owned_spectrum_or_404(spectrum_id, user, db)
     _recompute_derived_fields(spectrum, db)
