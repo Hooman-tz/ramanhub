@@ -21,7 +21,33 @@ import numpy as np
 from scipy import sparse
 from scipy.sparse.linalg import spsolve
 
+STEP_TYPE = "raman.fluorescence_suppression.airpls"
 VERSION = "1.0.0"
+LABEL = "Fluorescence suppression (airPLS)"
+CATEGORY = "baseline"
+DESCRIPTION = (
+    "Adaptive iteratively reweighted penalized least squares. The default choice for "
+    "fluorescence-swamped Raman spectra: it follows a broad, smoothly varying background "
+    "without eating into sharp peaks."
+)
+PARAM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "lambda_": {
+            "type": "number",
+            "default": 100,
+            "minimum": 0,
+            "title": "Smoothness (lambda)",
+            "description": "Larger means a stiffer baseline that resists following sharp peaks.",
+        },
+        "max_iter": {
+            "type": "integer",
+            "default": 15,
+            "minimum": 1,
+            "title": "Max iterations",
+        },
+    },
+}
 
 
 def _whittaker_smooth(y: np.ndarray, weights: np.ndarray, lambda_: float, order: int = 2) -> np.ndarray:

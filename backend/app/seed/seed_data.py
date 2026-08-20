@@ -10,6 +10,7 @@ from app.db.base import SessionLocal
 from app.models.enums import FieldDataType, Modality
 from app.models.field_registry import LedgerStepDefinition, MetadataFieldDefinition
 from app.models.license import License
+from app.processing.algorithms.registry import ALGORITHM_SPECS
 
 LICENSES = [
     {
@@ -104,36 +105,18 @@ RAMAN_METADATA_FIELDS = [
     },
 ]
 
+# Derived from the code-side algorithm registry rather than restated here,
+# so a new (or re-versioned) algorithm can never ship with its DB-side
+# `LedgerStepDefinition` row missing or its param schema out of date — which
+# would make `validate_ledger_steps` reject ledgers the code can happily run.
 RAMAN_LEDGER_STEPS = [
     {
-        "step_type": "raman.snv",
-        "algorithm_version": "1.0.0",
-        "param_schema": {},
-        "description": "Standard Normal Variate normalization.",
-    },
-    {
-        "step_type": "raman.msc",
-        "algorithm_version": "1.0.0",
-        "param_schema": {
-            "type": "object",
-            "properties": {"reference_source": {"type": "object"}},
-            "required": ["reference_source"],
-        },
-        "description": "Multiplicative Scatter Correction.",
-    },
-    {
-        "step_type": "raman.fluorescence_suppression.airpls",
-        "algorithm_version": "1.0.0",
-        "param_schema": {
-            "type": "object",
-            "properties": {
-                "lambda_": {"type": "number", "default": 100},
-                "max_iter": {"type": "integer", "default": 15},
-            },
-        },
-        "description": "Adaptive iteratively reweighted penalized least squares "
-        "fluorescence/baseline suppression.",
-    },
+        "step_type": spec.step_type,
+        "algorithm_version": spec.version,
+        "param_schema": spec.param_schema,
+        "description": spec.description,
+    }
+    for spec in ALGORITHM_SPECS
 ]
 
 

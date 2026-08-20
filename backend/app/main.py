@@ -37,6 +37,7 @@ from app.routers import (
     ledgers,
     library,
     licenses,
+    processing,
     raw_files,
     routines,
     search,
@@ -71,6 +72,7 @@ app.include_router(raw_files.router)
 app.include_router(ingestion_jobs.router)
 app.include_router(spectra.router)
 app.include_router(ledgers.router)
+app.include_router(processing.router)
 app.include_router(routines.router)
 app.include_router(spectrum_data.router)
 app.include_router(doi.router)

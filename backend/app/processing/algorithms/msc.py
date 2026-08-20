@@ -17,7 +17,25 @@ from __future__ import annotations
 
 import numpy as np
 
+STEP_TYPE = "raman.msc"
 VERSION = "1.0.0"
+LABEL = "MSC (multiplicative scatter correction)"
+CATEGORY = "normalization"
+DESCRIPTION = (
+    "Multiplicative Scatter Correction against a supplied reference spectrum."
+)
+PARAM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "reference_source": {
+            "type": "object",
+            "title": "Reference spectrum",
+            "description": 'Inline reference: {"type": "array", "values": [...]}, '
+            "same length as the spectrum being corrected.",
+        }
+    },
+    "required": ["reference_source"],
+}
 
 
 def apply(spectrum: np.ndarray, **params) -> np.ndarray:

@@ -21,7 +21,7 @@ from app.config import settings
 from app.models.processed_cache import ProcessedCache
 from app.models.processing_ledger import ProcessingLedger
 from app.models.raw_file import RawFile
-from app.processing.algorithms.registry import get_algorithm
+from app.processing.algorithms.registry import apply_step
 from app.processing.ledger import compute_ledger_hash
 from app.schemas.ledger import Ledger
 from app.spectra_io import load_raw_spectrum
@@ -34,9 +34,10 @@ def compute_cache_key(raw_file_id: UUID, ledger_hash: str) -> str:
 
 def get_or_compute(raw_file_id: UUID, ledger: Ledger, db: Session) -> tuple[np.ndarray, np.ndarray]:
     """Read-through cache for a ledger's processed output. Returns
-    `(wavenumbers, intensities)` — the wavenumber axis passes through each
-    algorithm step unchanged (all current algorithms only transform
-    intensity), while intensities are replayed through the ledger's steps.
+    `(wavenumbers, intensities)`, both replayed through the ledger's steps —
+    most steps only transform intensity, but `raman.crop`/`raman.resample`
+    change the wavenumber axis too, so both arrays are threaded through
+    `algorithms.registry.apply_step` and both are cached.
 
     On hit: downloads the cached `.npz` from `S3_BUCKET_PROCESSED`, bumps
     `hit_count`/`last_accessed_at`, returns the pair.
@@ -79,8 +80,7 @@ def get_or_compute(raw_file_id: UUID, ledger: Ledger, db: Session) -> tuple[np.n
 
     wavenumbers, intensities = load_raw_spectrum(raw_file)
     for step in sorted(ledger.steps, key=lambda s: s.order):
-        algorithm, _version = get_algorithm(step.type)
-        intensities = algorithm(intensities, **step.params)
+        wavenumbers, intensities = apply_step(step.type, wavenumbers, intensities, step.params)
 
     buffer = io.BytesIO()
     np.savez_compressed(buffer, wavenumbers=wavenumbers, intensities=intensities)

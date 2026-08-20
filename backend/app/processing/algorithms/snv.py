@@ -2,15 +2,29 @@
 
 SNV row-centers and scales a spectrum to zero mean / unit variance:
 `(x - mean(x)) / std(x)`. It is a per-spectrum operation with no external
-reference, so its param schema is empty (`{}` in the seeded
-`LedgerStepDefinition` row) — the only accepted (optional) knob is `ddof`,
-forwarded to `numpy.std`.
+reference, so its only knob is the optional `ddof`, forwarded to
+`numpy.std`.
 """
 from __future__ import annotations
 
 import numpy as np
 
+STEP_TYPE = "raman.snv"
 VERSION = "1.0.0"
+LABEL = "SNV normalization"
+CATEGORY = "normalization"
+DESCRIPTION = "Standard Normal Variate normalization: centers to zero mean and scales to unit variance."
+PARAM_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "ddof": {
+            "type": "integer",
+            "default": 0,
+            "title": "Delta degrees of freedom",
+            "description": "Forwarded to numpy.std; 0 for the population standard deviation.",
+        }
+    },
+}
 
 
 def apply(spectrum: np.ndarray, **params) -> np.ndarray:

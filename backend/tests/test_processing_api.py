@@ -167,3 +167,59 @@ def test_create_ledger_unknown_step_type_rejected(app_client, make_user, make_ra
     body = {"steps": [{"type": "raman.not_a_real_step", "params": {}, "order": 1}]}
     resp = app_client.post(f"/raw-files/{raw_file.id}/ledgers", json=body)
     assert resp.status_code == 422
+
+
+def test_create_ledger_with_invalid_params_rejected(app_client, make_user, make_raw_file):
+    """Param-schema validation runs against the seeded `LedgerStepDefinition`
+    rows, which are generated from the algorithm registry — so a new
+    algorithm's schema is enforced the moment it ships."""
+    owner = make_user()
+    app_client.set_current_user(owner)
+    raw_file = make_raw_file(owner)
+
+    body = {
+        "steps": [
+            {
+                "type": "raman.smooth.savitzky_golay",
+                "params": {"window_length": "wide"},
+                "order": 1,
+            }
+        ]
+    }
+    resp = app_client.post(f"/raw-files/{raw_file.id}/ledgers", json=body)
+    assert resp.status_code == 422
+
+
+def test_ledger_with_an_axis_changing_step_shortens_the_cached_axis(
+    app_client, make_user, make_raw_file, db_session
+):
+    """`raman.crop` is one of two steps that rewrite the wavenumber axis, so
+    the processed cache has to store the transformed axis rather than the raw
+    one — otherwise every downstream reader (chart, SNR, similarity search)
+    would pair cropped intensities with full-length wavenumbers."""
+    from app.models.processing_ledger import ProcessingLedger
+    from app.processing.cache import get_or_compute
+    from app.schemas.ledger import Ledger, LedgerStep
+
+    owner = make_user()
+    app_client.set_current_user(owner)
+    raw_file = make_raw_file(owner)
+
+    body = {
+        "steps": [{"type": "raman.crop", "params": {"min_cm1": 150, "max_cm1": 450}, "order": 1}]
+    }
+    resp = app_client.post(f"/raw-files/{raw_file.id}/ledgers", json=body)
+    assert resp.status_code == 201, resp.text
+    # The fixture spectrum covers 100-600 cm-1 in 100 cm-1 steps; 150-450
+    # keeps three points.
+    assert resp.json()["processed"]["length"] == 3
+
+    ledger_row = db_session.get(ProcessingLedger, uuid.UUID(resp.json()["ledger_id"]))
+    ledger = Ledger(
+        schema_version=ledger_row.schema_version,
+        raw_file_id=ledger_row.raw_file_id,
+        steps=[LedgerStep.model_validate(step) for step in ledger_row.steps],
+    )
+    wavenumbers, intensities = get_or_compute(raw_file.id, ledger, db_session)
+    assert list(wavenumbers) == [200.0, 300.0, 400.0]
+    assert wavenumbers.size == intensities.size
