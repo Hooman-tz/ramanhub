@@ -1,0 +1,95 @@
+# Lint, type-check and test both sides on every push and pull request.
+#
+# This is what makes the Dependabot PRs configured in dependabot.yml safe to
+# merge: an alert that a dependency needs bumping is only actionable if
+# something checks that the bump doesn't break anything.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+
+    # The DB-backed tests skip themselves when no Postgres is reachable, so
+    # without a service container CI would pass while silently running a
+    # fraction of the suite. pgcrypto (for gen_random_uuid) comes from the
+    # standard postgres image; the test harness creates the extension and
+    # the sibling `_test` database itself.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: raman
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: ramanhub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://raman:changeme@localhost:5432/ramanhub
+      # Object storage is stubbed in tests (see the `fake_s3` fixture), so no
+      # MinIO service is needed here.
+      JWT_SECRET: ci-only-not-a-real-secret
+
+    defaults:
+      run:
+        working-directory: backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Install dependencies
+        run: uv sync --locked
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Test
+        run: uv run pytest -q
+
+      # A model change that never got a migration passes the test suite
+      # (which builds its tables from the models directly) and then fails on
+      # deploy. These two steps catch that: the migrations must run cleanly
+      # from scratch, and must leave a schema that autogenerate has nothing
+      # left to add.
+      - name: Run migrations from scratch
+        run: uv run alembic upgrade head
+
+      - name: Check for model/migration drift
+        run: uv run alembic check
+
+  frontend:
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      # `npm run build` runs tsc first, so this covers type-checking too.
+      - name: Type-check and build
+        run: npm run build
