@@ -1,0 +1,76 @@
+# Render blueprint: the RamanHub API + managed Postgres.
+# Frontend lives on Vercel (see frontend/vercel.json); object storage on
+# Cloudflare R2. Full topology + every env var documented in README.md's
+# Deployment section.
+#
+# Use: Render dashboard -> New -> Blueprint -> point at this repo. Values
+# marked `sync: false` are secrets you paste in the dashboard on first
+# deploy; everything else is committed here.
+services:
+  - type: web
+    name: ramanhub-api
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    # Overrides the Dockerfile's dev CMD: bind to Render's $PORT, no
+    # --reload, and trust the proxy's X-Forwarded-* headers so the app
+    # knows it's serving https.
+    dockerCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'
+    # Migrations run before each deploy goes live. NOTE: preDeployCommand
+    # requires a paid instance type; on the free tier, remove this and run
+    # `uv run alembic upgrade head` from the service Shell after deploys.
+    preDeployCommand: uv run alembic upgrade head
+    healthCheckPath: /health
+    # starter = always-on (~$7/mo). `free` exists but spins down after
+    # idle (first request after sleep takes ~1 min) and disallows
+    # preDeployCommand.
+    plan: starter
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: FRONTEND_URL
+        value: https://serds.ca
+      - key: BACKEND_URL
+        value: https://api.serds.ca
+      - key: GOOGLE_REDIRECT_URI
+        value: https://api.serds.ca/auth/callback
+      - key: STORAGE_BACKEND
+        value: s3
+      - key: S3_REGION
+        value: auto
+      - key: S3_BUCKET_RAW
+        value: raw-spectra
+      - key: S3_BUCKET_PROCESSED
+        value: processed-spectra
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ramanhub-db
+          property: connectionString
+      # --- Secrets: paste in the dashboard (never committed) -------------
+      - key: JWT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      # Cloudflare R2: https://<account-id>.r2.cloudflarestorage.com + an
+      # R2 API token's key id/secret.
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # Optional; error tracking is a no-op while empty.
+      - key: SENTRY_DSN
+        sync: false
+
+databases:
+  - name: ramanhub-db
+    # basic-256mb (~$6/mo) — the `free` Postgres plan is deleted after 30
+    # days, which is unacceptable for a live database.
+    plan: basic-256mb
+    postgresMajorVersion: "16"

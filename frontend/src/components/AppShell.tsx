@@ -104,6 +104,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
             </div>
           )}
           <ReportBugButton />
+          <nav className="shell__legal" aria-label="Legal">
+            <Link to="/terms">Terms</Link> · <Link to="/privacy">Privacy</Link>
+          </nav>
         </div>
       </aside>
 

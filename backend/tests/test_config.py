@@ -30,6 +30,18 @@ def test_env_file_points_at_the_repo_root_env():
     assert env_file == repo_root / ".env"
 
 
+def test_database_url_scheme_is_normalized_to_psycopg3():
+    """Render/Railway/Heroku-style managed Postgres hands out postgres:// or
+    postgresql:// URLs; bare postgresql:// selects the (uninstalled) psycopg2
+    driver in SQLAlchemy, so both must normalize to postgresql+psycopg://."""
+    for given in ("postgres://u:p@h:5432/db", "postgresql://u:p@h:5432/db"):
+        assert (
+            Settings(DATABASE_URL=given).DATABASE_URL == "postgresql+psycopg://u:p@h:5432/db"
+        )
+    already = "postgresql+psycopg://u:p@h:5432/db"
+    assert Settings(DATABASE_URL=already).DATABASE_URL == already
+
+
 def test_an_absolute_env_file_loads_regardless_of_cwd(tmp_path, monkeypatch):
     """The actual bug, reproduced without touching the real `.env` (which
     may hold real secrets): a Settings subclass pointed at a scratch env

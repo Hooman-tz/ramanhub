@@ -136,6 +136,15 @@
   border-radius: var(--r-md);
 }
 
+.shell__legal {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.shell__legal a {
+  color: var(--color-text-muted);
+}
+
 /* --- Mobile: bottom bar ----------------------------------------------------- */
 
 @media (max-width: 760px) {

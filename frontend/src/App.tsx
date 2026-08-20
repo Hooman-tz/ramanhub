@@ -8,6 +8,8 @@ import RoutinesPage from './pages/RoutinesPage';
 import SearchPage from './pages/SearchPage';
 import LibraryPage from './pages/LibraryPage';
 import TrendingPage from './pages/TrendingPage';
+import TermsPage from './pages/TermsPage';
+import PrivacyPage from './pages/PrivacyPage';
 
 export default function App() {
   return (
@@ -25,6 +27,8 @@ export default function App() {
           <Route path="/search" element={<SearchPage />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/trending" element={<TrendingPage />} />
+          <Route path="/terms" element={<TermsPage />} />
+          <Route path="/privacy" element={<PrivacyPage />} />
         </Routes>
       </AppShell>
     </BrowserRouter>

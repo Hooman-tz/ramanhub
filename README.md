@@ -130,6 +130,42 @@ submitted ledgers are validated against are generated from that registry, so
 re-running `make seed` is all that's needed to make a new step usable — no
 schema restated in two places.
 
+## Deployment (production)
+
+Topology: **Vercel** serves the frontend at `https://serds.ca`; **Render**
+runs the API at `https://api.serds.ca` (same registrable domain, so the
+SameSite=lax session cookie works) plus managed Postgres; **Cloudflare R2**
+holds raw/processed spectra. `render.yaml` at the repo root is the Render
+blueprint; `frontend/vercel.json` adds the SPA rewrite.
+
+One-time setup:
+
+1. **Cloudflare R2** — create buckets `raw-spectra` and `processed-spectra`
+   and an API token. Endpoint is
+   `https://<account-id>.r2.cloudflarestorage.com`, region `auto`.
+2. **Render** — New → Blueprint → this repo (tracks `main`). Paste the
+   `sync: false` secrets: `JWT_SECRET` (generate:
+   `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`),
+   `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, the R2
+   values, optional `SENTRY_DSN`. Add custom domain `api.serds.ca`.
+3. **Vercel** — import the repo, root directory `frontend`, env vars
+   `VITE_API_BASE_URL=https://api.serds.ca` and
+   `VITE_GITHUB_REPO=Hooman-tz/ramanhub`. Add domain `serds.ca`.
+4. **DNS (Cloudflare)** — CNAME `api` → the Render hostname; apex →
+   Vercel, per each dashboard's instructions.
+5. **Google Cloud Console** — add
+   `https://api.serds.ca/auth/callback` to the OAuth client's Authorized
+   redirect URIs; move the consent screen out of Testing (or add testers).
+6. **Seed** — from the Render service Shell:
+   `uv run python -m app.seed.seed_data` (required reference data), and
+   optionally `uv run python -m app.seed.demo_data` (demo spectra).
+
+Migrations run automatically before each deploy (`preDeployCommand` in
+`render.yaml`). The in-process rate limiter assumes a single instance —
+swap in a shared store before scaling horizontally (see
+`backend/app/ratelimit.py`). `/terms` and `/privacy` ship placeholder
+text — review before announcing publicly.
+
 ### Services
 
 | Service      | Purpose                              | Local URL                       |

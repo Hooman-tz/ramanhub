@@ -5,6 +5,7 @@ rename without coordinating.
 """
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Anchored to the repo root (three levels up from this file:
@@ -37,6 +38,18 @@ class Settings(BaseSettings):
 
     # Database
     DATABASE_URL: str = "postgresql+psycopg://raman:changeme@localhost:5432/ramanhub"
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _normalize_db_scheme(cls, v: str) -> str:
+        """Managed-Postgres providers (Render, Railway, Heroku-style) hand out
+        `postgres://` or `postgresql://` URLs. Bare `postgresql://` makes
+        SQLAlchemy pick the psycopg2 driver — not installed here (we ship
+        psycopg 3) — so normalize both to the explicit psycopg3 dialect."""
+        for prefix in ("postgres://", "postgresql://"):
+            if v.startswith(prefix):
+                return "postgresql+psycopg://" + v[len(prefix):]
+        return v
 
     # Storage backend: "s3" (MinIO locally, Cloudflare R2 in prod) or
     # "local" (plain files under STORAGE_LOCAL_DIR — dev without Docker,
