@@ -8,6 +8,7 @@ import {
   type AlgorithmInfo,
 } from '../api/processing';
 import ParamField from './ParamField';
+import { Button, Card, SelectField, Skeleton } from './ui';
 
 interface DraftStep {
   type: string;
@@ -19,8 +20,23 @@ interface Props {
   onApplied: (spectrum: Spectrum) => void;
 }
 
+/** Compact one-line rendering of a step's params for its collapsed state. */
+function paramsSummary(params: Record<string, unknown>): string {
+  const entries = Object.entries(params);
+  if (entries.length === 0) return 'defaults';
+  return entries
+    .map(([key, value]) => `${key}=${typeof value === 'object' ? '{…}' : String(value)}`)
+    .join('  ');
+}
+
 /** Builds a processing pipeline step by step, rendering each step's inputs
  * from the backend's algorithm catalog.
+ *
+ * Presented as a vertical stepper because step order is scientifically
+ * load-bearing (despiking after normalization is a different — wrong —
+ * result). Only one step's param form is expanded at a time; the rest
+ * collapse to a summary line, so a five-step pipeline reads as five lines,
+ * not five forms.
  *
  * The pipeline is edited as a local draft and committed in one action,
  * rather than writing a ledger per edit. Ledgers are immutable and
@@ -34,6 +50,7 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
   const [picked, setPicked] = useState('');
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [expanded, setExpanded] = useState<number | null>(null);
 
   useEffect(() => {
     getAlgorithmCatalog()
@@ -50,7 +67,10 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
     [spectrum.current_ledger],
   );
 
-  useEffect(() => setSteps(savedSteps), [savedSteps]);
+  useEffect(() => {
+    setSteps(savedSteps);
+    setExpanded(null);
+  }, [savedSteps]);
 
   const byType = useMemo(() => {
     const map = new Map<string, AlgorithmInfo>();
@@ -64,6 +84,7 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
     const algorithm = byType.get(picked);
     if (!algorithm) return;
     setSteps([...steps, { type: algorithm.step_type, params: defaultParamsFor(algorithm) }]);
+    setExpanded(steps.length); // open the new step's form
     setPicked('');
   }
 
@@ -88,6 +109,14 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
     const reordered = [...steps];
     [reordered[index], reordered[target]] = [reordered[target], reordered[index]];
     setSteps(reordered);
+    if (expanded === index) setExpanded(target);
+    else if (expanded === target) setExpanded(index);
+  }
+
+  function remove(index: number) {
+    setSteps(steps.filter((_, i) => i !== index));
+    if (expanded === index) setExpanded(null);
+    else if (expanded !== null && expanded > index) setExpanded(expanded - 1);
   }
 
   async function apply() {
@@ -115,79 +144,115 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
   }
 
   if (catalogError) return <p className="error">Could not load algorithms: {catalogError}</p>;
-  if (!catalog) return <p>Loading algorithms...</p>;
+  if (!catalog) return <Skeleton lines={3} height="2.5rem" />;
 
   return (
     <section>
       <h2>Processing pipeline</h2>
 
       {steps.length === 0 && (
-        <p>
-          No steps yet — the chart below shows the raw spectrum. A typical Raman pipeline
-          despikes, then suppresses the fluorescence background, then normalizes.
+        <p className="hint">
+          No steps yet — the chart shows the raw spectrum. A typical Raman pipeline despikes,
+          then suppresses the fluorescence background, then normalizes.
         </p>
       )}
 
-      <ol className="pipeline">
+      <ol className={steps.length > 0 ? 'pipeline' : undefined}>
         {steps.map((step, index) => {
           const algorithm = byType.get(step.type);
           const properties = algorithm?.param_schema.properties ?? {};
           const required = algorithm?.param_schema.required ?? [];
+          const isOpen = expanded === index;
           return (
             <li key={`${step.type}-${index}`} className="pipeline-step">
-              <div className="pipeline-step-header">
-                <strong>{algorithm?.label ?? step.type}</strong>
-                <span className="hint">{step.type}</span>
-                <span className="pipeline-step-actions">
-                  <button type="button" onClick={() => move(index, -1)} disabled={index === 0}>
-                    Move up
-                  </button>
+              <span className="pipeline-step__dot" aria-hidden="true">
+                {index + 1}
+              </span>
+              <Card className="pipeline-step__card" title={undefined}>
+                {/* The toggle and the step actions are siblings — a button
+                    may not contain other buttons. */}
+                <div className="pipeline-step__summary-row">
                   <button
                     type="button"
-                    onClick={() => move(index, 1)}
-                    disabled={index === steps.length - 1}
+                    className="pipeline-step__summary"
+                    aria-expanded={isOpen}
+                    onClick={() => setExpanded(isOpen ? null : index)}
                   >
-                    Move down
+                    <span className="pipeline-step__label">{algorithm?.label ?? step.type}</span>
+                    {algorithm && (
+                      <span className={`cat-badge cat-badge--${algorithm.category}`}>
+                        {CATEGORY_LABELS[algorithm.category] ?? algorithm.category}
+                      </span>
+                    )}
+                    {!isOpen && (
+                      <span className="pipeline-step__params-summary">
+                        {paramsSummary(step.params)}
+                      </span>
+                    )}
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => setSteps(steps.filter((_, i) => i !== index))}
-                  >
-                    Remove
-                  </button>
-                </span>
-              </div>
+                  <span className="pipeline-step__actions">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => move(index, -1)}
+                      disabled={index === 0}
+                      aria-label="Move step up"
+                    >
+                      ↑
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => move(index, 1)}
+                      disabled={index === steps.length - 1}
+                      aria-label="Move step down"
+                    >
+                      ↓
+                    </Button>
+                    <Button size="sm" variant="danger" onClick={() => remove(index)}>
+                      Remove
+                    </Button>
+                  </span>
+                </div>
 
-              {algorithm?.transforms_axis && (
-                <p className="hint">
-                  Changes the wavenumber axis — steps after this one see the shortened
-                  spectrum.
-                </p>
-              )}
-
-              {Object.keys(properties).length === 0 ? (
-                <p className="hint">No parameters.</p>
-              ) : (
-                Object.entries(properties).map(([key, property]) => (
-                  <ParamField
-                    key={key}
-                    name={key}
-                    property={property}
-                    required={required.includes(key)}
-                    value={step.params[key]}
-                    onChange={(value) => updateParam(index, key, value)}
-                    idPrefix={`step-${index}`}
-                  />
-                ))
-              )}
+                {isOpen && (
+                  <div className="pipeline-step__body">
+                    {algorithm?.transforms_axis && (
+                      <p className="hint">
+                        Changes the wavenumber axis — steps after this one see the shortened
+                        spectrum.
+                      </p>
+                    )}
+                    {Object.keys(properties).length === 0 ? (
+                      <p className="hint">No parameters.</p>
+                    ) : (
+                      Object.entries(properties).map(([key, property]) => (
+                        <ParamField
+                          key={key}
+                          name={key}
+                          property={property}
+                          required={required.includes(key)}
+                          value={step.params[key]}
+                          onChange={(value) => updateParam(index, key, value)}
+                          idPrefix={`step-${index}`}
+                        />
+                      ))
+                    )}
+                  </div>
+                )}
+              </Card>
             </li>
           );
         })}
       </ol>
 
-      <div className="field-row">
-        <label htmlFor="add-step">Add a step</label>
-        <select id="add-step" value={picked} onChange={(e) => setPicked(e.target.value)}>
+      <div className="pipeline-add">
+        <SelectField
+          label="Add a step"
+          value={picked}
+          onChange={(e) => setPicked(e.target.value)}
+          hint={picked ? byType.get(picked)?.description : undefined}
+        >
           <option value="">Choose an algorithm...</option>
           {catalog.categories.map((category) => (
             <optgroup key={category} label={CATEGORY_LABELS[category] ?? category}>
@@ -200,24 +265,21 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
                 ))}
             </optgroup>
           ))}
-        </select>
+        </SelectField>
+        <Button onClick={addStep} disabled={!picked}>
+          Add step
+        </Button>
       </div>
 
-      {picked && <p className="hint">{byType.get(picked)?.description}</p>}
-
-      <button type="button" onClick={addStep} disabled={!picked}>
-        Add step
-      </button>
-
-      <p>
-        <button type="button" onClick={apply} disabled={!dirty || applying}>
-          {applying ? 'Applying...' : 'Apply pipeline'}
-        </button>{' '}
-        <button type="button" onClick={() => setSteps(savedSteps)} disabled={!dirty || applying}>
+      <div className="pipeline-commit">
+        <Button variant="primary" onClick={apply} disabled={!dirty} loading={applying}>
+          Apply pipeline
+        </Button>
+        <Button variant="ghost" onClick={() => setSteps(savedSteps)} disabled={!dirty || applying}>
           Discard changes
-        </button>
-        {dirty && <span className="hint"> Unsaved changes</span>}
-      </p>
+        </Button>
+        {dirty && <span className="hint">Unsaved changes</span>}
+      </div>
 
       {error && <p className="error">{error}</p>}
     </section>

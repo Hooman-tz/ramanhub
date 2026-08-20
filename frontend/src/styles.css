@@ -1,122 +1,270 @@
+/* Base styles + legacy utility classes, all expressed in design tokens
+   (src/styles/tokens.css). Pages not yet migrated to the ui/ kit still use
+   .field-row / .badge / table — those stay working here, restyled, so the
+   un-redesigned pages inherit the new look without being touched. */
+@import './styles/tokens.css';
+@import './styles/ui.css';
+@import './styles/shell.css';
+@import './styles/pages.css';
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+}
+
 body {
-  font-family: system-ui, -apple-system, Segoe UI, sans-serif;
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 1.5rem;
-  color: #1a1a1a;
+  margin: 0;
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  line-height: var(--leading-normal);
+  color: var(--color-text);
+  background-color: var(--color-bg);
+  /* Ambient wash: three large, soft radial tints for the glass to blur.
+     Fixed so scrolling content glides over a stable atmosphere. */
+  background-image:
+    radial-gradient(1100px 700px at 12% -8%, var(--wash-a), transparent 60%),
+    radial-gradient(900px 640px at 96% 12%, var(--wash-b), transparent 55%),
+    radial-gradient(1000px 800px at 55% 108%, var(--wash-c), transparent 60%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
 }
 
-nav a {
-  margin-right: 1rem;
+h1, h2, h3 {
+  line-height: var(--leading-tight);
+  letter-spacing: -0.015em;
+  color: var(--color-text);
 }
 
-table {
-  border-collapse: collapse;
-  width: 100%;
+h1 { font-size: var(--text-xl); font-weight: 650; margin: 0 0 var(--sp-4); }
+h2 { font-size: var(--text-lg); font-weight: 600; margin: var(--sp-6) 0 var(--sp-3); }
+h3 { font-size: var(--text-md); font-weight: 600; margin: var(--sp-5) 0 var(--sp-2); }
+
+p { margin: 0 0 var(--sp-3); }
+
+a {
+  color: var(--color-accent-text);
+  text-decoration: none;
 }
 
-th, td {
-  border: 1px solid #ccc;
-  padding: 0.4rem 0.6rem;
-  text-align: left;
+a:hover {
+  text-decoration: underline;
 }
 
-.field-row {
-  margin-bottom: 0.75rem;
-  display: flex;
-  flex-direction: column;
-  max-width: 400px;
+code, pre {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
 }
 
-.field-row label {
-  font-weight: 600;
-  margin-bottom: 0.2rem;
+pre {
+  background: var(--color-surface-solid);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-3);
+  overflow-x: auto;
 }
 
-.field-row input,
-.field-row textarea,
-.field-row select {
-  padding: 0.35rem;
-  font-size: 1rem;
+/* --- The glass surface -------------------------------------------------- */
+
+.glass-panel {
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-lg);
+  box-shadow: var(--glass-shadow), inset 0 1px 0 var(--glass-edge);
 }
 
-.field-row.flagged input {
-  border: 2px solid #c0392b;
+.glass-panel--strong {
+  background: var(--glass-bg-strong);
+  box-shadow: var(--glass-shadow-raised), inset 0 1px 0 var(--glass-edge);
 }
 
-.flag-reason {
-  color: #c0392b;
-  font-size: 0.85rem;
-  margin-top: 0.2rem;
+/* --- Native controls (default look, for pages not yet on the ui/ kit) --- */
+
+button {
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  color: var(--color-text);
+  background: var(--glass-bg-strong);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-md);
+  padding: var(--sp-2) var(--sp-4);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out);
 }
 
-.badge {
-  display: inline-block;
-  padding: 0.15rem 0.6rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  font-weight: 600;
-  text-transform: uppercase;
+button:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
 }
 
-.badge.draft {
-  background: #eee;
-  color: #555;
+button:active:not(:disabled) {
+  transform: scale(0.985);
 }
 
-.badge.published {
-  background: #d4edda;
-  color: #155724;
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }
 
-.badge.embargoed {
-  background: #fff3cd;
-  color: #856404;
+input, select, textarea {
+  font-family: inherit;
+  font-size: var(--text-base);
+  color: var(--color-text);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-2) var(--sp-3);
+  transition: border-color var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
 }
 
-.error {
-  color: #c0392b;
+input::placeholder, textarea::placeholder {
+  color: var(--color-text-muted);
+}
+
+:is(button, input, select, textarea, a):focus-visible {
+  outline: none;
+  border-color: var(--color-accent);
+  box-shadow: 0 0 0 3px var(--color-ring);
+}
+
+a:focus-visible {
+  border-radius: var(--r-sm);
 }
 
 fieldset {
-  margin-bottom: 1.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-lg);
+  padding: var(--sp-4) var(--sp-5) var(--sp-5);
+  margin: 0 0 var(--sp-5);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+}
+
+legend {
+  font-weight: 600;
+  padding: 0 var(--sp-2);
+}
+
+/* --- Tables -------------------------------------------------------------- */
+
+table {
+  border-collapse: separate;
+  border-spacing: 0;
+  width: 100%;
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border: 1px solid var(--glass-border);
+  border-radius: var(--r-lg);
+  overflow: hidden;
+  box-shadow: var(--glass-shadow);
+}
+
+th, td {
+  padding: var(--sp-3) var(--sp-4);
+  text-align: left;
+  border-bottom: 1px solid var(--color-border);
+}
+
+th {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--color-text-muted);
+}
+
+td {
+  font-variant-numeric: tabular-nums;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+/* --- Legacy field-row (pages not yet on the ui/ kit) --------------------- */
+
+.field-row {
+  margin-bottom: var(--sp-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  max-width: 420px;
+}
+
+.field-row label {
+  font-size: var(--text-sm);
+  font-weight: 550;
+  color: var(--color-text-secondary);
+}
+
+.field-row.flagged input {
+  border-color: var(--color-warn);
+  box-shadow: 0 0 0 3px oklch(from var(--color-warn) l c h / 0.2);
+}
+
+.flag-reason {
+  color: var(--color-warn-text);
+  font-size: var(--text-xs);
+}
+
+/* --- Badges (state chips) ------------------------------------------------ */
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  padding: 0.2rem var(--sp-3);
+  border-radius: var(--r-full);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: capitalize;
+}
+
+.badge.draft, .badge-draft {
+  background: var(--color-neutral-badge-bg);
+  color: var(--color-neutral-badge-text);
+}
+
+.badge.published, .badge-published {
+  background: var(--color-good-bg);
+  color: var(--color-good-text);
+}
+
+.badge.embargoed, .badge-embargoed {
+  background: var(--color-warn-bg);
+  color: var(--color-warn-text);
+}
+
+/* --- Text utilities ------------------------------------------------------ */
+
+.error {
+  color: var(--color-bad-text);
+  font-size: var(--text-sm);
 }
 
 .hint {
-  color: #555;
-  font-size: 0.85rem;
-  margin: 0.2rem 0;
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  margin: var(--sp-1) 0;
 }
 
-/* Processing pipeline builder. Steps are numbered because their order is
-   scientifically load-bearing — despiking after normalization is a
-   different (and wrong) result, not a cosmetic difference. */
-.pipeline {
-  list-style: decimal;
-  padding-left: 1.5rem;
-}
+/* --- Reduced motion ------------------------------------------------------ */
 
-.pipeline-step {
-  border: 1px solid #ddd;
-  border-radius: 4px;
-  padding: 0.75rem 1rem;
-  margin-bottom: 0.75rem;
-}
-
-.pipeline-step-header {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  margin-bottom: 0.5rem;
-}
-
-.pipeline-step-actions {
-  margin-left: auto;
-  display: flex;
-  gap: 0.25rem;
-}
-
-.pipeline-step-actions button {
-  font-size: 0.8rem;
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }

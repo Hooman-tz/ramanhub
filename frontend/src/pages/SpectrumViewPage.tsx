@@ -7,6 +7,7 @@ import DraftPublishToggle from '../components/DraftPublishToggle';
 import PipelineBuilder from '../components/PipelineBuilder';
 import SpectrumChart from '../components/SpectrumChart';
 import VoteCommentPanel from '../components/VoteCommentPanel';
+import { Badge, Card, Skeleton } from '../components/ui';
 
 export default function SpectrumViewPage() {
   const { id } = useParams<{ id: string }>();
@@ -50,7 +51,7 @@ export default function SpectrumViewPage() {
     loadChartData(updated.id);
   }
 
-  if (loading) return <p>Loading...</p>;
+  if (loading) return <Skeleton lines={4} height="2rem" />;
   if (error) return <p className="error">{error}</p>;
   if (!spectrum) return <p>Spectrum not found.</p>;
 
@@ -58,15 +59,15 @@ export default function SpectrumViewPage() {
 
   return (
     <div>
-      <h1>{spectrum.title ?? `Spectrum ${spectrum.id}`}</h1>
-      {spectrum.description && <p>{spectrum.description}</p>}
+      <div className="spectrum-header">
+        <h1>{spectrum.title ?? `Spectrum ${spectrum.id}`}</h1>
+        <Badge state={spectrum.state} />
+      </div>
+      {spectrum.description && <p className="hint">{spectrum.description}</p>}
 
-      <DraftPublishToggle spectrum={spectrum} onPublished={setSpectrum} />
-
-      <h2>Data</h2>
       {chartError && <p className="error">{chartError}</p>}
       {chartData && (
-        <>
+        <Card className="chart-card">
           <SpectrumChart
             wavenumbers={chartData.wavenumbers}
             intensities={chartData.intensities}
@@ -82,27 +83,31 @@ export default function SpectrumViewPage() {
                 : undefined
             }
           />
-          {hasPipeline && (
-            <label>
-              <input
-                type="checkbox"
-                checked={showRaw}
-                onChange={(e) => setShowRaw(e.target.checked)}
-              />{' '}
-              Overlay the raw spectrum
-            </label>
-          )}
-          {chartData.downsampled && (
-            <p className="hint">
-              Showing {chartData.wavenumbers.length.toLocaleString()} of{' '}
-              {chartData.total_points.toLocaleString()} points (downsampled for display).
-            </p>
-          )}
-        </>
+          <div className="chart-toolbar">
+            {hasPipeline && (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={showRaw}
+                  onChange={(e) => setShowRaw(e.target.checked)}
+                />
+                Overlay the raw spectrum
+              </label>
+            )}
+            {chartData.downsampled && (
+              <span className="hint">
+                Showing {chartData.wavenumbers.length.toLocaleString()} of{' '}
+                {chartData.total_points.toLocaleString()} points (downsampled for display).
+              </span>
+            )}
+          </div>
+        </Card>
       )}
-      {!chartData && chartLoading && <p>Loading chart...</p>}
+      {!chartData && chartLoading && <Skeleton height="380px" />}
 
       <PipelineBuilder spectrum={spectrum} onApplied={handleApplied} />
+
+      <DraftPublishToggle spectrum={spectrum} onPublished={setSpectrum} />
 
       <h3>Applied ledger</h3>
       <LedgerStepList steps={spectrum.current_ledger?.steps} />

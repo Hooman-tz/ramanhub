@@ -1,0 +1,183 @@
+/* Styles for the ui/ component kit. Class-per-component, all values from
+   tokens.css — no raw colors or sizes in this file. */
+
+/* --- Button ---------------------------------------------------------------- */
+
+.ui-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  font-family: inherit;
+  font-size: var(--text-sm);
+  font-weight: 550;
+  border-radius: var(--r-full);
+  padding: var(--sp-2) var(--sp-5);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: background var(--dur-fast) var(--ease-out),
+    border-color var(--dur-fast) var(--ease-out),
+    transform var(--dur-fast) var(--ease-out),
+    box-shadow var(--dur-fast) var(--ease-out);
+}
+
+.ui-button:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Anchors wearing the button classes shouldn't pick up link underlines. */
+a.ui-button,
+a.ui-button:hover {
+  text-decoration: none;
+}
+
+.ui-button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.ui-button--primary {
+  background: var(--color-accent);
+  color: var(--color-text-on-accent);
+  box-shadow: 0 1px 2px oklch(from var(--color-accent) l c h / 0.35),
+    0 6px 16px -4px oklch(from var(--color-accent) l c h / 0.4);
+}
+
+.ui-button--primary:hover:not(:disabled) {
+  background: var(--color-accent-hover);
+}
+
+.ui-button--glass {
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  backdrop-filter: blur(var(--glass-blur));
+  border-color: var(--color-border);
+  color: var(--color-text);
+}
+
+.ui-button--glass:hover:not(:disabled) {
+  border-color: var(--color-border-strong);
+  background: var(--color-surface-raised);
+}
+
+.ui-button--ghost {
+  background: transparent;
+  color: var(--color-text-secondary);
+}
+
+.ui-button--ghost:hover:not(:disabled) {
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+.ui-button--danger {
+  background: transparent;
+  border-color: transparent;
+  color: var(--color-bad-text);
+}
+
+.ui-button--danger:hover:not(:disabled) {
+  background: var(--color-bad-bg);
+}
+
+.ui-button--sm {
+  font-size: var(--text-xs);
+  padding: var(--sp-1) var(--sp-3);
+}
+
+/* --- Spinner ---------------------------------------------------------------- */
+
+.ui-spinner {
+  width: 1em;
+  height: 1em;
+  flex: none;
+  border-radius: var(--r-full);
+  border: 2px solid currentcolor;
+  border-top-color: transparent;
+  animation: ui-spin 0.7s linear infinite;
+}
+
+@keyframes ui-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* --- Card ------------------------------------------------------------------- */
+
+.ui-card {
+  padding: var(--sp-5);
+}
+
+.ui-card + .ui-card {
+  margin-top: var(--sp-4);
+}
+
+.ui-card__title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  margin: 0 0 var(--sp-3);
+}
+
+/* --- Field ------------------------------------------------------------------ */
+
+.ui-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  margin-bottom: var(--sp-4);
+  max-width: 420px;
+}
+
+.ui-field--full {
+  max-width: none;
+}
+
+.ui-field__label {
+  font-size: var(--text-sm);
+  font-weight: 550;
+  color: var(--color-text-secondary);
+}
+
+.ui-field__hint {
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  margin: 0;
+}
+
+.ui-field__error {
+  font-size: var(--text-xs);
+  color: var(--color-bad-text);
+  margin: 0;
+}
+
+/* --- EmptyState --------------------------------------------------------------- */
+
+.ui-empty {
+  text-align: center;
+  padding: var(--sp-7) var(--sp-5);
+  color: var(--color-text-muted);
+}
+
+.ui-empty__title {
+  font-size: var(--text-md);
+  font-weight: 600;
+  color: var(--color-text-secondary);
+  margin: 0 0 var(--sp-1);
+}
+
+/* --- Skeleton ------------------------------------------------------------------ */
+
+.ui-skeleton {
+  border-radius: var(--r-sm);
+  background: linear-gradient(
+    100deg,
+    var(--color-neutral-badge-bg) 40%,
+    var(--color-surface-raised) 50%,
+    var(--color-neutral-badge-bg) 60%
+  );
+  background-size: 200% 100%;
+  animation: ui-shimmer 1.4s ease infinite;
+}
+
+@keyframes ui-shimmer {
+  to { background-position: -200% 0; }
+}

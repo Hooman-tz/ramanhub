@@ -15,6 +15,30 @@ import { CanvasRenderer } from 'echarts/renderers';
 
 echarts.use([LineChart, GridComponent, LegendComponent, TooltipComponent, CanvasRenderer]);
 
+/** Chart colors resolved from the design tokens at render time — ECharts
+ * paints to canvas, so it can't read CSS custom properties itself. The
+ * `--chart-*` tokens are plain hexes from the validated dataviz reference
+ * palette (series-1 blue per mode; grid/axis inks).
+ *
+ * Palette-validator note: the raw overlay deliberately uses the muted ink
+ * `#898781`, which fails the validator's chroma floor ("reads gray") — by
+ * design. The overlay is a recessive *reference layer*, not a competing
+ * series, and its identity is carried by secondary encoding (dashed line,
+ * always-on legend, its own labeled axis). CVD and normal-vision separation
+ * against the blue both pass with wide margins (ΔE 15.9 / 17.8 light,
+ * 15.9 / 17.0 dark). */
+function chartTheme() {
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string) =>
+    styles.getPropertyValue(name).trim() || fallback;
+  return {
+    series1: token('--chart-series-1', '#2a78d6'),
+    overlay: token('--chart-series-overlay', '#898781'),
+    grid: token('--chart-grid', '#e1e0d9'),
+    axisInk: token('--chart-axis-ink', '#898781'),
+  };
+}
+
 interface Series {
   name: string;
   wavenumbers: number[];
@@ -76,6 +100,7 @@ export default function SpectrumChart({
     chart.hideLoading();
 
     const data: [number, number][] = wavenumbers.map((wn, i) => [wn, intensities[i]]);
+    const theme = chartTheme();
 
     // Raw and processed intensities routinely differ by orders of magnitude
     // (normalization alone takes counts to 0-1), so the overlay gets its own
@@ -89,7 +114,8 @@ export default function SpectrumChart({
         showSymbol: false,
         smooth: false,
         sampling: 'lttb',
-        lineStyle: { width: 1.5 },
+        color: theme.series1,
+        lineStyle: { width: 2 },
         yAxisIndex: 0,
         z: 3,
       },
@@ -102,19 +128,38 @@ export default function SpectrumChart({
         showSymbol: false,
         smooth: false,
         sampling: 'lttb',
-        lineStyle: { width: 1, opacity: 0.5, type: 'dashed' },
+        color: theme.overlay,
+        lineStyle: { width: 1.25, opacity: 0.7, type: 'dashed' },
         yAxisIndex: 1,
         z: 1,
       });
     }
 
+    const axisStyle = {
+      nameTextStyle: { color: theme.axisInk },
+      axisLabel: { color: theme.axisInk },
+      axisLine: { lineStyle: { color: theme.grid } },
+      splitLine: { lineStyle: { color: theme.grid } },
+    };
+
     chart.setOption({
+      textStyle: { fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif' },
       tooltip: {
         trigger: 'axis',
-        axisPointer: { type: 'cross' },
+        axisPointer: { type: 'cross', label: { backgroundColor: theme.axisInk } },
         valueFormatter: (value: unknown) => (typeof value === 'number' ? value.toFixed(2) : String(value)),
+        // Glass-adjacent tooltip: translucent, blurred, rounded like every
+        // other elevated surface in the app.
+        backgroundColor: 'rgba(252, 252, 251, 0.85)',
+        borderColor: theme.grid,
+        borderRadius: 10,
+        padding: [8, 12],
+        textStyle: { color: '#0b0b0b' },
+        extraCssText: 'backdrop-filter: blur(8px); box-shadow: 0 8px 24px -6px rgba(0,0,0,0.18);',
       },
-      legend: overlay ? { data: [name, overlay.name], top: 0 } : undefined,
+      legend: overlay
+        ? { data: [name, overlay.name], top: 0, textStyle: { color: theme.axisInk } }
+        : undefined,
       grid: { left: 60, right: overlay ? 60 : 30, top: overlay ? 50 : 30, bottom: 50 },
       xAxis: {
         type: 'value',
@@ -122,6 +167,7 @@ export default function SpectrumChart({
         nameLocation: 'middle',
         nameGap: 30,
         scale: true,
+        ...axisStyle,
       },
       yAxis: [
         {
@@ -130,6 +176,7 @@ export default function SpectrumChart({
           nameLocation: 'middle',
           nameGap: 45,
           scale: true,
+          ...axisStyle,
         },
         {
           type: 'value',
@@ -137,6 +184,7 @@ export default function SpectrumChart({
           position: 'right',
           scale: true,
           show: Boolean(overlay),
+          ...axisStyle,
           splitLine: { show: false },
         },
       ],

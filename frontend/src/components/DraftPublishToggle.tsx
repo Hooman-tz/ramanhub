@@ -1,12 +1,16 @@
 import { useEffect, useState } from 'react';
 import { getLicenses, publishSpectrum, updateSpectrum, type License, type Spectrum } from '../api/client';
 import { lookupDoi, type DoiMetadata } from '../api/visualization';
+import { Button, Card, InputField, SelectField } from './ui';
 
 interface Props {
   spectrum: Spectrum;
   onPublished: (updated: Spectrum) => void;
 }
 
+/** The publish flow for a draft: optional DOI lookup (auto-populates paper
+ * metadata for review — never auto-submitted), mandatory license, optional
+ * embargo. Renders nothing beyond the state badge once published. */
 export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
   const [licenses, setLicenses] = useState<License[]>([]);
   const [licenseId, setLicenseId] = useState('');
@@ -103,94 +107,84 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
     }
   }
 
+  if (spectrum.state !== 'draft') return null;
+
   return (
-    <div>
-      <span className={`badge ${spectrum.state}`}>{spectrum.state}</span>
+    <Card title="Publish to the commons">
+      <p className="hint">
+        This spectrum is a private draft — process and explore freely. Publishing is an
+        explicit, separate action.
+      </p>
 
-      {spectrum.state === 'draft' && (
-        <div style={{ marginTop: '0.75rem' }}>
-          <div className="field-row">
-            <label htmlFor="doi-input">Paper DOI (optional)</label>
-            <input
-              id="doi-input"
-              type="text"
-              placeholder="10.1021/acs.analchem.xxxxxxx"
-              value={doiInput}
-              onChange={(e) => {
-                setDoiInput(e.target.value);
-                setDoiMetadata(null);
-                setDoiNotFound(false);
-              }}
-            />
-            <button type="button" onClick={handleDoiLookup} disabled={doiLookupLoading}>
-              {doiLookupLoading ? 'Looking up...' : 'Look up'}
-            </button>
-          </div>
+      <InputField
+        label="Paper DOI (optional)"
+        placeholder="10.1021/acs.analchem.xxxxxxx"
+        value={doiInput}
+        onChange={(e) => {
+          setDoiInput(e.target.value);
+          setDoiMetadata(null);
+          setDoiNotFound(false);
+        }}
+        hint="A resolved DOI marks this spectrum DOI-verified in search."
+      />
+      <Button onClick={handleDoiLookup} loading={doiLookupLoading}>
+        Look up
+      </Button>
 
-          {doiError && <p className="error">{doiError}</p>}
-          {doiNotFound && <p>No metadata found for that DOI.</p>}
+      {doiError && <p className="error">{doiError}</p>}
+      {doiNotFound && <p className="hint">No metadata found for that DOI.</p>}
 
-          {doiMetadata && (
-            <div className="doi-preview" style={{ margin: '0.5rem 0', padding: '0.5rem', border: '1px solid #ccc' }}>
-              <p>
-                <strong>{doiMetadata.title ?? '(no title found)'}</strong>
-              </p>
-              {doiMetadata.authors.length > 0 && <p>{doiMetadata.authors.join(', ')}</p>}
-              {(doiMetadata.journal || doiMetadata.year) && (
-                <p>
-                  {doiMetadata.journal ?? ''} {doiMetadata.year ? `(${doiMetadata.year})` : ''}
-                </p>
-              )}
-              {doiMetadata.url && (
-                <p>
-                  <a href={doiMetadata.url} target="_blank" rel="noreferrer">
-                    {doiMetadata.url}
-                  </a>
-                </p>
-              )}
-              <p>
-                This is a preview only — review it, then apply it to this draft's title/description
-                if it's correct.
-              </p>
-              <button type="button" onClick={handleApplyDoiMetadata} disabled={applyingDoiMetadata}>
-                {applyingDoiMetadata ? 'Applying...' : 'Use this metadata'}
-              </button>
-            </div>
+      {doiMetadata && (
+        <Card strong title={doiMetadata.title ?? '(no title found)'}>
+          {doiMetadata.authors.length > 0 && <p>{doiMetadata.authors.join(', ')}</p>}
+          {(doiMetadata.journal || doiMetadata.year) && (
+            <p className="hint">
+              {doiMetadata.journal ?? ''} {doiMetadata.year ? `(${doiMetadata.year})` : ''}
+            </p>
           )}
-
-          <div className="field-row">
-            <label htmlFor="license-select">License</label>
-            <select
-              id="license-select"
-              value={licenseId}
-              onChange={(e) => setLicenseId(e.target.value)}
-            >
-              <option value="">Select a license...</option>
-              {licenses.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.name}
-                </option>
-              ))}
-            </select>
-          </div>
-
-          <div className="field-row">
-            <label htmlFor="embargo-date">Embargo release date (optional)</label>
-            <input
-              id="embargo-date"
-              type="date"
-              value={embargoDate}
-              onChange={(e) => setEmbargoDate(e.target.value)}
-            />
-          </div>
-
-          <button type="button" onClick={handlePublish} disabled={publishing}>
-            {publishing ? 'Publishing...' : 'Publish'}
-          </button>
-
-          {error && <p className="error">{error}</p>}
-        </div>
+          {doiMetadata.url && (
+            <p>
+              <a href={doiMetadata.url} target="_blank" rel="noreferrer">
+                {doiMetadata.url}
+              </a>
+            </p>
+          )}
+          <p className="hint">
+            This is a preview only — review it, then apply it to this draft's title/description
+            if it's correct.
+          </p>
+          <Button onClick={handleApplyDoiMetadata} loading={applyingDoiMetadata}>
+            Use this metadata
+          </Button>
+        </Card>
       )}
-    </div>
+
+      <SelectField
+        label="License"
+        value={licenseId}
+        onChange={(e) => setLicenseId(e.target.value)}
+      >
+        <option value="">Select a license...</option>
+        {licenses.map((l) => (
+          <option key={l.id} value={l.id}>
+            {l.name}
+          </option>
+        ))}
+      </SelectField>
+
+      <InputField
+        label="Embargo release date (optional)"
+        type="date"
+        value={embargoDate}
+        onChange={(e) => setEmbargoDate(e.target.value)}
+        hint="Private until this date, then automatically public — for pre-publication data."
+      />
+
+      <Button variant="primary" onClick={handlePublish} loading={publishing}>
+        Publish
+      </Button>
+
+      {error && <p className="error">{error}</p>}
+    </Card>
   );
 }

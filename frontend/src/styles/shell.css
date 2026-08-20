@@ -1,0 +1,184 @@
+/* App shell: glass sidebar (desktop) / glass bottom bar (mobile). */
+
+.shell {
+  display: grid;
+  grid-template-columns: 232px minmax(0, 1fr);
+  min-height: 100vh;
+}
+
+.shell__sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-5);
+  padding: var(--sp-5) var(--sp-3);
+  background: var(--glass-bg);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  border-right: 1px solid var(--glass-border);
+}
+
+.shell__main {
+  padding: var(--sp-6) var(--sp-6) var(--sp-8);
+  max-width: 980px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+/* --- Wordmark ------------------------------------------------------------ */
+
+.shell__brand {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
+  font-size: var(--text-md);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.shell__brand:hover {
+  text-decoration: none;
+}
+
+.shell__brand-mark {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  flex: none;
+}
+
+/* --- Nav ------------------------------------------------------------------ */
+
+.shell__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+}
+
+.shell__nav-link {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  font-size: var(--text-sm);
+  font-weight: 550;
+  color: var(--color-text-secondary);
+  text-decoration: none;
+  transition: background var(--dur-fast) var(--ease-out),
+    color var(--dur-fast) var(--ease-out);
+}
+
+.shell__nav-link:hover {
+  background: var(--color-surface);
+  color: var(--color-text);
+  text-decoration: none;
+}
+
+.shell__nav-link.active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+.shell__nav-link svg {
+  width: 17px;
+  height: 17px;
+  flex: none;
+}
+
+/* --- Footer (user / bug report) ------------------------------------------- */
+
+.shell__footer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  padding: 0 var(--sp-3);
+}
+
+.shell__user {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+  overflow: hidden;
+}
+
+.shell__user-avatar {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r-full);
+  flex: none;
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 650;
+  font-size: 0.65rem;
+}
+
+.shell__user-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.report-bug-button {
+  font-size: var(--text-xs);
+  padding: var(--sp-1) var(--sp-3);
+  border-radius: var(--r-md);
+}
+
+/* --- Mobile: bottom bar ----------------------------------------------------- */
+
+@media (max-width: 760px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .shell__sidebar {
+    position: fixed;
+    top: auto;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    height: auto;
+    z-index: 10;
+    flex-direction: row;
+    align-items: center;
+    gap: 0;
+    padding: var(--sp-1) var(--sp-2);
+    padding-bottom: calc(var(--sp-1) + env(safe-area-inset-bottom));
+    border-right: none;
+    border-top: 1px solid var(--glass-border);
+  }
+
+  .shell__brand,
+  .shell__footer {
+    display: none;
+  }
+
+  .shell__nav {
+    flex-direction: row;
+    justify-content: space-around;
+    width: 100%;
+  }
+
+  .shell__nav-link {
+    flex-direction: column;
+    gap: 2px;
+    padding: var(--sp-1) var(--sp-2);
+    font-size: 0.65rem;
+  }
+
+  .shell__main {
+    padding: var(--sp-5) var(--sp-4) calc(var(--sp-8) + 56px);
+  }
+}
