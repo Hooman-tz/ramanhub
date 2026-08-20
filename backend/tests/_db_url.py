@@ -57,6 +57,11 @@ def get_test_database_url() -> str | None:
         with engine.connect():
             pass
         engine.dispose()
-        return str(test_url)
+        # NOT str(test_url): SQLAlchemy's URL.__str__ hides the password as a
+        # literal "***", so the returned string would carry "***" as the
+        # actual password. That works against a trust-auth local Postgres
+        # (password ignored) and then fails against any password-checking
+        # server — exactly the local-pass/CI-fail split that found this.
+        return test_url.render_as_string(hide_password=False)
     except Exception:  # noqa: BLE001 - any failure just means "no usable test DB"
         return None
