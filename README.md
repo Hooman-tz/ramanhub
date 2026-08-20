@@ -86,6 +86,37 @@ names (`postgres`, `minio`) — everything else still comes from `.env` via
 values you see inside the running `backend` container differ from what's
 in your `.env` file on disk.
 
+## Processing pipeline
+
+Raw spectra are immutable. Processing is recorded as an ordered ledger of
+versioned steps rather than by writing a modified file, so any published
+result can be replayed exactly from the raw data plus its ledger. Processed
+output is cached by `hash(raw_file_id + ledger)`.
+
+`GET /processing/algorithms` returns the live catalog — step types, labels,
+parameter schemas and defaults — which is what the frontend's pipeline
+builder renders its inputs from. The steps currently shipped, in the order
+a pipeline normally applies them:
+
+| Category | Step type | Notes |
+| --- | --- | --- |
+| Artifact removal | `raman.despike` | Cosmic-ray removal. Run first — spikes corrupt every later step |
+| Smoothing | `raman.smooth.savitzky_golay` | Preserves peak height/width; optional 1st/2nd derivative |
+| Baseline | `raman.fluorescence_suppression.airpls` | Default choice for fluorescence-swamped spectra |
+| Baseline | `raman.baseline.als` | Asymmetric least squares (Eilers & Boelens) |
+| Baseline | `raman.baseline.polynomial` | ModPoly (Lieber & Mahadevan-Jansen) |
+| Normalization | `raman.snv`, `raman.msc` | Standard normal variate; multiplicative scatter correction |
+| Normalization | `raman.normalize.minmax`, `.vector`, `.area`, `.peak` | Vector matches the geometry of similarity search; peak scales to an internal standard |
+| Axis | `raman.crop`, `raman.resample` | The two steps that change the wavenumber axis |
+
+Adding an algorithm means adding one module under
+`backend/app/processing/algorithms/` (declaring `STEP_TYPE`, `VERSION`,
+`LABEL`, `CATEGORY`, `DESCRIPTION`, `PARAM_SCHEMA` and `apply`) and
+registering it in `registry.py`. The seeded `LedgerStepDefinition` rows that
+submitted ledgers are validated against are generated from that registry, so
+re-running `make seed` is all that's needed to make a new step usable — no
+schema restated in two places.
+
 ### Services
 
 | Service      | Purpose                              | Local URL                       |

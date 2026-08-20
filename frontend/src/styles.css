@@ -81,3 +81,42 @@ th, td {
 fieldset {
   margin-bottom: 1.5rem;
 }
+
+.hint {
+  color: #555;
+  font-size: 0.85rem;
+  margin: 0.2rem 0;
+}
+
+/* Processing pipeline builder. Steps are numbered because their order is
+   scientifically load-bearing — despiking after normalization is a
+   different (and wrong) result, not a cosmetic difference. */
+.pipeline {
+  list-style: decimal;
+  padding-left: 1.5rem;
+}
+
+.pipeline-step {
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.pipeline-step-header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.pipeline-step-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.pipeline-step-actions button {
+  font-size: 0.8rem;
+}

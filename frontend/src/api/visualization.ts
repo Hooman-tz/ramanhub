@@ -46,13 +46,16 @@ export interface SpectrumData {
   total_points: number;
 }
 
+/** Chart-ready spectrum arrays. Pass `raw: true` to get the unprocessed
+ * spectrum regardless of which ledger is attached — that's what the
+ * pipeline builder overlays behind the processed result. */
 export async function getSpectrumData(
   spectrumId: string,
-  maxPoints = 2000,
+  options: { maxPoints?: number; raw?: boolean } = {},
 ): Promise<SpectrumData> {
-  return request<SpectrumData>(
-    `/spectra/${spectrumId}/data?max_points=${encodeURIComponent(String(maxPoints))}`,
-  );
+  const query = new URLSearchParams({ max_points: String(options.maxPoints ?? 2000) });
+  if (options.raw) query.set('raw', 'true');
+  return request<SpectrumData>(`/spectra/${spectrumId}/data?${query}`);
 }
 
 // ---------------------------------------------------------------------------

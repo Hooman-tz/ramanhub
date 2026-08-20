@@ -1,23 +1,12 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
-import {
-  getSpectrum,
-  createLedger,
-  updateSpectrum,
-  type Spectrum,
-  type LedgerStep,
-} from '../api/client';
+import { getSpectrum, type Spectrum } from '../api/client';
 import { getSpectrumData, type SpectrumData } from '../api/visualization';
 import LedgerStepList from '../components/LedgerStepList';
 import DraftPublishToggle from '../components/DraftPublishToggle';
+import PipelineBuilder from '../components/PipelineBuilder';
 import SpectrumChart from '../components/SpectrumChart';
 import VoteCommentPanel from '../components/VoteCommentPanel';
-
-const KNOWN_STEP_TYPES: LedgerStep['type'][] = [
-  'raman.snv',
-  'raman.msc',
-  'raman.fluorescence_suppression.airpls',
-];
 
 export default function SpectrumViewPage() {
   const { id } = useParams<{ id: string }>();
@@ -25,84 +14,47 @@ export default function SpectrumViewPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [stepType, setStepType] = useState<LedgerStep['type']>(KNOWN_STEP_TYPES[0]);
-  const [paramsText, setParamsText] = useState('{}');
-  const [addingStep, setAddingStep] = useState(false);
-  const [stepError, setStepError] = useState<string | null>(null);
-
   const [chartData, setChartData] = useState<SpectrumData | null>(null);
+  const [rawData, setRawData] = useState<SpectrumData | null>(null);
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
+  const [showRaw, setShowRaw] = useState(true);
+
+  const loadChartData = useCallback((spectrumId: string) => {
+    setChartLoading(true);
+    setChartError(null);
+    // Raw is fetched alongside processed so the comparison is available the
+    // moment a pipeline is applied — seeing what a step did to the spectrum
+    // is the point of building one.
+    Promise.all([getSpectrumData(spectrumId), getSpectrumData(spectrumId, { raw: true })])
+      .then(([processed, raw]) => {
+        setChartData(processed);
+        setRawData(raw);
+      })
+      .catch((err) => setChartError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setChartLoading(false));
+  }, []);
 
   useEffect(() => {
     if (!id) return;
-    loadSpectrum(id);
-  }, [id]);
-
-  function loadSpectrum(spectrumId: string) {
     setLoading(true);
-    getSpectrum(spectrumId)
+    getSpectrum(id)
       .then(setSpectrum)
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
-    loadChartData(spectrumId);
-  }
+    loadChartData(id);
+  }, [id, loadChartData]);
 
-  function loadChartData(spectrumId: string) {
-    setChartLoading(true);
-    setChartError(null);
-    getSpectrumData(spectrumId)
-      .then(setChartData)
-      .catch((err) => setChartError(err instanceof Error ? err.message : String(err)))
-      .finally(() => setChartLoading(false));
-  }
-
-  async function handleAddStep(e: React.FormEvent) {
-    e.preventDefault();
-    if (!spectrum) return;
-    setStepError(null);
-
-    let params: Record<string, unknown>;
-    try {
-      params = JSON.parse(paramsText);
-    } catch {
-      setStepError('Params must be valid JSON.');
-      return;
-    }
-
-    const existingSteps = spectrum.current_ledger?.steps ?? [];
-    // Backend resolves each step's algorithm version server-side — only
-    // type/params/order are sent (see createLedger() in api/client.ts).
-    const newSteps = [...existingSteps, { type: stepType, params }].map((s, order) => ({
-      type: s.type,
-      params: s.params,
-      order,
-    }));
-
-    const rawFileId = spectrum.raw_file_id;
-    if (!rawFileId) {
-      setStepError('Spectrum has no raw_file_id to attach a new ledger to.');
-      return;
-    }
-
-    try {
-      setAddingStep(true);
-      const { ledger_id } = await createLedger(rawFileId, newSteps);
-      // Creating a ledger doesn't attach it to the spectrum — that's a
-      // separate, explicit step, consistent with drafts staying editable
-      // until the owner chooses what "current" means for them.
-      await updateSpectrum(spectrum.id, { current_ledger_id: ledger_id });
-      loadSpectrum(spectrum.id);
-    } catch (err) {
-      setStepError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setAddingStep(false);
-    }
+  function handleApplied(updated: Spectrum) {
+    setSpectrum(updated);
+    loadChartData(updated.id);
   }
 
   if (loading) return <p>Loading...</p>;
   if (error) return <p className="error">{error}</p>;
   if (!spectrum) return <p>Spectrum not found.</p>;
+
+  const hasPipeline = (spectrum.current_ledger?.steps?.length ?? 0) > 0;
 
   return (
     <div>
@@ -110,40 +62,6 @@ export default function SpectrumViewPage() {
       {spectrum.description && <p>{spectrum.description}</p>}
 
       <DraftPublishToggle spectrum={spectrum} onPublished={setSpectrum} />
-
-      <h2>Processing ledger</h2>
-      <LedgerStepList steps={spectrum.current_ledger?.steps} />
-
-      <h3>Add step</h3>
-      <form onSubmit={handleAddStep}>
-        <div className="field-row">
-          <label htmlFor="step-type">Step type</label>
-          <select
-            id="step-type"
-            value={stepType}
-            onChange={(e) => setStepType(e.target.value as LedgerStep['type'])}
-          >
-            {KNOWN_STEP_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {t}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field-row">
-          <label htmlFor="step-params">Params (JSON)</label>
-          <textarea
-            id="step-params"
-            rows={4}
-            value={paramsText}
-            onChange={(e) => setParamsText(e.target.value)}
-          />
-        </div>
-        <button type="submit" disabled={addingStep}>
-          {addingStep ? 'Adding...' : 'Add step'}
-        </button>
-        {stepError && <p className="error">{stepError}</p>}
-      </form>
 
       <h2>Data</h2>
       {chartError && <p className="error">{chartError}</p>}
@@ -153,7 +71,27 @@ export default function SpectrumViewPage() {
             wavenumbers={chartData.wavenumbers}
             intensities={chartData.intensities}
             loading={chartLoading}
+            name={hasPipeline ? 'Processed' : 'Raw'}
+            overlay={
+              hasPipeline && showRaw && rawData
+                ? {
+                    name: 'Raw',
+                    wavenumbers: rawData.wavenumbers,
+                    intensities: rawData.intensities,
+                  }
+                : undefined
+            }
           />
+          {hasPipeline && (
+            <label>
+              <input
+                type="checkbox"
+                checked={showRaw}
+                onChange={(e) => setShowRaw(e.target.checked)}
+              />{' '}
+              Overlay the raw spectrum
+            </label>
+          )}
           {chartData.downsampled && (
             <p className="hint">
               Showing {chartData.wavenumbers.length.toLocaleString()} of{' '}
@@ -163,6 +101,11 @@ export default function SpectrumViewPage() {
         </>
       )}
       {!chartData && chartLoading && <p>Loading chart...</p>}
+
+      <PipelineBuilder spectrum={spectrum} onApplied={handleApplied} />
+
+      <h3>Applied ledger</h3>
+      <LedgerStepList steps={spectrum.current_ledger?.steps} />
 
       <VoteCommentPanel spectrumId={spectrum.id} />
     </div>

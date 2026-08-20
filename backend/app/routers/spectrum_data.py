@@ -3,8 +3,8 @@
 Mounted with no prefix — `GET /spectra/{spectrum_id}/data`. Returns the
 (possibly LTTB-downsampled) (wavenumbers, intensities) pair for a spectrum's
 current processed output (or its raw data, if no ledger has been attached
-yet), gated by the same owner-or-public visibility rule as every other
-spectrum-derived read.
+yet or `?raw=true` is passed), gated by the same owner-or-public visibility
+rule as every other spectrum-derived read.
 """
 from __future__ import annotations
 
@@ -41,6 +41,11 @@ class SpectrumDataResponse(BaseModel):
 def get_spectrum_data(
     spectrum_id: UUID,
     max_points: int = Query(DEFAULT_MAX_POINTS, gt=0),
+    raw: bool = Query(
+        False,
+        description="Return the unprocessed spectrum, ignoring any attached ledger. "
+        "Used to overlay before/after while building a processing pipeline.",
+    ),
     db: Session = Depends(get_db),
     user: User | None = Depends(get_current_user_optional),
 ) -> SpectrumDataResponse:
@@ -49,7 +54,7 @@ def get_spectrum_data(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     require_owner_or_public(spectrum, user)
 
-    if spectrum.current_ledger_id is not None:
+    if spectrum.current_ledger_id is not None and not raw:
         ledger_row = db.get(ProcessingLedger, spectrum.current_ledger_id)
         if ledger_row is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
