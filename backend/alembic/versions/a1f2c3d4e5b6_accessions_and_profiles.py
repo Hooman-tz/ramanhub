@@ -51,8 +51,21 @@ def upgrade() -> None:
     )
     # Advance the sequence past everything just backfilled, so the first
     # newly-created spectrum can't collide with an existing accession.
+    #
+    # The third argument (`is_called`) is the subtle part. Two-argument
+    # setval marks the value as already consumed, so nextval returns
+    # value + 1 — which on an EMPTY table would set 1 as used and hand the
+    # very first spectrum RH-S-000002, permanently burning RH-S-000001.
+    # Passing `is_called = (count > 0)` makes the empty case start at 1
+    # while a populated one still resumes after the last backfilled row.
     op.execute(
-        "SELECT setval('spectrum_accession_seq', GREATEST((SELECT COUNT(*) FROM spectra), 1))"
+        """
+        SELECT setval(
+            'spectrum_accession_seq',
+            GREATEST((SELECT COUNT(*) FROM spectra), 1),
+            (SELECT COUNT(*) FROM spectra) > 0
+        )
+        """
     )
     op.create_index(op.f("ix_spectra_accession"), "spectra", ["accession"], unique=True)
 
