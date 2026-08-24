@@ -202,10 +202,17 @@ def fclient(db_session):
         get_current_user_optional,
     )
     from app.db.session import get_db
-    from app.routers import comments, feed, findings, spectra, votes
+    from app.routers import comments, feed, findings, spectra, users, votes
 
     test_app = FastAPI()
-    for router in (spectra.router, findings.router, feed.router, votes.router, comments.router):
+    for router in (
+        spectra.router,
+        findings.router,
+        feed.router,
+        votes.router,
+        comments.router,
+        users.router,
+    ):
         test_app.include_router(router)
 
     def _override_get_db():

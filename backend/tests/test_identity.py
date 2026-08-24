@@ -189,3 +189,62 @@ def test_uniquify_keeps_long_handles_within_the_length_cap():
 
     assert len(result) <= 30
     assert validate_handle(result)
+
+
+# ------------------------------------------------------------ public profile
+
+
+def test_public_profile_counts_published_work(fclient, make_user, make_raw_file):
+    """Regression: `finding_count` was declared on the response model but
+    never populated, so every profile reported 0 findings no matter how many
+    the contributor had published."""
+    from tests.test_findings import _finding, _spectrum
+
+    owner = make_user()
+    owner.handle = "ada-counts"
+    fclient.set_current_user(owner)
+
+    spectrum = _spectrum(fclient, make_raw_file, owner, publish=True)
+    finding = _finding(fclient, title="Counted")
+    fclient.post(f"/findings/{finding['id']}/spectra", json={"spectrum_id": spectrum["id"]})
+    fclient.post(f"/findings/{finding['id']}/publish", json={"license_id": "CC-BY-4.0"})
+
+    body = fclient.get("/users/by-handle/ada-counts").json()
+
+    assert body["spectrum_count"] == 1
+    assert body["finding_count"] == 1
+
+
+def test_public_profile_excludes_unpublished_work(fclient, make_user, make_raw_file):
+    """Counts must cover published work only — reporting how much
+    unpublished work someone has is exactly what the draft state exists to
+    keep private."""
+    from tests.test_findings import _finding, _spectrum
+
+    owner = make_user()
+    owner.handle = "ada-private"
+    fclient.set_current_user(owner)
+
+    _spectrum(fclient, make_raw_file, owner, publish=False)
+    _finding(fclient, title="Still a draft")
+
+    body = fclient.get("/users/by-handle/ada-private").json()
+
+    assert body["spectrum_count"] == 0
+    assert body["finding_count"] == 0
+
+
+def test_public_profile_never_exposes_email(fclient, make_user):
+    """PublicProfileOut is a separate model from UserOut precisely so a
+    field added to the authenticated shape can't leak onto a public page."""
+    owner = make_user()
+    owner.handle = "ada-noemail"
+    fclient.set_current_user(owner)
+
+    body = fclient.get("/users/by-handle/ada-noemail").json()
+
+    assert "email" not in body
+
+
+def test_public_profile_404s_for_unknown_handle(fclient):
+    assert fclient.get("/users/by-handle/nobody-here").status_code == 404

@@ -15,7 +15,8 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user, get_current_user
 from app.db.session import get_db
-from app.models.enums import SpectrumState
+from app.models.enums import FindingState, SpectrumState
+from app.models.finding import Finding
 from app.models.handles import normalize_handle
 from app.models.spectrum import Spectrum
 from app.models.user import User
@@ -82,7 +83,13 @@ def get_public_profile(handle: str, db: Session = Depends(get_db)) -> PublicProf
             Spectrum.owner_id == user.id, Spectrum.state == SpectrumState.published
         )
     ).scalar_one()
+    finding_count = db.execute(
+        select(func.count(Finding.id)).where(
+            Finding.owner_id == user.id, Finding.state == FindingState.published
+        )
+    ).scalar_one()
 
     profile = PublicProfileOut.model_validate(user)
     profile.spectrum_count = int(spectrum_count)
+    profile.finding_count = int(finding_count)
     return profile
