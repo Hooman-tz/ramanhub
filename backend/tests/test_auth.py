@@ -277,16 +277,38 @@ def engine():
 
 @pytest.fixture()
 def db_session(engine):
-    TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False, future=True)
+    """A session inside a transaction that is rolled back at teardown —
+    the same isolation pattern as `conftest.py`'s `db_session`.
+
+    This module needs an empty `users`/`licenses` slate (its licenses test
+    inserts its own `CC-BY-4.0` row, which would collide with the seeded
+    one), so it still clears both tables — but INSIDE the transaction, so
+    the wipe is undone at teardown.
+
+    It used to clear them with a committed `DELETE` at teardown instead,
+    which permanently destroyed the reference data that `conftest.py`'s
+    session-scoped `engine` seeds ONCE per run into this same physical
+    database. That only appeared to work because of collection order: the
+    seeding ran lazily on first use of conftest's fixture, which happened
+    to be after this module. Any new DB-backed test file sorting before
+    `test_auth` flipped that order and left every later file that publishes
+    a spectrum failing on a `spectra_license_id_fkey` violation.
+    """
+    connection = engine.connect()
+    transaction = connection.begin()
+    TestingSessionLocal = sessionmaker(
+        bind=connection, autoflush=False, autocommit=False, future=True
+    )
     session = TestingSessionLocal()
+    session.query(User).delete()
+    session.query(License).delete()
+    session.flush()
     try:
         yield session
     finally:
-        session.rollback()
-        session.query(User).delete()
-        session.query(License).delete()
-        session.commit()
         session.close()
+        transaction.rollback()
+        connection.close()
 
 
 @pytest.fixture()

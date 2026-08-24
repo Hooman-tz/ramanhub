@@ -30,6 +30,7 @@ if settings.SENTRY_DSN:
     )
 
 from app.routers import (
+    analysis,
     auth,
     comments,
     doi,
@@ -75,6 +76,7 @@ app.include_router(ledgers.router)
 app.include_router(processing.router)
 app.include_router(routines.router)
 app.include_router(spectrum_data.router)
+app.include_router(analysis.router)
 app.include_router(doi.router)
 app.include_router(search.router)
 app.include_router(library.router)

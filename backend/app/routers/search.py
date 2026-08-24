@@ -24,14 +24,10 @@ from sqlalchemy.orm import Session
 from app.auth.deps import get_current_user_optional
 from app.db.session import get_db
 from app.models.enums import Modality, SpectrumState
-from app.models.processing_ledger import ProcessingLedger
-from app.models.raw_file import RawFile
 from app.models.spectrum import Spectrum
 from app.models.user import User
-from app.processing.cache import get_or_compute
 from app.processing.state_machine import effective_state, require_owner_or_public
-from app.schemas.ledger import Ledger, LedgerStep
-from app.spectra_io import load_raw_spectrum
+from app.spectrum_access import load_spectrum_arrays
 
 router = APIRouter(prefix="/search", tags=["search"])
 
@@ -68,28 +64,6 @@ def serialize_search_result(spectrum: Spectrum) -> SpectrumSearchResult:
     result = SpectrumSearchResult.model_validate(spectrum)
     result.state = effective_state(spectrum)
     return result
-
-
-def load_spectrum_arrays(spectrum: Spectrum, db: Session) -> tuple[np.ndarray, np.ndarray]:
-    """Resolve `(wavenumbers, intensities)` for a spectrum using the same
-    "processed-if-ledgered, else raw" pattern used by
-    `app.routers.spectra._recompute_derived_fields` and Module 3's
-    visualization endpoints. Shared here so both `/search/spectra`-adjacent
-    similarity search and any future caller can reuse it without
-    reimplementing the ledger-reconstruction dance."""
-    if spectrum.current_ledger_id is not None:
-        ledger_row = db.get(ProcessingLedger, spectrum.current_ledger_id)
-        if ledger_row is not None:
-            ledger = Ledger(
-                schema_version=ledger_row.schema_version,
-                raw_file_id=ledger_row.raw_file_id,
-                steps=[LedgerStep.model_validate(step) for step in ledger_row.steps],
-            )
-            return get_or_compute(spectrum.raw_file_id, ledger, db)
-    raw_file = db.get(RawFile, spectrum.raw_file_id)
-    if raw_file is None:
-        return np.array([]), np.array([])
-    return load_raw_spectrum(raw_file)
 
 
 def cosine_similarity(
