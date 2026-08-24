@@ -18,6 +18,13 @@ class Spectrum(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
+    # Human-quotable public identifier (RH-S-000042) — what a paper cites,
+    # as opposed to `id`, which is what foreign keys point at. Nullable
+    # because rows created before accessions existed have none; assigned at
+    # insert time for everything since. See app.models.accession.
+    accession: Mapped[str | None] = mapped_column(
+        String, unique=True, nullable=True, index=True
+    )
     raw_file_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("raw_files.id"), nullable=False
     )

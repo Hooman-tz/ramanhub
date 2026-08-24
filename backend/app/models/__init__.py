@@ -2,6 +2,12 @@
 therefore Alembic autogenerate, and `Base.metadata.create_all()`) sees all
 tables regardless of which module the caller imports directly.
 """
+from app.models.accession import (
+    FINDING_ACCESSION_SEQ,
+    SPECTRUM_ACCESSION_SEQ,
+    next_finding_accession,
+    next_spectrum_accession,
+)
 from app.models.enums import (
     FieldDataType,
     IngestionStatus,
@@ -23,6 +29,8 @@ from app.models.user import User
 from app.models.vendor_parse_cache import VendorParseCache
 
 __all__ = [
+    "FINDING_ACCESSION_SEQ",
+    "SPECTRUM_ACCESSION_SEQ",
     "Comment",
     "FieldDataType",
     "IngestionJob",
@@ -42,4 +50,6 @@ __all__ = [
     "User",
     "VendorParseCache",
     "Vote",
+    "next_finding_accession",
+    "next_spectrum_accession",
 ]

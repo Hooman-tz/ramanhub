@@ -1,7 +1,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, func, text
+from sqlalchemy import Boolean, DateTime, String, Text, func, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,6 +19,12 @@ class User(Base):
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     orcid_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    # Public profile (see app.models.handles). `handle` is the citable,
+    # linkable identity — `/u/<handle>` — and is nullable only so guest
+    # sessions, which have no public profile, don't need a made-up one.
+    handle: Mapped[str | None] = mapped_column(String, unique=True, nullable=True, index=True)
+    affiliation: Mapped[str | None] = mapped_column(String, nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     # Guest sessions: a real User row (so every ownership/row-level-access
     # check works unchanged) minted without Google login, with synthetic

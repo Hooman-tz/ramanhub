@@ -17,6 +17,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user, get_current_user, get_current_user_optional
 from app.db.session import get_db
+from app.models.accession import next_spectrum_accession
 from app.models.enums import SpectrumState
 from app.models.processing_ledger import ProcessingLedger
 from app.models.raw_file import RawFile
@@ -70,6 +71,7 @@ class PublishRequest(BaseModel):
 
 class SpectrumResponse(BaseModel):
     id: UUID
+    accession: str | None
     raw_file_id: UUID
     owner_id: UUID
     modality: str
@@ -177,6 +179,11 @@ def create_spectrum(
             )
 
     spectrum = Spectrum(
+        # Assigned at creation, not at publish: a draft that gets forked,
+        # cited in a lab notebook, or referenced in a Finding needs a stable
+        # public handle before it's public. Gaps in the series from deleted
+        # drafts are expected and harmless (see app.models.accession).
+        accession=next_spectrum_accession(db),
         raw_file_id=raw_file.id,
         owner_id=user.id,
         modality=raw_file.modality,
@@ -318,6 +325,11 @@ def fork_spectrum(
     db.flush()
 
     fork = Spectrum(
+        # A fork is a distinct record with its own lifecycle, so it gets its
+        # own accession rather than inheriting the source's — two records
+        # sharing a citable identifier is exactly what accessions must never
+        # allow.
+        accession=next_spectrum_accession(db),
         raw_file_id=forked_raw.id,
         owner_id=user.id,
         modality=source.modality,

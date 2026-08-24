@@ -42,6 +42,7 @@ class SpectrumSearchResult(BaseModel):
     filter)."""
 
     id: UUID
+    accession: str | None
     title: str | None
     material_type: str | None
     excitation_wavelength_nm: float | None

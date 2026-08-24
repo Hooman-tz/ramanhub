@@ -15,6 +15,7 @@ from app.auth.jwt import encode_session_token
 from app.config import settings
 from app.db.session import get_db
 from app.logging_config import log_event
+from app.models.handles import assign_handle
 from app.models.processing_ledger import ProcessingLedger
 from app.models.processing_routine import ProcessingRoutine
 from app.models.raw_file import RawFile
@@ -172,9 +173,20 @@ async def callback(
 
     user = db.query(User).filter(User.google_sub == google_sub).first()
     if user is None:
-        user = User(google_sub=google_sub, email=email, display_name=name, avatar_url=picture)
+        user = User(
+            google_sub=google_sub,
+            email=email,
+            display_name=name,
+            avatar_url=picture,
+            handle=assign_handle(db, email or "", name),
+        )
         db.add(user)
     else:
+        # Backfill for accounts that predate handles, so an existing user
+        # gets a public profile on their next sign-in rather than needing a
+        # migration to have caught them.
+        if user.handle is None:
+            user.handle = assign_handle(db, user.email or email or "", user.display_name or name)
         if email and user.email != email:
             user.email = email
         if name and user.display_name != name:
