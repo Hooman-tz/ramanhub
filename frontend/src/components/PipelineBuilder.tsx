@@ -43,6 +43,55 @@ function paramsSummary(params: Record<string, unknown>): string {
  * content-addressed, so per-edit writes would litter the table with a row
  * for every intermediate pipeline a user clicked through on the way to the
  * one they meant. */
+/** One-click starting pipelines.
+ *
+ * The order is load-bearing and is the main thing a newcomer gets wrong:
+ * despike FIRST (a cosmic ray corrupts every fit that follows it), smooth
+ * before baseline estimation, then subtract the background, then normalize
+ * last — normalizing before background removal scales the background rather
+ * than the bands.
+ *
+ * Parameters are left at each algorithm's own defaults rather than tuned
+ * here, so a preset is exactly "the standard steps in the standard order"
+ * and stays honest when an algorithm's defaults improve. */
+const PRESETS: Array<{
+  id: string;
+  label: string;
+  hint: string;
+  steps: string[];
+}> = [
+  {
+    id: 'auto-clean',
+    label: 'Auto-clean',
+    hint: 'Despike, smooth, remove the fluorescence background, then SNV. The standard '
+      + 'starting point for most Raman data.',
+    steps: [
+      'raman.despike',
+      'raman.smooth.savitzky_golay',
+      'raman.fluorescence_suppression.airpls',
+      'raman.snv',
+    ],
+  },
+  {
+    id: 'baseline-only',
+    label: 'Baseline only',
+    hint: 'Just remove the fluorescence background, leaving intensities otherwise as '
+      + 'measured — when absolute scale matters.',
+    steps: ['raman.fluorescence_suppression.airpls'],
+  },
+  {
+    id: 'compare-ready',
+    label: 'Compare-ready',
+    hint: 'Despike, baseline, then vector normalize — the geometry the similarity '
+      + 'search uses, so results are directly comparable.',
+    steps: [
+      'raman.despike',
+      'raman.fluorescence_suppression.airpls',
+      'raman.normalize.vector',
+    ],
+  },
+];
+
 export default function PipelineBuilder({ spectrum, onApplied }: Props) {
   const [catalog, setCatalog] = useState<AlgorithmCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
@@ -79,6 +128,22 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
   }, [catalog]);
 
   const dirty = JSON.stringify(steps) !== JSON.stringify(savedSteps);
+
+  function applyPreset(presetId: string) {
+    const preset = PRESETS.find((p) => p.id === presetId);
+    if (!preset || !catalog) return;
+    // Skip any step this backend doesn't ship rather than failing the whole
+    // preset — the catalog is the source of truth for what exists.
+    const built = preset.steps
+      .map((type) => catalog.algorithms.find((a) => a.step_type === type))
+      .filter((algorithm): algorithm is NonNullable<typeof algorithm> => Boolean(algorithm))
+      .map((algorithm) => ({
+        type: algorithm.step_type,
+        params: defaultParamsFor(algorithm),
+      }));
+    setSteps(built);
+    setExpanded(null);
+  }
 
   function addStep() {
     const algorithm = byType.get(picked);
@@ -152,10 +217,29 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
 
       {steps.length === 0 && (
         <p className="hint">
-          No steps yet — the chart shows the raw spectrum. A typical Raman pipeline despikes,
-          then suppresses the fluorescence background, then normalizes.
+          No steps yet — the chart shows the raw spectrum. Start from a preset below, or
+          build a pipeline step by step.
         </p>
       )}
+
+      <div className="presets">
+        <span className="presets__label">Start from</span>
+        {PRESETS.map((preset) => (
+          <button
+            key={preset.id}
+            type="button"
+            className="ui-button ui-button--sm"
+            title={preset.hint}
+            onClick={() => applyPreset(preset.id)}
+          >
+            {preset.label}
+          </button>
+        ))}
+      </div>
+      <p className="hint presets__hint">
+        A preset fills in the steps; nothing is committed until you press Apply, and every
+        parameter stays editable.
+      </p>
 
       <ol className={steps.length > 0 ? 'pipeline' : undefined}>
         {steps.map((step, index) => {

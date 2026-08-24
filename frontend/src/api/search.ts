@@ -41,7 +41,13 @@ export interface SimilarSpectrumResult {
 
 export type TrustTier = 'doi_verified' | 'community';
 
+export type SearchSort = 'relevance' | 'newest' | 'engagement' | 'snr';
+
 export interface SearchParams {
+  /** Ordering. `relevance` (the default) blends engagement, recency and
+   * DOI-verified status; `newest` is the popularity-free option. See
+   * `app/ranking.py` on the backend for the weights and the reasoning. */
+  sort?: SearchSort;
   material_type?: string;
   excitation_wavelength_nm?: number;
   excitation_wavelength_tolerance_nm?: number;

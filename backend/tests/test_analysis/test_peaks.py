@@ -9,7 +9,7 @@ from __future__ import annotations
 import numpy as np
 import pytest
 
-from app.analysis.peaks import detect_peaks
+from app.analysis.peaks import detect_peaks, estimate_noise_sigma
 from tests.test_algorithms._synthetic import PEAK_CENTERS_CM1, synthetic_spectrum
 
 
@@ -98,8 +98,6 @@ def test_noise_floor_is_what_rejects_them():
 def test_noise_estimate_is_not_inflated_by_real_bands():
     """The reason MAD replaced std(diff): a clean spectrum's own peak
     flanks must not read as noise, or the detector rejects its own bands."""
-    from app.analysis.peaks import estimate_noise_sigma
-
     _x, clean = synthetic_spectrum()
     _x, noisy = synthetic_spectrum(noise_sigma=3.0)
 
@@ -143,3 +141,49 @@ def test_mismatched_lengths_raise():
 def test_area_is_positive_for_real_bands():
     x, y = synthetic_spectrum()
     assert all(p.area > 0 for p in detect_peaks(x, y))
+
+
+def test_noise_estimate_survives_smoothing():
+    """Regression: a lag-1 difference assumes independent samples, which
+    Savitzky-Golay smoothing breaks — it correlates neighbours, so
+    point-to-point differences shrink faster than the noise amplitude.
+
+    The single-lag estimator came out ~2x too low on smoothed data, and
+    since the Auto-clean preset smooths by default, peak detection was
+    over-reporting on the DEFAULT path (48 bands on a 6-band spectrum).
+    """
+    from app.processing.algorithms.registry import apply_step
+
+    x, noisy = synthetic_spectrum(noise_sigma=4.0)
+    _x, clean = synthetic_spectrum(noise_sigma=0.0)
+
+    _sx1, smoothed = apply_step("raman.smooth.savitzky_golay", x, noisy, {})
+    _sx2, smoothed_clean = apply_step("raman.smooth.savitzky_golay", x, clean, {})
+
+    # The noise that actually survives smoothing.
+    true_residual = float(np.std(smoothed - smoothed_clean))
+    estimate = estimate_noise_sigma(smoothed)
+
+    assert true_residual > 0
+    # Must not UNDERSTATE the surviving noise — that is what let noise
+    # through as peaks. Erring high is the safe direction.
+    assert estimate >= true_residual
+
+
+def test_smoothed_spectrum_does_not_over_detect():
+    """The user-visible half of the same regression: after the standard
+    smooth-then-baseline sequence, detection must still return the three
+    real bands rather than dozens of smoothed noise wiggles."""
+    from app.processing.algorithms.registry import apply_step
+
+    x, y = synthetic_spectrum(noise_sigma=4.0, with_background=True)
+    for step in ("raman.smooth.savitzky_golay", "raman.fluorescence_suppression.airpls"):
+        x, y = apply_step(step, x, y, {})
+
+    peaks = detect_peaks(x, y)
+
+    assert len(peaks) <= 8, f"over-detected: {[round(p.wavenumber) for p in peaks]}"
+    for expected in PEAK_CENTERS_CM1:
+        assert any(abs(p.wavenumber - expected) < 12 for p in peaks), (
+            f"lost the real band at {expected} cm-1"
+        )

@@ -3,14 +3,8 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { getSpectrum, type Spectrum } from '../api/client';
 import { getSpectrumData, type SpectrumData } from '../api/visualization';
 import { runHca, runPca, type HcaResult, type PcaResult } from '../api/analysis';
-import {
-  applyDisplayNormalization,
-  intensityAxisLabel,
-  NORMALIZATION_OPTIONS,
-  type DisplayNormalization,
-} from '../lib/normalize';
+import OverlayChart from '../components/OverlayChart';
 import PcaPanel from '../components/PcaPanel';
-import SpectrumChart from '../components/SpectrumChart';
 import { useToast } from '../components/Toast';
 import { Button, Card, EmptyState, Skeleton } from '../components/ui';
 
@@ -35,11 +29,6 @@ export default function ComparePage() {
   const [hca, setHca] = useState<HcaResult | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
-  // SNV by default. Overlaying spectra as stored compares brightness, not
-  // band structure — two acquisitions of one material at different laser
-  // powers can differ by orders of magnitude, and the larger one flattens
-  // the smaller into the baseline. This is display-only; see lib/normalize.
-  const [normalization, setNormalization] = useState<DisplayNormalization>('snv');
 
   useEffect(() => {
     if (ids.length === 0) {
@@ -155,46 +144,13 @@ export default function ComparePage() {
 
       {!loading && tab === 'overlay' && loaded.length > 0 && (
         <Card className="chart-panel">
-          <div className="chart-panel__controls">
-            <label>
-              <span>Scaling</span>
-              <select
-                value={normalization}
-                onChange={(e) => setNormalization(e.target.value as DisplayNormalization)}
-              >
-                {NORMALIZATION_OPTIONS.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <p className="hint">
-              {NORMALIZATION_OPTIONS.find((o) => o.value === normalization)?.hint}
-            </p>
-          </div>
-
-          <SpectrumChart
-            zoomable
-            flush
-            height={460}
-            yAxisLabel={intensityAxisLabel(normalization)}
+          <OverlayChart
             series={loaded.map((item, index) => ({
               name: label(item, index),
               wavenumbers: item.data.wavenumbers,
-              intensities: applyDisplayNormalization(
-                item.data.wavenumbers,
-                item.data.intensities,
-                normalization,
-              ),
+              intensities: item.data.intensities,
             }))}
           />
-
-          <p className="hint chart-panel__foot">
-            Scaling is applied for display only — the stored data and each spectrum's
-            processing ledger are untouched. To make a normalization part of the record,
-            add it as a pipeline step on the spectrum itself.
-          </p>
         </Card>
       )}
 

@@ -8,6 +8,23 @@ type Phase = 'idle' | 'uploading' | 'polling' | 'error';
 
 const POLL_INTERVAL_MS = 1500;
 
+type QueueStatus = 'waiting' | 'uploading' | 'parsing' | 'done' | 'failed';
+
+interface QueueItem {
+  name: string;
+  status: QueueStatus;
+  jobId?: string;
+  error?: string;
+}
+
+const STATUS_LABELS: Record<QueueStatus, string> = {
+  waiting: 'Waiting',
+  uploading: 'Uploading',
+  parsing: 'Reading header',
+  done: 'Ready to confirm',
+  failed: 'Failed',
+};
+
 /** The front door. "/" lands here: one glass drop zone, nothing else to
  * read first — the architecture doc's "straight into the toolbox, closer to
  * opening a chat app than reading an academic poster," taken literally. */
@@ -23,6 +40,67 @@ export default function UploadPage() {
   // Tracks a guest session started by this page, so the sign-in hint can
   // switch to "you're trying it as a guest" without refetching /users/me.
   const [guestStarted, setGuestStarted] = useState(false);
+  const [queue, setQueue] = useState<QueueItem[]>([]);
+
+  function updateItem(index: number, patch: Partial<QueueItem>) {
+    setQueue((current) =>
+      current.map((item, i) => (i === index ? { ...item, ...patch } : item)),
+    );
+  }
+
+  /** Upload several files one after another.
+   *
+   * Deliberately sequential, not Promise.all: each upload kicks off a
+   * server-side parse, and firing a dozen at once would queue them behind
+   * each other anyway while making per-file progress meaningless and the
+   * failure story ("which ones landed?") much worse. One at a time is
+   * slower in the best case and far clearer in every other case.
+   *
+   * A single file keeps the original behaviour — straight through to the
+   * metadata confirm screen, since there's nothing to choose between. */
+  async function ingestMany(files: File[]) {
+    if (files.length === 1) {
+      void ingest(files[0]);
+      return;
+    }
+
+    setQueue(files.map((file) => ({ name: file.name, status: 'waiting' as QueueStatus })));
+    setPhase('uploading');
+
+    try {
+      if (!authLoading && !user && !guestStarted) {
+        setMessage('Starting a guest session...');
+        await startGuestSession();
+        setGuestStarted(true);
+      }
+    } catch (err) {
+      setPhase('error');
+      setMessage(err instanceof Error ? err.message : String(err));
+      return;
+    }
+
+    for (const [index, file] of files.entries()) {
+      updateItem(index, { status: 'uploading' });
+      setMessage(`Uploading ${index + 1} of ${files.length}…`);
+      try {
+        const { ingestion_job_id: jobId } = await uploadRawFile(file);
+        updateItem(index, { status: 'parsing', jobId });
+        await pollUntilDone(jobId);
+        updateItem(index, { status: 'done' });
+      } catch (err) {
+        // One bad file must not abandon the rest of the batch — record it
+        // and keep going, so a single unparseable header doesn't cost the
+        // user the other eleven uploads.
+        updateItem(index, {
+          status: 'failed',
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+
+    setPhase('idle');
+    setMessage('');
+  }
 
   async function ingest(file: File) {
     try {
@@ -65,13 +143,13 @@ export default function UploadPage() {
     e.preventDefault();
     setDragOver(false);
     if (busy) return;
-    const file = e.dataTransfer.files?.[0];
-    if (file) void ingest(file);
+    const files = Array.from(e.dataTransfer.files ?? []);
+    if (files.length) void ingestMany(files);
   }
 
   function handlePick(e: React.ChangeEvent<HTMLInputElement>) {
-    const file = e.target.files?.[0];
-    if (file) void ingest(file);
+    const files = Array.from(e.target.files ?? []);
+    if (files.length) void ingestMany(files);
     // Reset so re-picking the same file re-triggers change.
     e.target.value = '';
   }
@@ -137,11 +215,52 @@ export default function UploadPage() {
             <p className="dropzone__title">
               {dragOver ? 'Release to upload' : 'Drag a raw file here'}
             </p>
-            <p className="dropzone__hint">or click to browse — up to 50 MB</p>
+            <p className="dropzone__hint">
+              or click to browse — drop several at once, up to 50 MB each
+            </p>
           </>
         )}
-        <input ref={fileInputRef} type="file" hidden onChange={handlePick} disabled={busy} />
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          hidden
+          onChange={handlePick}
+          disabled={busy}
+        />
       </div>
+
+      {queue.length > 0 && (
+        <ul className="upload-queue">
+          {queue.map((item, index) => (
+            <li key={`${item.name}-${index}`}>
+              <span className="upload-queue__name" title={item.name}>
+                {item.name}
+              </span>
+              <span
+                className={[
+                  'upload-queue__status',
+                  item.status === 'done' && 'upload-queue__status--done',
+                  item.status === 'failed' && 'upload-queue__status--failed',
+                ]
+                  .filter(Boolean)
+                  .join(' ')}
+                title={item.error}
+              >
+                {STATUS_LABELS[item.status]}
+              </span>
+              {item.status === 'done' && item.jobId && (
+                <Link
+                  to={`/ingestion/${item.jobId}/confirm`}
+                  className="ui-button ui-button--sm"
+                >
+                  Confirm
+                </Link>
+              )}
+            </li>
+          ))}
+        </ul>
+      )}
 
       {phase === 'error' && <p className="error" style={{ marginTop: 'var(--sp-3)' }}>{message}</p>}
       {(signedOut || guestStarted || user?.is_guest) && (

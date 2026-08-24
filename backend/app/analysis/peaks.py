@@ -108,26 +108,57 @@ class Peak:
         return asdict(self)
 
 
+# Lags used by the noise estimator. Powers of two span the correlation
+# lengths a smoothing filter realistically introduces (a Savitzky-Golay
+# window is typically 5-25 points) without making the estimate expensive.
+_NOISE_LAGS = (1, 2, 4, 8, 16)
+
+
 def estimate_noise_sigma(intensities: np.ndarray) -> float:
-    """Estimate the point-to-point noise standard deviation, robustly.
+    """Estimate the residual noise standard deviation, robustly, and without
+    assuming the noise is uncorrelated.
 
-    Deliberately NOT `std(diff(y))` — the estimator `app.spectra_io.
-    compute_snr` uses. That one is fine as a relative SNR proxy, but as an
-    absolute threshold it fails badly on a clean spectrum: the steep flanks
-    of a real Raman band dominate the standard deviation, so a noiseless
-    spectrum reports large "noise" and its own peaks get rejected.
+    Two things this has to survive.
 
-    Median absolute deviation fixes that. Most points of a Raman spectrum
-    are flat baseline and only a few sit on a peak flank, so the median is
-    unmoved by the bands themselves. 1.4826 rescales MAD to a Gaussian
-    sigma; dividing by sqrt(2) undoes the variance doubling that
-    differencing introduces (var(y[i+1] - y[i]) = 2 x var(noise)).
+    **Real bands must not read as noise.** `std(diff(y))` — the estimator
+    `app.spectra_io.compute_snr` uses — is dominated by the steep flanks of
+    a genuine Raman band, so a clean spectrum reports large "noise" and the
+    detector rejects its own peaks. Median absolute deviation fixes that:
+    most points of a spectrum are flat baseline, so the median is unmoved by
+    the few that sit on a peak.
+
+    **Smoothing must not hide the noise.** This is the subtle one. A lag-1
+    difference assumes neighbouring samples are independent, which stops
+    being true the moment a Savitzky-Golay filter runs — it correlates
+    adjacent points, so point-to-point differences shrink much faster than
+    the noise amplitude does. Measured on the demo SERS spectrum, the
+    single-lag estimate came out 2x too low after smoothing, and peak
+    detection consequently reported 48 bands where there are 6. Since the
+    Auto-clean preset smooths by default, that was the *default* path.
+
+    The fix is to measure at several lags and keep the largest. For
+    independent noise every lag agrees. For smoothed noise the short lags
+    understate it and the longer ones — past the filter's correlation
+    length, where samples are independent again — recover the true residual
+    amplitude. Taking the maximum means the estimate degrades toward
+    "correct" rather than toward "too permissive".
+
+    Scaling: 1.4826 converts MAD to a Gaussian sigma; dividing by sqrt(2)
+    undoes the variance doubling differencing introduces, since
+    var(y[i+k] - y[i]) = 2 * var(noise) for independent samples.
     """
     if intensities.size < 3:
         return 0.0
-    deltas = np.diff(intensities)
-    mad = float(np.median(np.abs(deltas - np.median(deltas))))
-    return 1.4826 * mad / np.sqrt(2.0)
+
+    best = 0.0
+    for lag in _NOISE_LAGS:
+        # Need a meaningful number of pairs for the median to mean anything.
+        if intensities.size <= lag * 4:
+            break
+        deltas = intensities[lag:] - intensities[:-lag]
+        mad = float(np.median(np.abs(deltas - np.median(deltas))))
+        best = max(best, 1.4826 * mad / np.sqrt(2.0))
+    return best
 
 
 def _mean_spacing(x: np.ndarray) -> float:

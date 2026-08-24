@@ -1,126 +1,225 @@
-import { useState } from 'react';
-import { Link } from 'react-router-dom';
-import { searchSpectra, type SpectrumSearchResult, type TrustTier } from '../api/search';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
+import {
+  searchSpectra,
+  type SearchSort,
+  type SpectrumSearchResult,
+  type TrustTier,
+} from '../api/search';
+import SpectrumTable from '../components/SpectrumTable';
+import { useToast } from '../components/Toast';
+import { Button, Card, EmptyState, Skeleton } from '../components/ui';
 
-/** Functional, not polished: a filter form over the core objective-metadata
- * search (`GET /search/spectra`) plus a results table linking each row to
- * `/spectra/:id`. Deliberately has no sort-by-votes/popularity control —
- * results are always ordered by `published_at desc` server-side, per the
- * "search stays quarantined from social signals" requirement. */
+const SORTS: Array<{ value: SearchSort; label: string; hint: string }> = [
+  {
+    value: 'relevance',
+    label: 'Relevance',
+    hint: 'Blends community engagement, recency and peer-reviewed status.',
+  },
+  {
+    value: 'newest',
+    label: 'Newest',
+    hint: 'Most recently published first. Engagement is ignored entirely.',
+  },
+  {
+    value: 'engagement',
+    label: 'Most discussed',
+    hint: 'Time-decayed upvotes — what people are actually looking at.',
+  },
+  {
+    value: 'snr',
+    label: 'Best quality',
+    hint: 'Highest measured signal-to-noise first. Purely objective.',
+  },
+];
+
+/** The central public database. Published spectra only — a contributor's
+ * drafts live in their own `/library` and never surface here. */
 export default function SearchPage() {
-  const [materialType, setMaterialType] = useState('');
-  const [excitationWavelengthNm, setExcitationWavelengthNm] = useState('');
-  const [minSnr, setMinSnr] = useState('');
-  const [trustTier, setTrustTier] = useState<TrustTier | ''>('');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const navigate = useNavigate();
+  const { notify } = useToast();
 
   const [results, setResults] = useState<SpectrumSearchResult[]>([]);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [searched, setSearched] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
 
-  async function handleSearch(e: React.FormEvent) {
-    e.preventDefault();
+  // Filters live in the URL so a search is a shareable link — the same
+  // reasoning as the compare view.
+  const materialType = searchParams.get('material_type') ?? '';
+  const excitation = searchParams.get('excitation_wavelength_nm') ?? '';
+  const minSnr = searchParams.get('min_snr') ?? '';
+  const trustTier = (searchParams.get('trust_tier') as TrustTier | null) ?? null;
+  const sort = (searchParams.get('sort') as SearchSort | null) ?? 'relevance';
+
+  const [materialDraft, setMaterialDraft] = useState(materialType);
+
+  const runSearch = useCallback(() => {
     setLoading(true);
     setError(null);
-    try {
-      const rows = await searchSpectra({
-        material_type: materialType || undefined,
-        excitation_wavelength_nm: excitationWavelengthNm ? Number(excitationWavelengthNm) : undefined,
-        min_snr: minSnr ? Number(minSnr) : undefined,
-        trust_tier: trustTier || undefined,
-      });
-      setResults(rows);
-      setSearched(true);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setLoading(false);
+    searchSpectra({
+      material_type: materialType || undefined,
+      excitation_wavelength_nm: excitation ? Number(excitation) : undefined,
+      min_snr: minSnr ? Number(minSnr) : undefined,
+      trust_tier: trustTier ?? undefined,
+      sort,
+      limit: 50,
+    })
+      .then(setResults)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+      .finally(() => setLoading(false));
+  }, [materialType, excitation, minSnr, trustTier, sort]);
+
+  useEffect(runSearch, [runSearch]);
+
+  function setParam(key: string, value: string | null) {
+    const next = new URLSearchParams(searchParams);
+    if (value) next.set(key, value);
+    else next.delete(key);
+    setSearchParams(next, { replace: true });
+  }
+
+  const activeSort = useMemo(() => SORTS.find((s) => s.value === sort), [sort]);
+  const selectedIds = [...selected];
+
+  function compareSelected() {
+    if (selectedIds.length < 2) {
+      notify('Pick at least two spectra to compare.', 'error');
+      return;
     }
+    navigate(`/compare?ids=${selectedIds.join(',')}`);
   }
 
   return (
-    <div>
-      <h1>Search</h1>
+    <div className="search-page">
+      <header className="page-head">
+        <div>
+          <h1>Search the commons</h1>
+          <p className="hint">
+            Every published spectrum on RamanHub. Browsing rather than looking for
+            something specific? Try the <Link to="/feed">feed</Link>.
+          </p>
+        </div>
+      </header>
 
-      <form onSubmit={handleSearch}>
-        <div className="field-row">
-          <label htmlFor="search-material-type">Material type</label>
-          <input
-            id="search-material-type"
-            value={materialType}
-            onChange={(e) => setMaterialType(e.target.value)}
-            placeholder="e.g. quartz"
-          />
-        </div>
-        <div className="field-row">
-          <label htmlFor="search-excitation">Excitation wavelength (nm)</label>
-          <input
-            id="search-excitation"
-            type="number"
-            value={excitationWavelengthNm}
-            onChange={(e) => setExcitationWavelengthNm(e.target.value)}
-            placeholder="e.g. 532"
-          />
-        </div>
-        <div className="field-row">
-          <label htmlFor="search-min-snr">Min SNR</label>
-          <input
-            id="search-min-snr"
-            type="number"
-            value={minSnr}
-            onChange={(e) => setMinSnr(e.target.value)}
-          />
-        </div>
-        <div className="field-row">
-          <label htmlFor="search-trust-tier">Trust tier</label>
-          <select
-            id="search-trust-tier"
-            value={trustTier}
-            onChange={(e) => setTrustTier(e.target.value as TrustTier | '')}
-          >
-            <option value="">Any</option>
-            <option value="doi_verified">DOI-verified</option>
-            <option value="community">Community</option>
+      <Card>
+        <form
+          className="search-facets"
+          onSubmit={(e) => {
+            e.preventDefault();
+            setParam('material_type', materialDraft || null);
+          }}
+        >
+          <label className="field">
+            <span>Material</span>
+            <input
+              value={materialDraft}
+              onChange={(e) => setMaterialDraft(e.target.value)}
+              placeholder="quartz, cellulose, R6G…"
+            />
+          </label>
+
+          <label className="field">
+            <span>Laser (nm)</span>
+            <input
+              type="number"
+              value={excitation}
+              onChange={(e) => setParam('excitation_wavelength_nm', e.target.value || null)}
+              placeholder="785"
+            />
+          </label>
+
+          <label className="field">
+            <span>Minimum SNR</span>
+            <input
+              type="number"
+              value={minSnr}
+              onChange={(e) => setParam('min_snr', e.target.value || null)}
+              placeholder="10"
+            />
+          </label>
+
+          <Button type="submit" variant="primary">
+            Search
+          </Button>
+        </form>
+      </Card>
+
+      <div className="filter-bar">
+        <label className="inline-field">
+          <span>Sort</span>
+          <select value={sort} onChange={(e) => setParam('sort', e.target.value)}>
+            {SORTS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
           </select>
+        </label>
+
+        <div className="segmented" role="group" aria-label="Trust tier">
+          <button
+            type="button"
+            className="segmented__option"
+            aria-pressed={trustTier === null}
+            onClick={() => setParam('trust_tier', null)}
+          >
+            All
+          </button>
+          <button
+            type="button"
+            className="segmented__option"
+            aria-pressed={trustTier === 'doi_verified'}
+            onClick={() => setParam('trust_tier', 'doi_verified')}
+          >
+            DOI-verified
+          </button>
+          <button
+            type="button"
+            className="segmented__option"
+            aria-pressed={trustTier === 'community'}
+            onClick={() => setParam('trust_tier', 'community')}
+          >
+            Community
+          </button>
         </div>
-        <button type="submit" disabled={loading}>
-          {loading ? 'Searching...' : 'Search'}
-        </button>
-      </form>
+
+        {activeSort && <p className="hint">{activeSort.hint}</p>}
+      </div>
+
+      {selected.size > 0 && (
+        <div className="selection-bar">
+          <span>{selected.size} selected</span>
+          <Button size="sm" onClick={compareSelected}>
+            Compare
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => setSelected(new Set())}>
+            Clear
+          </Button>
+        </div>
+      )}
 
       {error && <p className="error">{error}</p>}
 
-      {searched && !loading && results.length === 0 && <p>No results.</p>}
-
-      {results.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>Material type</th>
-              <th>Excitation (nm)</th>
-              <th>SNR</th>
-              <th>Modality</th>
-              <th>Trust tier</th>
-              <th>Published</th>
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((row) => (
-              <tr key={row.id}>
-                <td>
-                  <Link to={`/spectra/${row.id}`}>{row.title ?? row.id}</Link>
-                </td>
-                <td>{row.material_type ?? '—'}</td>
-                <td>{row.excitation_wavelength_nm ?? '—'}</td>
-                <td>{row.snr !== null && row.snr !== undefined ? row.snr.toFixed(2) : '—'}</td>
-                <td>{row.modality}</td>
-                <td>{row.doi ? 'DOI-verified' : 'Community'}</td>
-                <td>{row.published_at ?? '—'}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
+      {loading ? (
+        <Skeleton lines={6} height="2rem" />
+      ) : results.length === 0 ? (
+        <EmptyState title="No spectra match">
+          <p className="hint">
+            Try widening the filters — or <Link to="/upload">contribute the first one</Link>.
+          </p>
+        </EmptyState>
+      ) : (
+        <>
+          <p className="hint">{results.length} published spectra</p>
+          <SpectrumTable
+            rows={results}
+            selected={selected}
+            onSelectedChange={setSelected}
+            showState={false}
+          />
+        </>
       )}
     </div>
   );

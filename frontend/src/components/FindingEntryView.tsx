@@ -2,9 +2,8 @@ import { useEffect, useState } from 'react';
 import { runHca, runPca, type HcaResult, type PcaResult } from '../api/analysis';
 import { getSpectrumData, type SpectrumData } from '../api/visualization';
 import type { FindingEntry, MemberSpectrum } from '../api/findings';
-import { applyDisplayNormalization, intensityAxisLabel } from '../lib/normalize';
+import OverlayChart from './OverlayChart';
 import PcaPanel from './PcaPanel';
-import SpectrumChart from './SpectrumChart';
 import { Skeleton } from './ui';
 
 /** Renders one post in a Finding thread.
@@ -137,21 +136,12 @@ export default function FindingEntryView({
       )}
 
       {(entry.kind === 'spectra' || entry.kind === 'figure') && series && (
-        <SpectrumChart
-          zoomable
-          flush
-          yAxisLabel={intensityAxisLabel('snv')}
+        <OverlayChart
+          height={360}
           series={series.map((data, index) => ({
             name: labelFor(configIds[index], index),
             wavenumbers: data.wavenumbers,
-            // SNV for the same reason as the compare view: an overlay of
-            // as-stored intensities compares brightness rather than band
-            // structure. Display-only — the recorded data is untouched.
-            intensities: applyDisplayNormalization(
-              data.wavenumbers,
-              data.intensities,
-              'snv',
-            ),
+            intensities: data.intensities,
           }))}
         />
       )}
