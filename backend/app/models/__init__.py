@@ -10,6 +10,8 @@ from app.models.accession import (
 )
 from app.models.enums import (
     FieldDataType,
+    FindingEntryKind,
+    FindingState,
     IngestionStatus,
     Modality,
     ParseSource,
@@ -17,6 +19,7 @@ from app.models.enums import (
     UploadStatus,
 )
 from app.models.field_registry import LedgerStepDefinition, MetadataFieldDefinition
+from app.models.finding import Finding, FindingEntry, FindingSpectrum
 from app.models.ingestion_job import IngestionJob
 from app.models.license import License
 from app.models.processed_cache import ProcessedCache
@@ -33,6 +36,11 @@ __all__ = [
     "SPECTRUM_ACCESSION_SEQ",
     "Comment",
     "FieldDataType",
+    "Finding",
+    "FindingEntry",
+    "FindingEntryKind",
+    "FindingSpectrum",
+    "FindingState",
     "IngestionJob",
     "IngestionStatus",
     "LedgerStepDefinition",

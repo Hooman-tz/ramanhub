@@ -46,6 +46,43 @@ class SpectrumState(str, enum.Enum):
     embargoed = "embargoed"
 
 
+class FindingState(str, enum.Enum):
+    """Findings reuse the draft/published split but deliberately NOT
+    `SpectrumState`'s third member.
+
+    An embargo is a property of *data* — "this measurement is private until
+    the paper lands". A Finding is a write-up about data that is already
+    under its own embargo; giving it a second, independent embargo clock
+    would create a state where the narrative is public and the spectra it
+    discusses are not. Publishing a Finding requires its member spectra to
+    be published, which is the simpler and stricter rule.
+    """
+
+    draft = "draft"
+    published = "published"
+
+
+class FindingEntryKind(str, enum.Enum):
+    """What one post in a Finding thread contains.
+
+    This is the "add results step by step" axis: a thread grows by
+    appending entries, so a follow-up analysis is a new entry rather than
+    an edit that silently rewrites what readers already saw.
+
+    Analysis entries store their PARAMETERS in `config`, not a rendered
+    image, so the figure is recomputed from the live data and stays
+    reproducible.
+    """
+
+    note = "note"
+    figure = "figure"
+    spectra = "spectra"
+    peaks = "peaks"
+    pca = "pca"
+    hca = "hca"
+    attachment = "attachment"
+
+
 class FieldDataType(str, enum.Enum):
     number = "number"
     string = "string"
@@ -75,4 +112,13 @@ spectrum_state_enum = PgEnum(
 )
 field_data_type_enum = PgEnum(
     FieldDataType, name="field_data_type", native_enum=True, values_callable=_values_callable
+)
+finding_state_enum = PgEnum(
+    FindingState, name="finding_state", native_enum=True, values_callable=_values_callable
+)
+finding_entry_kind_enum = PgEnum(
+    FindingEntryKind,
+    name="finding_entry_kind",
+    native_enum=True,
+    values_callable=_values_callable,
 )

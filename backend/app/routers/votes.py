@@ -1,9 +1,15 @@
-"""Module 4b: upvotes on spectra. Mounted with no prefix — full routes are
-`/spectra/{spectrum_id}/votes`.
+"""Module 4b: upvotes on spectra and on Findings. Mounted with no prefix —
+`/spectra/{spectrum_id}/votes` and `/findings/{finding_id}/votes`.
 
-Deliberately quarantined from core search/discovery: vote counts here never
-feed `app.routers.search`'s ranking, only the separate Trending feed
-(`app.routers.trending`).
+The two targets share the `votes` table (see `app.models.social` for why),
+and each route filters on its OWN target column. That is only correct
+because the table's CHECK constraint guarantees exactly one target is set,
+so a finding-vote always has a NULL `spectrum_id` and can never be counted
+in a spectrum's tally.
+
+Ranking note: as of the search-ranking change, engagement DOES feed
+`app.routers.search`. This module stays agnostic about that — it records
+votes; the ranking policy lives in `app.ranking`.
 """
 from __future__ import annotations
 
@@ -17,10 +23,11 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user, get_current_user_optional
 from app.db.session import get_db
+from app.models.finding import Finding
 from app.models.social import Vote
 from app.models.spectrum import Spectrum
 from app.models.user import User
-from app.processing.state_machine import require_owner_or_public
+from app.processing.state_machine import require_finding_readable, require_owner_or_public
 from app.ratelimit import rate_limit_votes
 
 router = APIRouter(tags=["votes"])
@@ -81,6 +88,69 @@ def toggle_vote(
 
     db.commit()
     return VoteToggleResponse(voted=True, count=_vote_count(spectrum.id, db))
+
+
+def _finding_vote_count(finding_id: UUID, db: Session) -> int:
+    return db.scalar(
+        select(func.count()).select_from(Vote).where(Vote.finding_id == finding_id)
+    ) or 0
+
+
+def _get_visible_finding_or_404(finding_id: UUID, user: User | None, db: Session) -> Finding:
+    finding = db.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    require_finding_readable(finding, user)
+    return finding
+
+
+@router.post("/findings/{finding_id}/votes", response_model=VoteToggleResponse)
+def toggle_finding_vote(
+    finding_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_full_user),
+    _: None = Depends(rate_limit_votes),
+) -> VoteToggleResponse:
+    """Same insert-first, treat-conflict-as-toggle-off pattern as the
+    spectrum route above — see its comments for why that ordering is
+    race-safe."""
+    finding = _get_visible_finding_or_404(finding_id, user, db)
+
+    try:
+        with db.begin_nested():
+            db.add(Vote(finding_id=finding.id, user_id=user.id))
+            db.flush()
+    except IntegrityError:
+        existing = db.scalar(
+            select(Vote).where(Vote.finding_id == finding.id, Vote.user_id == user.id)
+        )
+        if existing is not None:
+            db.delete(existing)
+            db.commit()
+        return VoteToggleResponse(voted=False, count=_finding_vote_count(finding.id, db))
+
+    db.commit()
+    return VoteToggleResponse(voted=True, count=_finding_vote_count(finding.id, db))
+
+
+@router.get("/findings/{finding_id}/votes", response_model=VoteStatusResponse)
+def get_finding_votes(
+    finding_id: UUID,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user_optional),
+) -> VoteStatusResponse:
+    finding = _get_visible_finding_or_404(finding_id, user, db)
+    voted_by_me = False
+    if user is not None:
+        voted_by_me = (
+            db.scalar(
+                select(Vote).where(Vote.finding_id == finding.id, Vote.user_id == user.id)
+            )
+            is not None
+        )
+    return VoteStatusResponse(
+        count=_finding_vote_count(finding.id, db), voted_by_me=voted_by_me
+    )
 
 
 @router.get("/spectra/{spectrum_id}/votes", response_model=VoteStatusResponse)

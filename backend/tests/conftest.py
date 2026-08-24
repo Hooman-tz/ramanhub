@@ -183,3 +183,52 @@ def app_client(db_session):
     client = TestClient(test_app)
     client.set_current_user = lambda user: current.__setitem__("user", user)
     return client
+
+
+@pytest.fixture()
+def fclient(db_session):
+    """TestClient wired with the Findings/feed/social routers.
+
+    Imports are function-local, matching `app_client` above: keeping router
+    imports out of conftest's module scope means a collection-time import
+    error in one router doesn't take down every DB-backed test file.
+    """
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+
+    from app.auth.deps import (
+        get_current_full_user,
+        get_current_user,
+        get_current_user_optional,
+    )
+    from app.db.session import get_db
+    from app.routers import comments, feed, findings, spectra, votes
+
+    test_app = FastAPI()
+    for router in (spectra.router, findings.router, feed.router, votes.router, comments.router):
+        test_app.include_router(router)
+
+    def _override_get_db():
+        yield db_session
+
+    current = {"user": None}
+
+    def _override_get_current_user():
+        if current["user"] is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return current["user"]
+
+    def _override_full_user():
+        user = _override_get_current_user()
+        if getattr(user, "is_guest", False):
+            raise HTTPException(status_code=403, detail="Full account required")
+        return user
+
+    test_app.dependency_overrides[get_db] = _override_get_db
+    test_app.dependency_overrides[get_current_user] = _override_get_current_user
+    test_app.dependency_overrides[get_current_full_user] = _override_full_user
+    test_app.dependency_overrides[get_current_user_optional] = lambda: current["user"]
+
+    client = TestClient(test_app)
+    client.set_current_user = lambda user: current.__setitem__("user", user)
+    return client

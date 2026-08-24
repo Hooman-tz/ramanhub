@@ -172,7 +172,7 @@ def test_drafts_never_appear_in_search(client, make_user, make_raw_file):
     assert resp.json() == []
 
 
-def test_ordering_by_published_at_not_votes(client, make_user, make_raw_file, db_session):
+def test_newest_sort_ignores_votes(client, make_user, make_raw_file, db_session):
     owner = make_user()
     older = _create_and_publish(client, owner, make_raw_file, material_type="order-test")
     newer = _create_and_publish(client, owner, make_raw_file, material_type="order-test")
@@ -186,18 +186,79 @@ def test_ordering_by_published_at_not_votes(client, make_user, make_raw_file, db
     db_session.add_all([older_row, newer_row])
     db_session.commit()
 
-    # Give the OLDER spectrum lots of votes and the newer one none. Ordering
-    # must be completely unaffected — core search is quarantined from
-    # Module 4b's social/vote signal.
+    # Heavily upvote the OLDER spectrum, leave the newer one at zero.
     for _ in range(5):
         voter = make_user()
         db_session.add(Vote(spectrum_id=older_row.id, user_id=voter.id))
     db_session.commit()
 
-    resp = client.get("/search/spectra", params={"material_type": "order-test"})
+    # sort=newest is the popularity-free ordering: votes must not move it.
+    resp = client.get(
+        "/search/spectra", params={"material_type": "order-test", "sort": "newest"}
+    )
     assert resp.status_code == 200
     ids = [row["id"] for row in resp.json()]
     assert ids.index(newer["id"]) < ids.index(older["id"])
+
+
+def test_relevance_ordering_does_account_for_votes(
+    client, make_user, make_raw_file, db_session
+):
+    """The deliberate reversal of the architecture doc's Module 4 quarantine
+    rule: engagement now feeds the DEFAULT ordering.
+
+    Five votes on a one-day-older spectrum are enough to outweigh one day of
+    recency decay, so the upvoted item leads. If this ever silently goes
+    back to pure recency, `app.ranking` has been disconnected.
+    """
+    owner = make_user()
+    older = _create_and_publish(client, owner, make_raw_file, material_type="relevance-test")
+    newer = _create_and_publish(client, owner, make_raw_file, material_type="relevance-test")
+
+    older_row = db_session.get(Spectrum, uuid.UUID(older["id"]))
+    older_row.published_at = datetime.now(UTC) - timedelta(days=1)
+    newer_row = db_session.get(Spectrum, uuid.UUID(newer["id"]))
+    newer_row.published_at = datetime.now(UTC)
+    db_session.add_all([older_row, newer_row])
+    db_session.commit()
+
+    for _ in range(5):
+        voter = make_user()
+        db_session.add(Vote(spectrum_id=older_row.id, user_id=voter.id))
+    db_session.commit()
+
+    resp = client.get("/search/spectra", params={"material_type": "relevance-test"})
+    assert resp.status_code == 200
+    ids = [row["id"] for row in resp.json()]
+    assert ids.index(older["id"]) < ids.index(newer["id"])
+
+
+def test_zero_vote_spectra_still_appear_in_search(client, make_user, make_raw_file):
+    """The bug the scalar-subquery count exists to prevent: an INNER join to
+    votes (which is what Trending correctly uses) would hide every spectrum
+    nobody has voted on — i.e. nearly the whole corpus."""
+    owner = make_user()
+    created = _create_and_publish(client, owner, make_raw_file, material_type="no-votes-at-all")
+
+    resp = client.get("/search/spectra", params={"material_type": "no-votes-at-all"})
+
+    assert resp.status_code == 200
+    assert [row["id"] for row in resp.json()] == [created["id"]]
+
+
+@pytest.mark.parametrize("sort", ["relevance", "newest", "engagement", "snr"])
+def test_every_sort_mode_is_accepted(client, make_user, make_raw_file, sort):
+    owner = make_user()
+    _create_and_publish(client, owner, make_raw_file, material_type="sortable")
+
+    resp = client.get("/search/spectra", params={"material_type": "sortable", "sort": sort})
+
+    assert resp.status_code == 200
+    assert len(resp.json()) == 1
+
+
+def test_unknown_sort_mode_is_rejected(client):
+    assert client.get("/search/spectra", params={"sort": "popularity"}).status_code == 422
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,8 @@ from app.routers import (
     comments,
     doi,
     export,
+    feed,
+    findings,
     ingestion_jobs,
     ledgers,
     library,
@@ -79,6 +81,8 @@ app.include_router(routines.router)
 app.include_router(spectrum_data.router)
 app.include_router(analysis.router)
 app.include_router(export.router)
+app.include_router(findings.router)
+app.include_router(feed.router)
 app.include_router(doi.router)
 app.include_router(search.router)
 app.include_router(library.router)

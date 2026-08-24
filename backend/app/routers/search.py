@@ -4,11 +4,23 @@ over the shared public commons.
 Mounted with no prefix (this router itself declares `prefix="/search"`) —
 `GET /search/spectra`, `GET /search/similar/{spectrum_id}`.
 
-Deliberately NOT touching social signals (votes/comments/trending — owned by
-a different Module 4b router) anywhere in this file: no join against
-`app.models.social`, no ordering by anything but `published_at`. Per the
-architecture doc, core search/ranking must stay quarantined from social
-voting.
+## Ranking policy — CHANGED
+
+This file previously stated that social signals must never touch search
+ranking, per the architecture doc's Module 4 quarantine rule. That rule has
+been deliberately reversed by a product decision: engagement now feeds the
+default `relevance` ordering.
+
+The scoring itself lives in `app.ranking`, which documents the tradeoff and
+the mitigations (log compression, time decay, objective signals weighted
+higher, and `sort=newest` still available for a popularity-free ordering).
+Do not re-add a quarantine here without changing that module too — the two
+would silently disagree, and `/feed` shares the same scoring.
+
+Trending (`app.routers.trending`) remains a SEPARATE feed with different
+semantics: pure engagement inside a window, inner-joined so zero-vote items
+are omitted. Search must keep using an outer/scalar-subquery count, or it
+would hide every spectrum nobody has voted on yet.
 """
 from __future__ import annotations
 
@@ -19,14 +31,22 @@ from uuid import UUID
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user_optional
 from app.db.session import get_db
 from app.models.enums import Modality, SpectrumState
+from app.models.social import Vote
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.processing.state_machine import effective_state, require_owner_or_public
+from app.ranking import (
+    age_in_days,
+    engagement_score,
+    relevance_score,
+    vote_count_subquery,
+)
 from app.spectrum_access import load_spectrum_arrays
 
 router = APIRouter(prefix="/search", tags=["search"])
@@ -65,6 +85,16 @@ def serialize_search_result(spectrum: Spectrum) -> SpectrumSearchResult:
     result = SpectrumSearchResult.model_validate(spectrum)
     result.state = effective_state(spectrum)
     return result
+
+
+def _age_days():
+    """Age of a published spectrum, for the decay terms.
+
+    Falls back to `created_at` because `published_at` is NULL on rows that
+    reached `published` before that column existed; without the coalesce
+    those rows produce a NULL score and sort last regardless of merit.
+    """
+    return age_in_days(func.coalesce(Spectrum.published_at, Spectrum.created_at))
 
 
 def cosine_similarity(
@@ -109,6 +139,7 @@ def search_spectra(
     min_snr: float | None = None,
     modality: str | None = None,
     trust_tier: Literal["doi_verified", "community"] | None = None,
+    sort: Literal["relevance", "newest", "engagement", "snr"] = "relevance",
     limit: int = 20,
     offset: int = 0,
     db: Session = Depends(get_db),
@@ -127,9 +158,20 @@ def search_spectra(
     not a security issue (`require_owner_or_public` still gates individual
     reads correctly).
 
-    Ordering: `published_at desc` ONLY, never any popularity/vote signal —
-    Module 4b's vote/comment counts must never appear in this endpoint's
-    filtering or ordering.
+    Ordering is controlled by `sort`:
+
+    - `relevance` (default) — blended engagement + recency + DOI-verified
+      bonus. See `app.ranking` for the weights and the reasoning.
+    - `newest` — `published_at desc`, the previous behaviour and the
+      popularity-free option.
+    - `engagement` — time-decayed vote count, for "what are people
+      discussing".
+    - `snr` — best measured signal-to-noise first, a purely objective
+      quality ordering.
+
+    Every sort ends with a `published_at`/`id` tiebreak so paging is stable:
+    without a unique final key, two rows with equal scores can swap between
+    page 1 and page 2 and an item is seen twice or missed entirely.
     """
     query = db.query(Spectrum).filter(Spectrum.state == SpectrumState.published)
 
@@ -157,7 +199,23 @@ def search_spectra(
     elif trust_tier == "community":
         query = query.filter(Spectrum.doi.is_(None))
 
-    query = query.order_by(Spectrum.published_at.desc()).offset(offset).limit(limit)
+    votes = vote_count_subquery(Vote, Vote.spectrum_id, Spectrum.id)
+
+    if sort == "newest":
+        ordering = [Spectrum.published_at.desc()]
+    elif sort == "engagement":
+        ordering = [engagement_score(votes, _age_days()).desc()]
+    elif sort == "snr":
+        # NULLS LAST: a spectrum whose SNR couldn't be computed is not the
+        # best-quality result, and Postgres sorts NULLs first on DESC.
+        ordering = [Spectrum.snr.desc().nullslast()]
+    else:
+        ordering = [relevance_score(votes, func.coalesce(Spectrum.published_at, Spectrum.created_at), Spectrum.doi).desc()]
+
+    # Stable tiebreak on a unique column, so pagination can't repeat or skip.
+    ordering.extend([Spectrum.published_at.desc(), Spectrum.id])
+
+    query = query.order_by(*ordering).offset(offset).limit(limit)
     return [serialize_search_result(s) for s in query.all()]
 
 

@@ -72,6 +72,29 @@ def require_owner_or_public(resource, user: User | None) -> None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 
+def require_finding_readable(finding, user: User | None) -> None:
+    """The Finding equivalent of `require_owner_or_public`.
+
+    Written separately rather than reusing that helper, even though the two
+    are nearly identical. `_is_private` compares `resource.state` against
+    `SpectrumState.draft`; a `FindingState.draft` would compare equal to it
+    only because both are `str` enums that happen to share the value
+    "draft". That is an accident of the mixin, not a designed relationship,
+    and it would break silently the moment either enum's values diverged —
+    failing OPEN, exposing every draft Finding. Access control should not
+    rest on a coincidence.
+
+    Same 404-not-403 contract: a non-owner cannot distinguish "no such
+    Finding" from "someone's private draft".
+    """
+    from app.models.enums import FindingState
+
+    if user is not None and finding.owner_id == user.id:
+        return
+    if finding.state != FindingState.published:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
 def effective_state(spectrum: Spectrum) -> str:
     """Return `"published"` if `spectrum` is embargoed and its
     `embargo_release_at` has already passed, else the raw `state` value.
