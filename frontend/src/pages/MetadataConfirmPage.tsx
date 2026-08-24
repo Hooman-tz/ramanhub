@@ -1,6 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
-import { getIngestionJob, confirmIngestionJob, type IngestionJob } from '../api/client';
+import {
+  getIngestionJob,
+  confirmIngestionJob,
+  createSpectrum,
+  type IngestionJob,
+} from '../api/client';
 import { Button, Card, Skeleton } from '../components/ui';
 
 /** Review-and-confirm for extracted metadata. On a reproducibility-focused
@@ -14,6 +19,7 @@ export default function MetadataConfirmPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [confirmed, setConfirmed] = useState(false);
+  const [spectrumId, setSpectrumId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!jobId) return;
@@ -37,6 +43,14 @@ export default function MetadataConfirmPage() {
       setSubmitting(true);
       const updated = await confirmIngestionJob(jobId, fields);
       setJob(updated);
+      // Confirming metadata only updates the ingestion job — it does not
+      // create a Spectrum row. Do that explicitly here so "Open the
+      // spectrum" below has a real id to link to.
+      const spectrum = await createSpectrum({
+        raw_file_id: updated.raw_file_id,
+        confirmed_metadata: updated.extracted_metadata_confirmed ?? undefined,
+      });
+      setSpectrumId(spectrum.id);
       setConfirmed(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -58,15 +72,12 @@ export default function MetadataConfirmPage() {
   if (error) return <p className="error">{error}</p>;
   if (!job) return <p>Ingestion job not found.</p>;
 
-  if (confirmed) {
-    // ASSUMPTION: the ingestion job response carries raw_file_id. If a
-    // dedicated spectrum id becomes available at this step instead, swap
-    // the link target below accordingly.
+  if (confirmed && spectrumId) {
     return (
       <div className="confirm-page">
         <Card title="Metadata confirmed">
           <p>This upload is now in your private library as a draft.</p>
-          <Link to={`/spectra/${job.raw_file_id}`} className="ui-button ui-button--primary">
+          <Link to={`/spectra/${spectrumId}`} className="ui-button ui-button--primary">
             Open the spectrum
           </Link>
         </Card>

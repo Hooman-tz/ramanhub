@@ -37,6 +37,9 @@ export interface IngestionJob {
   // modality/vendor, so we treat it as an untyped record and render it
   // generically rather than hardcoding field names.
   extracted_metadata_raw?: Record<string, unknown>;
+  // Present once `confirmIngestionJob` has been called; null/absent before
+  // that. Same shape as `extracted_metadata_raw` but user-reviewed.
+  extracted_metadata_confirmed?: Record<string, unknown> | null;
   // ASSUMPTION: sanity_check_flags maps a field key (matching a key in
   // extracted_metadata_raw) to a human-readable flag reason. Could also be
   // an array of { field, reason } objects — adjust `SanityFlags` below if so.
@@ -72,9 +75,12 @@ export interface Spectrum {
 
 export interface Routine {
   id: string;
+  modality: string;
   name: string;
   description?: string;
-  steps: LedgerStep[];
+  // Named steps_template to match the backend response exactly — these are
+  // step templates (type/params/order), not an applied ledger's steps.
+  steps_template: LedgerStep[];
 }
 
 export interface License {
@@ -172,6 +178,20 @@ export async function confirmIngestionJob(
 
 export async function getSpectrum(id: string): Promise<Spectrum> {
   return request<Spectrum>(`/spectra/${id}`);
+}
+
+export async function createSpectrum(payload: {
+  raw_file_id: string;
+  current_ledger_id?: string;
+  title?: string;
+  description?: string;
+  confirmed_metadata?: Record<string, unknown>;
+  material_type?: string;
+}): Promise<Spectrum> {
+  return request<Spectrum>('/spectra', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function updateSpectrum(

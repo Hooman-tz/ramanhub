@@ -53,9 +53,13 @@ export default function RoutinesPage() {
       setCreating(true);
       setError(null);
       await createRoutine({
+        // Raman is the only modality RamanHub supports today (see the
+        // architecture doc's namespacing note) — hardcoded rather than
+        // exposed as a choice until mass spec/NMR land.
+        modality: 'raman',
         name,
         description,
-        steps: [{ type: stepType, version: '1', params }],
+        steps_template: [{ type: stepType, version: '1', params }],
       });
       setName('');
       setDescription('');
@@ -143,7 +147,7 @@ export default function RoutinesPage() {
         <fieldset key={routine.id}>
           <legend>{routine.name}</legend>
           {routine.description && <p>{routine.description}</p>}
-          <pre>{JSON.stringify(routine.steps, null, 2)}</pre>
+          <pre>{JSON.stringify(routine.steps_template, null, 2)}</pre>
 
           <div className="field-row">
             <label htmlFor={`apply-${routine.id}`}>Raw file ID</label>
