@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { forkSpectrum, getSpectrum, startGuestSession, type Spectrum } from '../api/client';
+import type { Peak } from '../api/analysis';
 import { getSpectrumData, type SpectrumData } from '../api/visualization';
 import { useAuth } from '../auth/useAuth';
 import LedgerStepList from '../components/LedgerStepList';
 import DraftPublishToggle from '../components/DraftPublishToggle';
 import PipelineBuilder from '../components/PipelineBuilder';
+import ExportPanel from '../components/ExportPanel';
+import PeakPanel from '../components/PeakPanel';
 import SpectrumChart from '../components/SpectrumChart';
 import VoteCommentPanel from '../components/VoteCommentPanel';
 import { Badge, Button, Card, Skeleton } from '../components/ui';
@@ -25,6 +28,8 @@ export default function SpectrumViewPage() {
   const [chartLoading, setChartLoading] = useState(true);
   const [chartError, setChartError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(true);
+  const [peaks, setPeaks] = useState<Peak[]>([]);
+  const [showPeaks, setShowPeaks] = useState(true);
 
   const loadChartData = useCallback((spectrumId: string) => {
     setChartLoading(true);
@@ -86,8 +91,10 @@ export default function SpectrumViewPage() {
   return (
     <div>
       <div className="spectrum-header">
-        <h1>{spectrum.title ?? `Spectrum ${spectrum.id}`}</h1>
+        <h1>{spectrum.title ?? `Spectrum ${spectrum.accession ?? spectrum.id}`}</h1>
         <Badge state={spectrum.state} />
+        {spectrum.accession && <code className="accession">{spectrum.accession}</code>}
+        {spectrum.doi && <span className="chip chip--verified">DOI-verified</span>}
       </div>
       {spectrum.description && <p className="hint">{spectrum.description}</p>}
 
@@ -95,10 +102,12 @@ export default function SpectrumViewPage() {
       {chartData && (
         <Card className="chart-card">
           <SpectrumChart
+            zoomable
             wavenumbers={chartData.wavenumbers}
             intensities={chartData.intensities}
             loading={chartLoading}
             name={hasPipeline ? 'Processed' : 'Raw'}
+            peaks={showPeaks ? peaks : undefined}
             overlay={
               hasPipeline && showRaw && rawData
                 ? {
@@ -118,6 +127,16 @@ export default function SpectrumViewPage() {
                   onChange={(e) => setShowRaw(e.target.checked)}
                 />
                 Overlay the raw spectrum
+              </label>
+            )}
+            {peaks.length > 0 && (
+              <label>
+                <input
+                  type="checkbox"
+                  checked={showPeaks}
+                  onChange={(e) => setShowPeaks(e.target.checked)}
+                />
+                Mark detected peaks
               </label>
             )}
             {chartData.downsampled && (
@@ -149,6 +168,15 @@ export default function SpectrumViewPage() {
           {forkError && <p className="error">{forkError}</p>}
         </Card>
       )}
+
+      <PeakPanel spectrumId={spectrum.id} onPeaksChange={setPeaks} />
+
+      <ExportPanel spectrumId={spectrum.id} hasPipeline={hasPipeline} />
+
+      <p className="hint">
+        <Link to={`/compare?ids=${spectrum.id}`}>Compare this against other spectra</Link> —
+        overlay them, or run PCA and clustering across the set.
+      </p>
 
       <h3>Applied ledger</h3>
       <LedgerStepList steps={spectrum.current_ledger?.steps} />

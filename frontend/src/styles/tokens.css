@@ -175,8 +175,13 @@
   --dur-med: 220ms;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
+/* Dark values key off ONE attribute rather than `prefers-color-scheme`.
+   The system preference is resolved in JS (an inline script in index.html,
+   before first paint, plus a matchMedia listener) and written to
+   `data-theme`. Doing it this way means an explicit user choice and the OS
+   preference share a single code path — the alternative, matching on both a
+   media query and an attribute, would duplicate every token below. */
+:root[data-theme='dark'] {
     color-scheme: dark;
 
     --color-bg: oklch(16% 0.008 var(--hue-accent));
@@ -243,5 +248,4 @@
     --wash-a: oklch(30% 0.06 var(--hue-accent) / 0.5);
     --wash-b: oklch(28% 0.05 200 / 0.4);
     --wash-c: oklch(26% 0.04 320 / 0.35);
-  }
 }

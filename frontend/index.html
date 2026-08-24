@@ -8,6 +8,25 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="manifest" href="/manifest.json" />
     <title>RamanHub</title>
+    <script>
+      // Resolve the theme BEFORE first paint. Deferring this to React would
+      // render one frame with light-mode tokens, which a dark-mode user sees
+      // as a white flash on every navigation. Kept deliberately tiny and
+      // inline — an external file would be a blocking round-trip.
+      (function () {
+        try {
+          var stored = localStorage.getItem('ramanhub-theme');
+          var dark =
+            stored === 'dark' ||
+            (stored !== 'light' &&
+              window.matchMedia('(prefers-color-scheme: dark)').matches);
+          document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        } catch (e) {
+          // Private mode can throw on localStorage; light is a safe default.
+          document.documentElement.setAttribute('data-theme', 'light');
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

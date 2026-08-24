@@ -1,12 +1,11 @@
 // Thin typed fetch wrapper for the RamanHub API.
 //
-// ASSUMPTIONS: The backend is being built concurrently by other agents.
-// Every interface/endpoint shape below is "best effort" based on the spec
-// handed to the frontend agent, NOT confirmed against a live backend.
-// Search for "ASSUMPTION:" comments for the specific spots most likely to
-// need reconciliation once real backend responses are available.
+// Shapes here are confirmed against the live backend. `request` and
+// `API_BASE_URL` are exported so the feature-specific API modules
+// (analysis, findings, feed, export) share one error-handling and
+// credentials policy rather than each rolling its own fetch.
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
+export const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 
 // ---------------------------------------------------------------------------
 // Shared types
@@ -15,8 +14,15 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 export interface User {
   id: string;
   email: string;
+  /** Public URL handle — `/u/<handle>`. Null for guest sessions, which
+   * have no public profile. */
+  handle?: string | null;
   name?: string;
+  display_name?: string | null;
   avatar_url?: string;
+  orcid_id?: string | null;
+  affiliation?: string | null;
+  bio?: string | null;
   /** True for try-before-login guest sessions: can upload and process, but
    * publishing/votes/comments/profile linking need a full Google account. */
   is_guest?: boolean;
@@ -24,8 +30,6 @@ export interface User {
 
 export interface RawFileUploadResponse {
   raw_file_id: string;
-  // ASSUMPTION: ingestion is kicked off synchronously on upload and the
-  // job id is returned immediately. Field name could also be `job_id`.
   ingestion_job_id: string;
 }
 
@@ -60,6 +64,9 @@ export interface Ledger {
 
 export interface Spectrum {
   id: string;
+  /** Human-quotable public identifier, e.g. RH-S-000042 — what a paper
+   * cites, as opposed to `id`, which is what links point at internally. */
+  accession?: string | null;
   title?: string;
   description?: string;
   state: 'draft' | 'published' | 'embargoed';
@@ -67,6 +74,10 @@ export interface Spectrum {
   raw_file_id?: string;
   current_ledger?: Ledger;
   license_id?: string;
+  doi?: string | null;
+  material_type?: string | null;
+  snr?: number | null;
+  published_at?: string | null;
   embargo_release_at?: string | null;
   // Generic axes dump — charting is out of scope, a plain array/table is fine.
   wavenumbers?: number[];
@@ -94,7 +105,7 @@ export interface License {
 // Low-level request helper
 // ---------------------------------------------------------------------------
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     credentials: 'include', // httpOnly cookie auth
     ...init,
@@ -271,5 +282,41 @@ export async function applyRoutineToRawFile(
 ): Promise<Ledger> {
   return request<Ledger>(`/raw-files/${rawFileId}/apply-routine/${routineId}`, {
     method: 'POST',
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Profile
+// ---------------------------------------------------------------------------
+
+export interface PublicProfile {
+  id: string;
+  handle: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  orcid_id: string | null;
+  affiliation: string | null;
+  bio: string | null;
+  created_at: string;
+  spectrum_count: number;
+  finding_count: number;
+}
+
+/** A contributor's public profile. Deliberately a different shape from
+ * `User` — it carries no email. */
+export async function getPublicProfile(handle: string): Promise<PublicProfile> {
+  return request<PublicProfile>(`/users/by-handle/${encodeURIComponent(handle)}`);
+}
+
+export async function updateMyProfile(payload: {
+  display_name?: string;
+  handle?: string;
+  orcid_id?: string;
+  affiliation?: string;
+  bio?: string;
+}): Promise<User> {
+  return request<User>('/users/me', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
   });
 }

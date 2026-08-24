@@ -1,42 +1,12 @@
-// Typed client for Module 4a's discovery layer: core objective-metadata
-// search, spectral similarity search, and the private per-user library.
-// `client.ts` doesn't export its `request<T>()` helper, so this is a small
-// local fetch wrapper following the exact same pattern (same base URL env
-// var, same `credentials: 'include'` cookie-auth convention, same
-// error-shape unwrapping) rather than editing `client.ts` — mirrors
-// `api/social.ts`'s identical approach for the same reason.
+// Typed client for the discovery layer: objective-metadata search,
+// spectral similarity search, and the private per-user library.
 //
-// ASSUMPTIONS: the backend for this module is authored by this same pass,
-// but is still "best effort" relative to what the eventual integration
-// point (SpectrumViewPage, App.tsx routes) expects — reconcile field names
-// if needed.
+// Uses the shared `request<T>()` from `client.ts`. Each API module used to
+// carry its own byte-identical copy of that helper; they have been
+// collapsed so credentials, error unwrapping and the 204 case are defined
+// once and can't drift apart.
+import { request } from './client';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    credentials: 'include',
-    ...init,
-    headers: {
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  });
-
-  if (!res.ok) {
-    let detail: string | undefined;
-    try {
-      const body = await res.json();
-      detail = body?.detail ?? body?.message ?? JSON.stringify(body);
-    } catch {
-      detail = await res.text().catch(() => undefined);
-    }
-    throw new Error(`API error ${res.status}: ${detail ?? res.statusText}`);
-  }
-
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
-}
 
 // ---------------------------------------------------------------------------
 // Shared result shape
@@ -47,6 +17,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
  * detail shape (`Spectrum` in `client.ts`); use `getSpectrum` for that. */
 export interface SpectrumSearchResult {
   id: string;
+  /** Human-quotable public identifier (RH-S-000042). */
+  accession?: string | null;
   title?: string | null;
   material_type?: string | null;
   excitation_wavelength_nm?: number | null;

@@ -1,39 +1,8 @@
-// Visualization + DOI-lookup API calls (Module 3).
+// Visualization + DOI-lookup API calls.
 //
-// ASSUMPTIONS: same posture as api/client.ts — these endpoint shapes are
-// "best effort" against the Module 3 backend spec, not yet confirmed
-// against a live backend.
+// Uses the shared `request<T>()` from `client.ts` — see the note there.
+import { request } from './client';
 
-// `client.ts`'s `request<T>()` helper is not exported (module-private), so
-// this file has its own small fetch wrapper matching the same
-// credentials/base-URL/error-handling pattern.
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    credentials: 'include',
-    ...init,
-    headers: {
-      ...(init?.body && !(init.body instanceof FormData) ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  });
-
-  if (!res.ok) {
-    let detail: string | undefined;
-    try {
-      const body = await res.json();
-      detail = body?.detail ?? body?.message ?? JSON.stringify(body);
-    } catch {
-      detail = await res.text().catch(() => undefined);
-    }
-    throw new Error(`API error ${res.status}: ${detail ?? res.statusText}`);
-  }
-
-  if (res.status === 204) return undefined as T;
-
-  return (await res.json()) as T;
-}
 
 // ---------------------------------------------------------------------------
 // Spectrum chart data

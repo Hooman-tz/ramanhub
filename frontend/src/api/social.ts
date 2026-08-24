@@ -1,39 +1,8 @@
-// Typed client for Module 4b's social layer (votes, comments, Trending
-// feed). `client.ts` doesn't export its `request<T>()` helper, so this is a
-// small local fetch wrapper following the exact same pattern (same base
-// URL env var, same `credentials: 'include'` cookie-auth convention, same
-// error-shape unwrapping) rather than editing `client.ts`.
+// Typed client for the social layer: votes, comments, Trending feed.
 //
-// ASSUMPTIONS: the backend for this module is authored by this same pass,
-// but is still "best effort" relative to what the eventual integration
-// point (SpectrumViewPage) expects — reconcile field names if needed.
+// Uses the shared `request<T>()` from `client.ts` — see the note there.
+import { request } from './client';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
-
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
-    credentials: 'include',
-    ...init,
-    headers: {
-      ...(init?.body ? { 'Content-Type': 'application/json' } : {}),
-      ...init?.headers,
-    },
-  });
-
-  if (!res.ok) {
-    let detail: string | undefined;
-    try {
-      const body = await res.json();
-      detail = body?.detail ?? body?.message ?? JSON.stringify(body);
-    } catch {
-      detail = await res.text().catch(() => undefined);
-    }
-    throw new Error(`API error ${res.status}: ${detail ?? res.statusText}`);
-  }
-
-  if (res.status === 204) return undefined as T;
-  return (await res.json()) as T;
-}
 
 // ---------------------------------------------------------------------------
 // Votes

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
 import ReportBugButton from './ReportBugButton';
+import ThemeToggle from './ThemeToggle';
 
 /* Minimal 1.5px-stroke icons, inline so there's no icon-font/library
  * dependency. Sized by the shell CSS. */
@@ -36,6 +37,18 @@ const icons = {
       <path d="m3 13 9 5 9-5" />
     </svg>
   ),
+  feed: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M4 5h16v6H4zM4 15h10v4H4z" />
+      <path d="M17 15h3v4h-3z" />
+    </svg>
+  ),
+  compare: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M3 17c3-9 6 4 9-5s6 3 9-4" />
+      <path d="M3 20h18" />
+    </svg>
+  ),
   login: (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
       <circle cx="12" cy="8.5" r="4" />
@@ -44,12 +57,29 @@ const icons = {
   ),
 };
 
-const NAV_ITEMS = [
-  { to: '/upload', label: 'Upload', icon: icons.upload },
-  { to: '/search', label: 'Search', icon: icons.search },
-  { to: '/library', label: 'Library', icon: icons.library },
-  { to: '/trending', label: 'Trending', icon: icons.trending },
-  { to: '/routines', label: 'Routines', icon: icons.routines },
+/* Grouped so the sidebar reads as three jobs rather than one flat list:
+   the toolbox you work in, your own data, and the shared commons. */
+const NAV_GROUPS: Array<{ label: string; items: Array<{ to: string; label: string; icon: JSX.Element }> }> = [
+  {
+    label: 'Toolbox',
+    items: [
+      { to: '/upload', label: 'Upload', icon: icons.upload },
+      { to: '/compare', label: 'Compare', icon: icons.compare },
+      { to: '/routines', label: 'Routines', icon: icons.routines },
+    ],
+  },
+  {
+    label: 'Your data',
+    items: [{ to: '/library', label: 'Library', icon: icons.library }],
+  },
+  {
+    label: 'Community',
+    items: [
+      { to: '/feed', label: 'Feed', icon: icons.feed },
+      { to: '/search', label: 'Search', icon: icons.search },
+      { to: '/trending', label: 'Trending', icon: icons.trending },
+    ],
+  },
 ];
 
 function initials(name: string): string {
@@ -74,11 +104,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </Link>
 
         <nav className="shell__nav" aria-label="Primary">
-          {NAV_ITEMS.map((item) => (
-            <NavLink key={item.to} to={item.to} className="shell__nav-link">
-              {item.icon}
-              {item.label}
-            </NavLink>
+          {NAV_GROUPS.map((group) => (
+            <div key={group.label} className="shell__nav-group">
+              <p className="shell__nav-label">{group.label}</p>
+              {group.items.map((item) => (
+                <NavLink key={item.to} to={item.to} className="shell__nav-link">
+                  {item.icon}
+                  {item.label}
+                </NavLink>
+              ))}
+            </div>
           ))}
           {(!user || user.is_guest) && (
             <NavLink to="/login" className="shell__nav-link">
@@ -89,6 +124,7 @@ export default function AppShell({ children }: { children: ReactNode }) {
         </nav>
 
         <div className="shell__footer">
+          <ThemeToggle />
           {user && (
             <div className="shell__user" title={user.is_guest ? 'Guest session' : user.email}>
               {user.avatar_url ? (
@@ -99,7 +135,13 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 </span>
               )}
               <span className="shell__user-name">
-                {user.is_guest ? 'Guest session' : (user.name ?? user.email)}
+                {user.is_guest ? (
+                  'Guest session'
+                ) : user.handle ? (
+                  <Link to={`/u/${user.handle}`}>{user.name ?? user.display_name ?? user.email}</Link>
+                ) : (
+                  (user.name ?? user.email)
+                )}
               </span>
             </div>
           )}

@@ -201,6 +201,28 @@ def create_spectrum(
     return _serialize(spectrum, db)
 
 
+@router.get("/spectra/by-accession/{accession}", response_model=SpectrumResponse)
+def get_spectrum_by_accession(
+    accession: str,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user_optional),
+) -> SpectrumResponse:
+    """Resolve a citable accession (RH-S-000042) to its spectrum.
+
+    Declared BEFORE `/spectra/{spectrum_id}` on purpose: FastAPI matches
+    routes in declaration order, so with the reverse order "by-accession"
+    would be parsed as a UUID path parameter and 422 before ever reaching
+    here.
+    """
+    spectrum = (
+        db.query(Spectrum).filter(Spectrum.accession == accession.strip().upper()).first()
+    )
+    if spectrum is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    require_owner_or_public(spectrum, user)
+    return _serialize(spectrum, db)
+
+
 @router.get("/spectra/{spectrum_id}", response_model=SpectrumResponse)
 def get_spectrum(
     spectrum_id: UUID,
