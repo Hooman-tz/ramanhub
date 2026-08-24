@@ -27,6 +27,7 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user, get_current_user, get_current_user_optional
 from app.db.session import get_db
+from app.doi_lookup import lookup_doi
 from app.models.accession import next_finding_accession
 from app.models.enums import FindingEntryKind, FindingState, SpectrumState
 from app.models.finding import Finding, FindingEntry, FindingSpectrum
@@ -60,6 +61,10 @@ class FindingUpdate(BaseModel):
 
 class FindingPublish(BaseModel):
     license_id: str
+
+
+class LinkDoi(BaseModel):
+    doi: str = Field(default="", max_length=200)
 
 
 class EntryCreate(BaseModel):
@@ -326,6 +331,46 @@ def update_finding(
         finding.tags = _normalize_tags(body.tags)
     if body.doi is not None:
         finding.doi = body.doi or None
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return serialize_finding(finding, db)
+
+
+@router.post("/findings/{finding_id}/link-doi", response_model=FindingOut)
+async def link_doi(
+    finding_id: UUID,
+    body: LinkDoi,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FindingOut:
+    """Attach a published paper and cache its Crossref metadata.
+
+    The lookup is done here, at link time, rather than on every read: a feed
+    of twenty findings would otherwise make twenty outbound HTTP calls to
+    render, and Crossref is neither fast enough nor ours to lean on that
+    way. `publication_metadata` is the cache.
+
+    A DOI that Crossref can't resolve is still stored, with a flag saying so.
+    Refusing it would block legitimate cases — a brand-new DOI not yet
+    indexed, or a registrant Crossref doesn't cover — and the trust tier
+    only claims "a DOI is attached", not "we verified the paper exists".
+    """
+    finding = _get_finding_for_owner(finding_id, user, db)
+
+    doi = body.doi.strip()
+    if not doi:
+        finding.doi = None
+        finding.publication_metadata = None
+    else:
+        finding.doi = doi
+        metadata = await lookup_doi(doi)
+        finding.publication_metadata = (
+            {**metadata.model_dump(), "resolved": True}
+            if metadata is not None
+            else {"doi": doi, "resolved": False}
+        )
+
     db.add(finding)
     db.commit()
     db.refresh(finding)

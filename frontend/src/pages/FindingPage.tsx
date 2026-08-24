@@ -11,6 +11,7 @@ import {
 } from '../api/findings';
 import { useAuth } from '../auth/useAuth';
 import FindingEntryView from '../components/FindingEntryView';
+import FindingExport from '../components/FindingExport';
 import { useToast } from '../components/Toast';
 import { Button, Card, Skeleton } from '../components/ui';
 
@@ -118,13 +119,24 @@ export default function FindingPage() {
         {finding.doi && (
           <p className="finding__doi">
             Linked publication:{' '}
+            {/* Prefer the cached Crossref title — a DOI string alone tells a
+                reader nothing about what paper this is. */}
             <a
               href={`https://doi.org/${finding.doi}`}
               target="_blank"
               rel="noreferrer noopener"
             >
-              {finding.doi}
+              {(finding.publication_metadata?.title as string) ?? finding.doi}
             </a>
+            {finding.publication_metadata?.journal ? (
+              <span className="hint">
+                {' '}
+                — {finding.publication_metadata.journal as string}
+                {finding.publication_metadata.year
+                  ? ` (${finding.publication_metadata.year as number})`
+                  : ''}
+              </span>
+            ) : null}
           </p>
         )}
 
@@ -176,6 +188,10 @@ export default function FindingPage() {
           <FindingEntryView key={entry.id} entry={entry} members={finding.spectra} />
         ))}
       </section>
+
+      {finding.spectra.length > 0 && (
+        <FindingExport findingId={finding.id} spectrumCount={finding.spectra.length} />
+      )}
 
       <section className="finding__social">
         <div className="finding__actions">

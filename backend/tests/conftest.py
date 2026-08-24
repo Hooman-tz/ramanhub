@@ -202,7 +202,16 @@ def fclient(db_session):
         get_current_user_optional,
     )
     from app.db.session import get_db
-    from app.routers import comments, feed, findings, spectra, users, votes
+    from app.routers import (
+        comments,
+        export,
+        feed,
+        findings,
+        ledgers,
+        spectra,
+        users,
+        votes,
+    )
 
     test_app = FastAPI()
     for router in (
@@ -212,6 +221,8 @@ def fclient(db_session):
         votes.router,
         comments.router,
         users.router,
+        export.router,
+        ledgers.router,
     ):
         test_app.include_router(router)
 

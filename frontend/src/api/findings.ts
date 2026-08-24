@@ -1,6 +1,6 @@
 // Findings (forum threads) and the discovery feed.
 
-import { request } from './client';
+import { API_BASE_URL, request } from './client';
 
 export type FindingEntryKind =
   | 'note'
@@ -255,4 +255,44 @@ export async function postFindingComment(
     method: 'POST',
     body: JSON.stringify({ body, parent_id: parentId ?? null }),
   });
+}
+
+// ---------------------------------------------------------------------------
+// Finding export
+// ---------------------------------------------------------------------------
+
+/** Attach a published paper and cache its Crossref metadata.
+ *
+ * The lookup happens server-side at link time, not per read — rendering a
+ * feed of twenty findings must not mean twenty outbound calls to Crossref. */
+export async function linkFindingDoi(findingId: string, doi: string): Promise<Finding> {
+  return request<Finding>(`/findings/${findingId}/link-doi`, {
+    method: 'POST',
+    body: JSON.stringify({ doi }),
+  });
+}
+
+export function findingBundleUrl(findingId: string): string {
+  return `${API_BASE_URL}/findings/${findingId}/bundle`;
+}
+
+export function findingCitationUrl(
+  findingId: string,
+  format: 'bibtex' | 'ris' | 'text',
+  download = false,
+): string {
+  return `${API_BASE_URL}/findings/${findingId}/citation?format=${format}${
+    download ? '&download=true' : ''
+  }`;
+}
+
+export async function getFindingCitation(
+  findingId: string,
+  format: 'bibtex' | 'ris' | 'text' = 'bibtex',
+): Promise<string> {
+  const res = await fetch(findingCitationUrl(findingId, format), {
+    credentials: 'include',
+  });
+  if (!res.ok) throw new Error(`Couldn't build a citation (${res.status}).`);
+  return res.text();
 }
