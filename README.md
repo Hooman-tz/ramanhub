@@ -174,7 +174,7 @@ OpenRouter when its key is set and falls back to Anthropic:
 | `OPENROUTER_API_KEY` | `OPENROUTER` is accepted as an alias |
 | `ANTHROPIC_API_KEY` | Direct Anthropic API |
 | `LLM_PROVIDER` | `auto` (default), `openrouter`, or `anthropic` |
-| `OPENROUTER_MODEL` | Default `qwen/qwen3-flash`. **Must support tool calling** |
+| `OPENROUTER_MODEL` | Default `qwen/qwen3.7-flash` — tool calling, 1M context, ~$0.03/Mtok in. **Must support tool calling** |
 | `OPENROUTER_FALLBACK_MODELS` | Comma-separated; passed to OpenRouter's `models` routing array |
 
 ### Check it works: `make check-llm`
@@ -186,7 +186,7 @@ written above — ask OpenRouter:
 ```bash
 make check-llm ARGS='--list'    # what OpenRouter serves right now
 make check-llm                  # ...then one real tool call on a real header
-make check-llm ARGS='--model qwen/qwen-turbo'
+make check-llm ARGS='--model qwen/qwen3.8-27b'
 ```
 
 `--list` prints every Qwen/flash model with **whether it supports tool

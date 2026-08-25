@@ -98,7 +98,14 @@ class Settings(BaseSettings):
     # tightly-constrained tool call over a few hundred bytes (see
     # LLM_HEADER_MAX_CHARS), and results are cached by header hash, so
     # frontier-model headroom buys very little here.
-    OPENROUTER_MODEL: str = "qwen/qwen3-flash"
+    #
+    # These two ids were CHECKED against OpenRouter's live /models catalogue,
+    # not guessed — an earlier version of this file shipped three plausible-
+    # looking slugs (qwen/qwen3-flash, qwen/qwen-turbo,
+    # mistralai/mistral-small-3.2-24b-instruct) and not one of them existed.
+    # Verify with `make check-llm ARGS='--list'` before changing them.
+    # qwen3.7-flash: tool calling, 1M context, ~$0.03 per Mtok in.
+    OPENROUTER_MODEL: str = "qwen/qwen3.7-flash"
     # Comma-separated. Passed to OpenRouter's own `models` routing array, so
     # a provider outage, a model that refuses the tool call, OR A SLUG THAT
     # NO LONGER EXISTS falls through rather than failing the upload. That
@@ -106,9 +113,7 @@ class Settings(BaseSettings):
     # renamed and retired, and a hardcoded one fails inside a background
     # ingestion job where nobody sees it. `make check-llm` asks OpenRouter
     # what it actually serves today.
-    OPENROUTER_FALLBACK_MODELS: str = (
-        "qwen/qwen-turbo,qwen/qwen-2.5-7b-instruct,mistralai/mistral-small-3.2-24b-instruct"
-    )
+    OPENROUTER_FALLBACK_MODELS: str = "qwen/qwen3.8-27b"
 
     # Hard ceiling on the header text handed to the model. The extractor
     # already stops at the first numeric data line; this is the backstop for
