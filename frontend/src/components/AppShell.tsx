@@ -171,6 +171,11 @@ export default function AppShell({ children }: { children: ReactNode }) {
               </span>
             </div>
           )}
+          {user && !user.is_guest && (
+            <Link to="/settings" className="shell__settings-link">
+              Profile settings
+            </Link>
+          )}
           <ReportBugButton />
           <nav className="shell__legal" aria-label="Legal">
             <Link to="/terms">Terms</Link> · <Link to="/privacy">Privacy</Link>

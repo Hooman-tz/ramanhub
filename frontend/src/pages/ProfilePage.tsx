@@ -1,8 +1,11 @@
-import { useEffect, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { getPublicProfile, type PublicProfile } from '../api/client';
 import { getFeed, type FeedItem } from '../api/findings';
+import { useAuth } from '../auth/useAuth';
 import FeedCard from '../components/FeedCard';
+import FollowButton from '../components/FollowButton';
+import StatRow, { type Stat } from '../components/StatRow';
 import { Card, EmptyState, Skeleton } from '../components/ui';
 
 function initials(name: string): string {
@@ -15,42 +18,114 @@ function initials(name: string): string {
     .toUpperCase();
 }
 
-/** A contributor's public page — what a DOI, a citation or a feed byline
- * points at. Shows published work only: counts and listings of someone's
- * drafts would leak how much unpublished work they have, which is exactly
- * what the draft/published split exists to keep private. */
+const TABS = [
+  { id: 'overview', label: 'Overview' },
+  { id: 'findings', label: 'Findings' },
+  { id: 'spectra', label: 'Spectra' },
+] as const;
+
+type TabId = (typeof TABS)[number]['id'];
+
 export default function ProfilePage() {
   const { handle } = useParams<{ handle: string }>();
+  const { user } = useAuth();
+  const [params, setParams] = useSearchParams();
+
   const [profile, setProfile] = useState<PublicProfile | null>(null);
   const [items, setItems] = useState<FeedItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [itemsLoading, setItemsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [followers, setFollowers] = useState<number | null>(null);
+
+  const tab = (params.get('tab') as TabId) ?? 'overview';
+  const isSelf = Boolean(user && profile && user.id === profile.id);
 
   useEffect(() => {
     if (!handle) return;
     setLoading(true);
     setError(null);
     getPublicProfile(handle)
-      .then(setProfile)
+      .then((p) => {
+        setProfile(p);
+        setFollowers(p.followers);
+      })
       .catch((err) => setError(err instanceof Error ? err.message : String(err)))
       .finally(() => setLoading(false));
-    getFeed({ author: handle, limit: 50 })
-      .then(setItems)
-      .catch(() => {});
   }, [handle]);
 
+  useEffect(() => {
+    if (!handle) return;
+    setItemsLoading(true);
+    // Findings before spectra everywhere: a Finding is the interpreted,
+    // citable unit, which is what a visitor is actually evaluating. A wall of
+    // 400 spectra is a database dump, not an identity.
+    const kind = tab === 'spectra' ? 'spectra' : tab === 'findings' ? 'findings' : 'all';
+    getFeed({ author: handle, kind, limit: 50 })
+      .then(setItems)
+      .catch(() => setItems([]))
+      .finally(() => setItemsLoading(false));
+  }, [handle, tab]);
+
+  const onFollowersChange = useCallback((count: number) => setFollowers(count), []);
+
+  const stats = useMemo<Stat[]>(() => {
+    if (!profile) return [];
+    const h = profile.handle ?? '';
+    return [
+      {
+        label: 'Spectra',
+        value: profile.spectrum_count,
+        to: `/u/${h}?tab=spectra`,
+        title: 'Published spectra. Drafts are never counted publicly.',
+      },
+      {
+        label: 'Findings',
+        value: profile.finding_count,
+        to: `/u/${h}?tab=findings`,
+        title: 'Published Findings — the citable, interpreted unit.',
+      },
+      {
+        label: 'Reuses',
+        value: profile.reuse_findings,
+        title:
+          `Used in ${profile.reuse_findings} Finding(s) by ${profile.reuse_groups} other ` +
+          'contributor(s). Excludes Findings you wrote about your own data — ' +
+          'reuse has to be earned by other people.',
+      },
+      {
+        label: 'Followers',
+        value: followers ?? profile.followers,
+        title: 'People following this contributor.',
+      },
+      {
+        label: 'Votes',
+        value: profile.votes_received,
+        title: 'Upvotes received across published spectra and Findings.',
+      },
+      {
+        label: 'Shares',
+        value: profile.shares_received,
+        title: 'Times others re-broadcast this work to their followers.',
+      },
+      {
+        label: 'DOI-linked',
+        value: profile.doi_linked,
+        title: 'Published work linked to a real publication — externally verifiable.',
+      },
+      {
+        label: 'Since',
+        value: new Date(profile.created_at).getFullYear(),
+      },
+    ];
+  }, [profile, followers]);
+
   if (loading) return <Skeleton lines={5} height="2rem" />;
-  if (error || !profile) {
-    return (
-      <EmptyState title="Profile not found">
-        <p className="hint">
-          No contributor with the handle “{handle}”. <Link to="/feed">Back to the feed</Link>.
-        </p>
-      </EmptyState>
-    );
-  }
+  if (error) return <p className="error">{error}</p>;
+  if (!profile) return <p>Profile not found.</p>;
 
   const name = profile.display_name ?? profile.handle ?? 'Contributor';
+  const hasAnything = profile.spectrum_count + profile.finding_count > 0;
 
   return (
     <div className="profile">
@@ -60,12 +135,12 @@ export default function ProfilePage() {
         ) : (
           <span className="profile__avatar">{initials(name)}</span>
         )}
-        <div>
+        <div className="profile__identity">
           <h1>{name}</h1>
           {profile.handle && <p className="profile__handle">@{profile.handle}</p>}
           {profile.affiliation && <p className="hint">{profile.affiliation}</p>}
           {profile.orcid_id && (
-            <p>
+            <p className="profile__orcid">
               <a
                 href={`https://orcid.org/${profile.orcid_id}`}
                 target="_blank"
@@ -73,8 +148,29 @@ export default function ProfilePage() {
                 className="orcid-link"
               >
                 ORCID {profile.orcid_id}
-              </a>
+              </a>{' '}
+              {/* No badge. The iD is free text with no verification flow
+                  behind it, so anyone could enter anyone's — labelling it
+                  "verified" would make this field an impersonation tool. */}
+              <span className="chip chip--muted" title="We don't verify ORCID iDs yet.">
+                self-reported
+              </span>
             </p>
+          )}
+        </div>
+        <div className="profile__actions">
+          {profile.handle && (
+            <FollowButton
+              handle={profile.handle}
+              isSelf={isSelf}
+              signedIn={Boolean(user && !user.is_guest)}
+              onCountChange={onFollowersChange}
+            />
+          )}
+          {isSelf && (
+            <Link to="/settings" className="ui-button ui-button--sm">
+              Edit profile
+            </Link>
           )}
         </div>
       </header>
@@ -82,33 +178,65 @@ export default function ProfilePage() {
       {profile.bio && <p className="profile__bio">{profile.bio}</p>}
 
       <Card>
-        <dl className="stat-row">
-          <div>
-            <dt>Published spectra</dt>
-            <dd>{profile.spectrum_count}</dd>
-          </div>
-          <div>
-            <dt>Findings</dt>
-            <dd>{profile.finding_count}</dd>
-          </div>
-          <div>
-            <dt>Member since</dt>
-            <dd>{new Date(profile.created_at).getFullYear()}</dd>
-          </div>
-        </dl>
+        <StatRow stats={stats} />
       </Card>
 
-      <h2>Published work</h2>
-      {items.length === 0 ? (
-        <EmptyState title="Nothing published yet">
-          <p className="hint">This contributor hasn't published anything publicly.</p>
-        </EmptyState>
-      ) : (
+      <nav className="profile__tabs" aria-label="Profile sections">
+        {TABS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            className={t.id === tab ? 'profile__tab is-active' : 'profile__tab'}
+            aria-current={t.id === tab ? 'page' : undefined}
+            onClick={() => setParams(t.id === 'overview' ? {} : { tab: t.id })}
+          >
+            {t.label}
+            {t.id === 'findings' && <span className="profile__tab-count">{profile.finding_count}</span>}
+            {t.id === 'spectra' && <span className="profile__tab-count">{profile.spectrum_count}</span>}
+          </button>
+        ))}
+      </nav>
+
+      {itemsLoading ? (
+        <Skeleton lines={3} height="4rem" />
+      ) : items.length > 0 ? (
         <div className="feed-list">
           {items.map((item) => (
             <FeedCard key={`${item.kind}-${item.id}`} item={item} />
           ))}
         </div>
+      ) : isSelf && !hasAnything ? (
+        /* The owner's own empty profile is the highest-leverage screen here.
+           Showing them "0 / 0 / 0" tells a new user the place is empty and
+           they are nobody; a checklist tells them what to do next. */
+        <Card title="Your profile is empty — here's how to fill it">
+          <ol className="profile__checklist">
+            <li>
+              <Link to="/upload">Upload your first spectrum</Link> — drag a vendor file in;
+              no format conversion needed.
+            </li>
+            <li>Run <strong>Auto-clean</strong> on it to see the processing tools work.</li>
+            <li>Publish it, and it gets a citable accession like <code>RH-S-000042</code>.</li>
+            <li>
+              <Link to="/findings/new">Write a Finding</Link> — bundle spectra, analyses and a
+              DOI into something people can cite.
+            </li>
+          </ol>
+          {!profile.bio && (
+            <p className="hint">
+              Also worth 30 seconds: <Link to="/settings">add a bio and your affiliation</Link>{' '}
+              so people know what you work on.
+            </p>
+          )}
+        </Card>
+      ) : (
+        <EmptyState title="Nothing published yet">
+          {profile.handle && !isSelf && (
+            <p className="hint">
+              Follow @{profile.handle} to see their work when it lands.
+            </p>
+          )}
+        </EmptyState>
       )}
     </div>
   );

@@ -300,6 +300,81 @@ export interface PublicProfile {
   created_at: string;
   spectrum_count: number;
   finding_count: number;
+
+  /** Public engagement figures. See `app/profile_stats.py` on the backend
+   * for what each counts and — more importantly — what it excludes: drafts
+   * never appear, and `reuse_*` excludes Findings the spectrum's own owner
+   * wrote, so it can't be raised by writing about your own data. */
+  followers: number;
+  following: number;
+  doi_linked: number;
+  votes_received: number;
+  shares_received: number;
+  comments_written: number;
+  reuse_findings: number;
+  reuse_groups: number;
+
+  /** Always false today — there is no ORCID OAuth flow, so no iD has been
+   * verified. The UI must label the iD "self-reported" rather than render a
+   * badge, which would make the free-text field an impersonation tool. */
+  orcid_verified: boolean;
+}
+
+export interface FollowUser {
+  id: string;
+  handle: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  affiliation: string | null;
+}
+
+export interface FollowState {
+  following: boolean;
+  follower_count: number;
+}
+
+/** Toggle. The server treats a repeat as unfollow, so this is safe to call
+ * from a single button. */
+export async function toggleFollow(handle: string): Promise<FollowState> {
+  return request<FollowState>(`/users/${encodeURIComponent(handle)}/follow`, { method: 'POST' });
+}
+
+export async function getFollowState(handle: string): Promise<FollowState> {
+  return request<FollowState>(`/users/${encodeURIComponent(handle)}/follow`);
+}
+
+export async function getFollowers(handle: string): Promise<FollowUser[]> {
+  return request<FollowUser[]>(`/users/${encodeURIComponent(handle)}/followers`);
+}
+
+export async function getFollowing(handle: string): Promise<FollowUser[]> {
+  return request<FollowUser[]>(`/users/${encodeURIComponent(handle)}/following`);
+}
+
+export interface ShareState {
+  shared: boolean;
+  count: number;
+}
+
+/** Toggle a share. `comment` is the quote-post shape — optional, because most
+ * shares are a bare signal boost. */
+export async function toggleShare(
+  target: { kind: 'spectrum' | 'finding'; id: string },
+  comment?: string,
+): Promise<ShareState> {
+  const base = target.kind === 'spectrum' ? 'spectra' : 'findings';
+  return request<ShareState>(`/${base}/${target.id}/shares`, {
+    method: 'POST',
+    body: JSON.stringify({ comment: comment ?? null }),
+  });
+}
+
+export async function getShareState(target: {
+  kind: 'spectrum' | 'finding';
+  id: string;
+}): Promise<{ count: number; shared_by_me: boolean }> {
+  const base = target.kind === 'spectrum' ? 'spectra' : 'findings';
+  return request<{ count: number; shared_by_me: boolean }>(`/${base}/${target.id}/shares`);
 }
 
 /** A contributor's public profile. Deliberately a different shape from

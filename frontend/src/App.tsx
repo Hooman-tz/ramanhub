@@ -21,6 +21,7 @@ const FeedPage = lazy(() => import('./pages/FeedPage'));
 const FindingPage = lazy(() => import('./pages/FindingPage'));
 const FindingComposerPage = lazy(() => import('./pages/FindingComposerPage'));
 const ProfilePage = lazy(() => import('./pages/ProfilePage'));
+const SettingsPage = lazy(() => import('./pages/SettingsPage'));
 const LoginPage = lazy(() => import('./pages/LoginPage'));
 const TermsPage = lazy(() => import('./pages/TermsPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
@@ -52,6 +53,7 @@ export default function App() {
               <Route path="/findings/:id/edit" element={<FindingComposerPage />} />
               <Route path="/findings/:id" element={<FindingPage />} />
               <Route path="/u/:handle" element={<ProfilePage />} />
+              <Route path="/settings" element={<SettingsPage />} />
               <Route path="/terms" element={<TermsPage />} />
               <Route path="/privacy" element={<PrivacyPage />} />
             </Routes>
