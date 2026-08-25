@@ -37,6 +37,7 @@ from app.routers import (
     export,
     feed,
     findings,
+    follows,
     ingestion_jobs,
     ledgers,
     library,
@@ -45,6 +46,7 @@ from app.routers import (
     raw_files,
     routines,
     search,
+    shares,
     spectra,
     spectrum_data,
     trending,
@@ -87,6 +89,10 @@ app.include_router(doi.router)
 app.include_router(search.router)
 app.include_router(library.router)
 app.include_router(votes.router)
+app.include_router(shares.router)
+# Registered AFTER users.router so its literal routes (/users/me,
+# /users/by-handle/...) win over this one's /users/{handle}/... patterns.
+app.include_router(follows.router)
 app.include_router(comments.router)
 app.include_router(trending.router)
 

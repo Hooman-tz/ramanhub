@@ -53,6 +53,12 @@ class RateLimiter:
 _upload_limiter = RateLimiter(max_calls=20, window_seconds=3600)  # 20 uploads / hour
 _vote_limiter = RateLimiter(max_calls=60, window_seconds=3600)  # 60 vote-toggles / hour
 _comment_limiter = RateLimiter(max_calls=30, window_seconds=3600)  # 30 comments / hour
+# Follows and shares are public, brag-worthy numbers that also feed feed
+# visibility, so they are the two actions with the clearest incentive to
+# automate. These ceilings are well above real human use — nobody follows 100
+# people an hour deliberately — and exist to make a farming script hit a wall.
+_follow_limiter = RateLimiter(max_calls=100, window_seconds=3600)  # 100 follows / hour
+_share_limiter = RateLimiter(max_calls=60, window_seconds=3600)  # 60 shares / hour
 # Login attempts are pre-auth (there's no user id yet at the point a client
 # hits the OAuth callback), so this one is keyed by client IP rather than
 # user id — the only identifier available at that point. 10/hour is generous
@@ -88,6 +94,14 @@ def rate_limit_previews(
     can always key on a user id."""
     key = str(user.id) if user is not None else (request.client.host if request.client else "unknown")
     _preview_limiter.check(key)
+
+
+def rate_limit_follows(user: User = Depends(get_current_user)) -> None:
+    _follow_limiter.check(str(user.id))
+
+
+def rate_limit_shares(user: User = Depends(get_current_user)) -> None:
+    _share_limiter.check(str(user.id))
 
 
 def rate_limit_login(request: Request) -> None:

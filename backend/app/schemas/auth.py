@@ -53,6 +53,24 @@ class PublicProfileOut(BaseModel):
     spectrum_count: int = 0
     finding_count: int = 0
 
+    # Public engagement figures. See `app.profile_stats` for exactly what
+    # each one counts and, more importantly, what it deliberately excludes
+    # (drafts, and self-reuse).
+    followers: int = 0
+    following: int = 0
+    doi_linked: int = 0
+    votes_received: int = 0
+    shares_received: int = 0
+    comments_written: int = 0
+    reuse_findings: int = 0
+    reuse_groups: int = 0
+
+    # ORCID is stored as unverified free text — there is no ORCID OAuth flow,
+    # so anyone could enter anyone's iD. This flag exists so the UI can label
+    # it "self-reported" rather than render a verification badge, which would
+    # turn the field into an impersonation tool.
+    orcid_verified: bool = False
+
 
 class UserUpdate(BaseModel):
     """Body for PATCH /users/me. All fields optional (partial update)."""

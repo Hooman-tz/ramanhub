@@ -10,16 +10,14 @@ Two distinct surfaces here, and the split is deliberate:
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user, get_current_user
 from app.db.session import get_db
-from app.models.enums import FindingState, SpectrumState
-from app.models.finding import Finding
 from app.models.handles import normalize_handle
-from app.models.spectrum import Spectrum
 from app.models.user import User
+from app.profile_stats import compute_profile_stats
 from app.schemas.auth import PublicProfileOut, UserOut, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -71,6 +69,9 @@ def get_public_profile(handle: str, db: Session = Depends(get_db)) -> PublicProf
     Counts cover PUBLISHED work only. Including drafts would leak how much
     unpublished work someone has, which is exactly the kind of thing the
     draft/published split exists to keep private.
+
+    The full set of engagement figures is computed in `app.profile_stats`;
+    that module documents what each one counts and what it excludes.
     """
     user = db.execute(
         select(User).where(User.handle == normalize_handle(handle))
@@ -78,18 +79,23 @@ def get_public_profile(handle: str, db: Session = Depends(get_db)) -> PublicProf
     if user is None or not user.is_active or user.is_guest:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
 
-    spectrum_count = db.execute(
-        select(func.count(Spectrum.id)).where(
-            Spectrum.owner_id == user.id, Spectrum.state == SpectrumState.published
-        )
-    ).scalar_one()
-    finding_count = db.execute(
-        select(func.count(Finding.id)).where(
-            Finding.owner_id == user.id, Finding.state == FindingState.published
-        )
-    ).scalar_one()
+    stats = compute_profile_stats(user.id, db)
 
     profile = PublicProfileOut.model_validate(user)
-    profile.spectrum_count = int(spectrum_count)
-    profile.finding_count = int(finding_count)
+    # Assigned after validation because `User` carries none of these as
+    # attributes — they are aggregates, not columns.
+    profile.spectrum_count = stats.spectra_published
+    profile.finding_count = stats.findings_published
+    profile.followers = stats.followers
+    profile.following = stats.following
+    profile.doi_linked = stats.doi_linked
+    profile.votes_received = stats.votes_received
+    profile.shares_received = stats.shares_received
+    profile.comments_written = stats.comments_written
+    profile.reuse_findings = stats.reuse_findings
+    profile.reuse_groups = stats.reuse_groups
+    # Always False today: there is no ORCID OAuth flow, so no iD has actually
+    # been verified. The field exists so the UI has something to branch on
+    # the day one ships, and so nothing renders a badge in the meantime.
+    profile.orcid_verified = False
     return profile

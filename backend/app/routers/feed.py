@@ -35,10 +35,12 @@ from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.auth.deps import get_current_user_optional
 from app.db.session import get_db
 from app.models.enums import FindingState, SpectrumState
 from app.models.finding import Finding, FindingSpectrum
-from app.models.social import Comment, Vote
+from app.models.graph import Follow
+from app.models.social import Comment, Share, Vote
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.ranking import relevance_score, vote_count_subquery
@@ -104,9 +106,13 @@ def get_feed(
     trust_tier: Literal["doi_verified", "community"] | None = None,
     tag: str | None = None,
     author: str | None = Query(None, description="Filter to one contributor's handle."),
+    filter: Literal["all", "following"] = Query(
+        "all", description="`following` restricts to people the caller follows."
+    ),
     limit: int = Query(20, ge=1, le=100),
     offset: int = Query(0, ge=0),
     db: Session = Depends(get_db),
+    viewer: User | None = Depends(get_current_user_optional),
 ) -> list[FeedItem]:
     """The discovery feed.
 
@@ -117,8 +123,26 @@ def get_feed(
     global top-N would need a UNION over two differently-shaped tables; at
     this corpus size the merge is indistinguishable in practice and far
     easier to read. Revisit when the feed is deep enough that it matters.
+
+    `filter=following` is what makes this worth returning to rather than a
+    global firehose. It is the only viewer-dependent thing in this endpoint;
+    everything else renders identically for everyone, anonymous included.
     """
     items: list[FeedItem] = []
+
+    # Resolved once rather than per-kind. An anonymous caller asking for
+    # `following` gets an empty list rather than a 401: the request is
+    # coherent, the honest answer is "you follow nobody", and the client can
+    # render its sign-in nudge from that instead of handling an error.
+    followed_ids: list | None = None
+    if filter == "following":
+        if viewer is None:
+            return []
+        followed_ids = list(
+            db.scalars(select(Follow.followee_id).where(Follow.follower_id == viewer.id)).all()
+        )
+        if not followed_ids:
+            return []
 
     if kind in ("all", "findings"):
         votes = vote_count_subquery(Vote, Vote.finding_id, Finding.id)
@@ -132,8 +156,16 @@ def get_feed(
             .where(FindingSpectrum.finding_id == Finding.id)
             .scalar_subquery()
         )
+        shares = (
+            select(func.count(Share.id))
+            .where(Share.finding_id == Finding.id)
+            .scalar_subquery()
+        )
         score = relevance_score(
-            votes, func.coalesce(Finding.published_at, Finding.created_at), Finding.doi
+            votes,
+            func.coalesce(Finding.published_at, Finding.created_at),
+            Finding.doi,
+            share_count=shares,
         )
 
         query = (
@@ -151,6 +183,8 @@ def get_feed(
             query = query.where(Finding.tags.contains([tag.strip().lower()]))
         if author:
             query = query.where(User.handle == author.strip().lower())
+        if followed_ids is not None:
+            query = query.where(Finding.owner_id.in_(followed_ids))
 
         rows = db.execute(
             query.order_by(score.desc(), Finding.published_at.desc(), Finding.id)
@@ -184,8 +218,16 @@ def get_feed(
             .where(Comment.spectrum_id == Spectrum.id)
             .scalar_subquery()
         )
+        shares = (
+            select(func.count(Share.id))
+            .where(Share.spectrum_id == Spectrum.id)
+            .scalar_subquery()
+        )
         score = relevance_score(
-            votes, func.coalesce(Spectrum.published_at, Spectrum.created_at), Spectrum.doi
+            votes,
+            func.coalesce(Spectrum.published_at, Spectrum.created_at),
+            Spectrum.doi,
+            share_count=shares,
         )
 
         query = (
@@ -204,6 +246,8 @@ def get_feed(
             # than silently returning unfiltered spectra alongside filtered
             # findings.
             query = query.where(False)
+        if followed_ids is not None:
+            query = query.where(Spectrum.owner_id.in_(followed_ids))
 
         rows = db.execute(
             query.order_by(score.desc(), Spectrum.published_at.desc(), Spectrum.id)

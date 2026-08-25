@@ -43,6 +43,16 @@ W_ENGAGEMENT = 1.0
 W_RECENCY = 1.5
 W_DOI_VERIFIED = 0.75
 
+# Shares weigh more than votes, per share, and deliberately so. A vote is one
+# click of approval; a share is someone putting the item in front of their own
+# followers, which costs them a little reputation if it is bad. That makes it
+# the more expensive signal to fake, and the more informative one.
+#
+# It is NOT weighted so much higher that a handful of shares can outrank
+# recency — the same containment argument that keeps W_ENGAGEMENT below
+# W_RECENCY applies here.
+W_SHARES = 1.5
+
 # Engagement half-life. 30 days is chosen to match how a paper's attention
 # actually behaves: a preprint's discussion is largely over within a month,
 # so a vote from last year should not still be steering today's front page.
@@ -87,6 +97,7 @@ def relevance_score(
     vote_count: ColumnElement,
     timestamp_column: ColumnElement,
     doi_column: ColumnElement,
+    share_count: ColumnElement | None = None,
 ) -> ColumnElement:
     """The blended default ordering.
 
@@ -99,11 +110,17 @@ def relevance_score(
     # a numeric type directly ("cannot cast type boolean to double
     # precision").
     doi_bonus = case((doi_column.is_not(None), literal(W_DOI_VERIFIED)), else_=literal(0.0))
-    return (
+    score = (
         W_ENGAGEMENT * engagement_score(vote_count, age)
         + W_RECENCY * recency_score(age)
         + doi_bonus
     )
+    if share_count is not None:
+        # Same log compression and time decay as votes: one item going viral
+        # must not permanently outrank the corpus, and an old well-shared item
+        # decays back toward its objective standing.
+        score = score + W_SHARES * engagement_score(share_count, age)
+    return score
 
 
 def vote_count_subquery(vote_model, vote_target_column, entity_id_column):
