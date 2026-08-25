@@ -14,7 +14,9 @@ every module below, not assumed:
 1. LLM-based parsing for arbitrary/messy vendor headers, not just
    standardized upload
 2. A private per-user reference library alongside the shared public commons
-3. A social/trending layer, quarantined from core scientific search
+3. A social/trending layer, integrated with — not quarantined from — core
+   scientific search (see the Module 4 amendment for the reversal and its
+   containment)
 4. A freemium compute model (local by default, cloud tier paid) — this is a
    product, not grant-funded academic infrastructure
 5. DOI/manuscript-linkage as the central trust and provenance mechanism, tied
@@ -180,9 +182,47 @@ variables, but can't get them itself.
 - Trust tiers, surfaced as a filter: "DOI-verified" (linked to a published,
   peer-reviewed paper) vs. "community" (unreviewed) — distinct from social
   voting
-- Social features (upvote/comment) stay quarantined to a separate Trending
-  feed and never affect core search ranking
+- ~~Social features (upvote/comment) stay quarantined to a separate Trending
+  feed and never affect core search ranking~~ **AMENDED — see below**
 - Basic rate limiting on uploads and votes to blunt spam/abuse
+
+### Amendment: the social-signal quarantine is lifted
+
+The struck bullet above was the original rule. It has been **deliberately
+reversed** by a product decision: engagement now feeds the default search
+ordering, so that the social layer and the scientific corpus reinforce each
+other rather than living in separate silos.
+
+**The concern this trades away, stated plainly.** Popularity-weighted ranking
+can float a well-liked spectrum above a better-matched one. That is exactly
+the failure mode the original rule existed to prevent, and lifting the rule
+does not make it stop being real.
+
+**What contains it:**
+
+- One scorer, one file. `backend/app/ranking.py` is the only definition of
+  the blend, shared by `/search` and `/feed`, so the two surfaces cannot
+  drift into disagreeing about what "relevant" means.
+- Objective signals outweigh social ones. Recency (1.5) and DOI-verified
+  status (0.75) are weighted against engagement (1.0), so votes tilt the
+  ordering rather than dominating it.
+- Engagement is log-compressed and time-decayed (30-day half-life), so a
+  single viral item cannot permanently outrank the corpus, and an old
+  well-voted item decays back toward its objective standing.
+- The ranking is explicit and switchable, not hidden. `sort=` is a visible
+  control and `sort=newest` remains a fully popularity-free ordering.
+- Search counts votes with a correlated scalar subquery, never Trending's
+  inner join — an inner join would silently drop every spectrum with zero
+  votes, which is most of the corpus.
+
+**Trending stays a separate endpoint** (`/trending`). It answers "what is hot
+right now" — pure engagement inside a fixed window — which is a different
+question from "what best matches my query". Sharing a signal is not a reason
+to merge them.
+
+Do not re-add a quarantine to `routers/search.py` or `routers/trending.py`
+without amending this section too, or the codebase will once again document a
+policy it does not follow.
 
 ## MODULE 5: SECURITY, LOGGING & OPERATIONS
 - Secrets (OAuth secret, LLM API key, DB credentials, R2 tokens) live only

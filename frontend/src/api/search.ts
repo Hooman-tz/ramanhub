@@ -71,7 +71,11 @@ function toQueryString(params?: object): string {
 }
 
 /** Core objective-metadata search over the shared public commons (published
- * spectra only), ordered by `published_at desc` — never by votes/popularity. */
+ * spectra only).
+ *
+ * Ordering is controlled by `params.sort` and defaults to `relevance`, which
+ * blends engagement, recency and DOI-verified status — see `app/ranking.py`
+ * on the backend. Pass `sort: 'newest'` for a popularity-free ordering. */
 export async function searchSpectra(params?: SearchParams): Promise<SpectrumSearchResult[]> {
   return request<SpectrumSearchResult[]>(`/search/spectra${toQueryString(params)}`);
 }

@@ -1,6 +1,7 @@
-import type { ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from '../auth/useAuth';
+import CommandPalette from './CommandPalette';
 import ReportBugButton from './ReportBugButton';
 import ThemeToggle from './ThemeToggle';
 
@@ -94,6 +95,17 @@ function initials(name: string): string {
 
 export default function AppShell({ children }: { children: ReactNode }) {
   const { user } = useAuth();
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Mac shows ⌘, everything else Ctrl. Resolved once on mount rather than at
+  // module scope so the component stays importable under jsdom/SSR, where
+  // `navigator` may not exist when the module is first evaluated.
+  const [modKey, setModKey] = useState('Ctrl');
+
+  useEffect(() => {
+    if (typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform ?? '')) {
+      setModKey('\u2318');
+    }
+  }, []);
 
   return (
     <div className="shell">
@@ -102,6 +114,20 @@ export default function AppShell({ children }: { children: ReactNode }) {
           <img src="/favicon.svg" alt="" className="shell__brand-mark" />
           RamanHub
         </Link>
+
+        {/* The palette's discovery surface. A ⌘K shortcut with no visible
+            affordance is a feature only its author knows about, so the button
+            both opens it and teaches the keys. */}
+        <button
+          type="button"
+          className="shell__search"
+          onClick={() => setPaletteOpen(true)}
+          aria-haspopup="dialog"
+        >
+          {icons.search}
+          <span className="shell__search-label">Search…</span>
+          <kbd className="shell__search-kbd">{modKey}K</kbd>
+        </button>
 
         <nav className="shell__nav" aria-label="Primary">
           {NAV_GROUPS.map((group) => (
@@ -153,6 +179,8 @@ export default function AppShell({ children }: { children: ReactNode }) {
       </aside>
 
       <main className="shell__main">{children}</main>
+
+      <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} />
     </div>
   );
 }

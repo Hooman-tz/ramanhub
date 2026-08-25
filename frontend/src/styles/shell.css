@@ -52,6 +52,54 @@
   flex: none;
 }
 
+/* --- Command-palette trigger --------------------------------------------- */
+
+/* Styled as a faux input rather than a button: that is the shape users have
+   learned to read as "type here to find things", and it advertises the
+   shortcut so the keyboard path is discoverable at all. */
+.shell__search {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  border: 1px solid var(--color-border);
+  background: var(--color-surface-raised);
+  color: var(--color-text-muted);
+  font-size: var(--text-sm);
+  font-weight: 500;
+  text-align: left;
+}
+
+.shell__search:hover:not(:disabled) {
+  color: var(--color-text-secondary);
+  border-color: var(--color-border-strong);
+}
+
+.shell__search svg {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+
+.shell__search-label {
+  flex: 1;
+}
+
+.shell__search-kbd {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--color-text-muted);
+  background: var(--color-bg-deep);
+  border: 1px solid var(--color-border);
+  border-radius: 5px;
+  padding: 1px var(--sp-2);
+  flex: none;
+}
+
 /* --- Nav ------------------------------------------------------------------ */
 
 .shell__nav {
@@ -170,6 +218,7 @@
   }
 
   .shell__brand,
+  .shell__search,
   .shell__footer {
     display: none;
   }
@@ -190,4 +239,161 @@
   .shell__main {
     padding: var(--sp-5) var(--sp-4) calc(var(--sp-8) + 56px);
   }
+}
+
+
+/* --- Command palette (⌘K) ------------------------------------------------- */
+
+/* Above the toast layer (z-index 1000 in social.css): a modal dialog that a
+   toast could paint over would look broken. */
+.palette-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1100;
+  display: flex;
+  justify-content: center;
+  /* Not vertically centred. Anchoring near the top keeps the input under the
+     cursor's expected position and stops the whole dialog from jumping as the
+     result list grows and shrinks while typing. */
+  align-items: flex-start;
+  padding: max(12vh, var(--sp-6)) var(--sp-4) var(--sp-4);
+  background: oklch(20% 0.02 var(--hue-accent) / 0.32);
+  -webkit-backdrop-filter: blur(3px);
+  backdrop-filter: blur(3px);
+  animation: palette-fade var(--dur-fast) var(--ease-out);
+}
+
+.palette {
+  width: min(34rem, 100%);
+  max-height: min(28rem, 70vh);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-radius: var(--r-lg);
+  border: 1px solid var(--glass-border);
+  background: var(--glass-bg-strong);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  box-shadow: var(--glass-shadow-raised), inset 0 1px 0 var(--glass-edge);
+  animation: palette-in var(--dur-med) var(--ease-out);
+}
+
+.palette__field {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+}
+
+.palette__icon {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+/* The field wrapper carries the chrome, so the input itself is stripped bare —
+   otherwise there is a visible box inside a box. */
+.palette__input {
+  flex: 1;
+  min-width: 0;
+  border: none;
+  background: none;
+  padding: 0;
+  font-size: var(--text-md);
+  color: var(--color-text);
+}
+
+.palette__input:focus-visible {
+  outline: none;
+  border: none;
+  box-shadow: none;
+}
+
+.palette__results {
+  list-style: none;
+  margin: 0;
+  padding: var(--sp-2);
+  overflow-y: auto;
+  display: grid;
+  gap: 2px;
+}
+
+.palette__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp-3);
+  width: 100%;
+  padding: var(--sp-2) var(--sp-3);
+  border: none;
+  border-radius: var(--r-sm);
+  background: none;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  color: var(--color-text-secondary);
+  text-align: left;
+}
+
+/* Driven by the roving `active` index, not :hover — keyboard and mouse must
+   agree on which row Enter would open. */
+.palette__item.is-active {
+  background: var(--color-accent-soft);
+  color: var(--color-accent-text);
+}
+
+.palette__item:hover:not(:disabled) {
+  background: var(--color-accent-soft);
+  border-color: transparent;
+}
+
+.palette__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette__hint {
+  flex: none;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  color: var(--color-text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.palette__empty {
+  padding: var(--sp-4);
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}
+
+.palette__footer {
+  display: flex;
+  gap: var(--sp-4);
+  padding: var(--sp-2) var(--sp-4);
+  border-top: 1px solid var(--color-border);
+  font-size: var(--text-xs);
+  color: var(--color-text-muted);
+}
+
+.palette__footer kbd {
+  font-family: var(--font-sans);
+  font-size: 0.6875rem;
+  background: var(--color-bg-deep);
+  border: 1px solid var(--color-border);
+  border-radius: 4px;
+  padding: 0 4px;
+  margin-right: 3px;
+}
+
+@keyframes palette-fade {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes palette-in {
+  from { opacity: 0; transform: translateY(-8px) scale(0.985); }
+  to { opacity: 1; transform: none; }
 }

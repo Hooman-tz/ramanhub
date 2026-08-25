@@ -1,12 +1,27 @@
 """Module 4b: the Trending feed.
 
-Per raman-platform-architecture-v2.md's MODULE 4 requirement — "Social
-features (upvote/comment) stay quarantined to a separate Trending feed and
-never affect core search ranking" — this is the ONE place in the codebase
-where vote counts are allowed to influence ordering. `app.routers.search`
-(owned by a different module/agent) ranks by `published_at` only and MUST
-NOT be touched to incorporate vote counts; Trending and Search are
-deliberately separate feeds with different semantics. Do not merge them.
+## Ranking policy — the quarantine rule this file used to assert is GONE
+
+This docstring previously said Trending was the ONE place vote counts may
+influence ordering, per the architecture doc's Module 4 quarantine rule.
+That rule has been deliberately reversed by a product decision: engagement
+now also feeds the default `relevance` ordering in `app.routers.search` and
+in `/feed`, via the shared scorer in `app.ranking`. See that module for the
+tradeoff and the mitigations.
+
+Trending nonetheless stays a SEPARATE endpoint, because it answers a
+different question — "what is hot right now" rather than "what best matches
+my query" — and the difference is not cosmetic:
+
+* Trending counts votes inside a fixed window and INNER-joins them, so a
+  spectrum with zero votes is correctly absent. "Trending with no votes" is
+  not a thing.
+* Search must NOT copy that join. Its job is to return everything matching
+  the filters, so it uses a correlated scalar vote count that yields 0
+  rather than dropping the row. An inner join there would silently hide the
+  large majority of the corpus — every spectrum nobody has voted on yet.
+
+Do not merge the two on the grounds that they now share a signal.
 
 Mounted with no prefix — the route is `/trending`.
 """
