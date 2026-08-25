@@ -1330,3 +1330,11 @@
   font-size: var(--text-xs);
   color: var(--color-text-muted);
 }
+
+.share-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-2);
+  font-size: var(--text-sm);
+  color: var(--color-text-muted);
+}

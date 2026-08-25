@@ -7,6 +7,7 @@ import {
   type VoteStatus,
   type Comment,
 } from '../api/social';
+import ShareButton from './ShareButton';
 
 // Self-contained: takes only `spectrumId` and manages all its own state, so
 // it can be dropped into SpectrumViewPage (or anywhere else) without
@@ -93,6 +94,10 @@ export default function VoteCommentPanel({ spectrumId }: { spectrumId: string })
           {voteStatus?.voted_by_me ? '★ Upvoted' : '☆ Upvote'}
         </button>
         <span>{voteLoading ? '...' : (voteStatus?.count ?? 0)} vote(s)</span>
+        {/* Beside the vote, because they are the two things you can do to
+            someone else's spectrum — but distinct wording, since a share
+            pushes this into other people's feeds and a vote does not. */}
+        <ShareButton target={{ kind: 'spectrum', id: spectrumId }} />
       </div>
       {voteError && <p className="error">{voteError}</p>}
 
