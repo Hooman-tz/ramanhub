@@ -272,3 +272,36 @@
   gap: var(--sp-2);
   cursor: pointer;
 }
+
+/* --- Pipeline preview + undo/redo ---------------------------------------- */
+
+/* Deliberately loud. The chart showing something that is NOT what is saved is
+   exactly the state a user can misread as "already applied", so the banner
+   uses the caution role rather than a quiet hint. */
+.preview-banner {
+  display: flex;
+  align-items: baseline;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin: 0 0 var(--sp-3);
+  padding: var(--sp-2) var(--sp-3);
+  border-radius: var(--r-md);
+  background: var(--color-warn-bg);
+  color: var(--color-warn-text);
+  font-size: var(--text-sm);
+}
+
+.preview-banner strong {
+  font-weight: 650;
+}
+
+.pipeline-commit__history {
+  display: inline-flex;
+  gap: var(--sp-1);
+  /* Grouped and set apart from Apply/Discard: undo and redo act on the draft,
+     they don't commit or throw it away, and sitting them flush against
+     "Discard changes" invites the misread that they do. */
+  padding: 0 var(--sp-2);
+  border-left: 1px solid var(--color-border);
+  border-right: 1px solid var(--color-border);
+}

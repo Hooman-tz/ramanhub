@@ -130,6 +130,34 @@ submitted ledgers are validated against are generated from that registry, so
 re-running `make seed` is all that's needed to make a new step usable — no
 schema restated in two places.
 
+### Previewing a pipeline before committing it
+
+`POST /spectra/{id}/preview` answers "what WOULD this pipeline do": it
+replays a client-supplied step list against the raw arrays and returns the
+resulting curve, **writing nothing** — no ledger row, no processed-cache
+row, no storage object.
+
+That needs its own compute path (`app/processing/preview.py`) rather than
+`processing.cache.get_or_compute`, whose contract is a read-through cache
+keyed by a persisted ledger's content hash. The reason is not a technicality:
+a user changes a parameter several times per step before settling, and
+routing that through the persisting path would write a ledger row and a cache
+blob for every intermediate pipeline they clicked through on the way to the
+one they meant.
+
+Validation is deliberately identical to the commit path, so a preview can
+never accept a pipeline that Apply would then reject with a 422. Params that
+are individually schema-valid can still be impossible for a particular
+spectrum — a crop window outside the measured range, a Savitzky-Golay window
+longer than the array — and those surface as a 422 naming the failing step,
+not a 500.
+
+The frontend debounces previews at 400 ms and guards against out-of-order
+responses; the builder also has undo/redo (`src/lib/useHistory.ts`), which
+coalesces consecutive keystrokes in one field into a single undo entry so
+Ctrl-Z doesn't degrade into a character-at-a-time backspace.
+
+
 ## Analysis (descriptive, not a ledger step)
 
 Peak picking, PCA and HCA *describe* a spectrum; they don't transform it.

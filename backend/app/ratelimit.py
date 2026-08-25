@@ -18,7 +18,7 @@ from collections import defaultdict
 
 from fastapi import Depends, HTTPException, Request, status
 
-from app.auth.deps import get_current_user
+from app.auth.deps import get_current_user, get_current_user_optional
 from app.models.user import User
 
 
@@ -59,6 +59,11 @@ _comment_limiter = RateLimiter(max_calls=30, window_seconds=3600)  # 30 comments
 # for a legitimate user (who at most retries a handful of times) but tight
 # enough to blunt scripted brute-forcing of the callback endpoint.
 _login_limiter = RateLimiter(max_calls=10, window_seconds=3600)  # 10 login attempts / hour / IP
+# Pipeline previews are cheap individually (replay a few steps over one
+# spectrum, milliseconds) but a user tuning a slider fires many in a row even
+# with client-side debouncing, so this ceiling is far higher than the others.
+# It exists to stop a script, not to ration normal interactive editing.
+_preview_limiter = RateLimiter(max_calls=600, window_seconds=3600)  # 600 previews / hour
 
 
 def rate_limit_uploads(user: User = Depends(get_current_user)) -> None:
@@ -71,6 +76,18 @@ def rate_limit_votes(user: User = Depends(get_current_user)) -> None:
 
 def rate_limit_comments(user: User = Depends(get_current_user)) -> None:
     _comment_limiter.check(str(user.id))
+
+
+def rate_limit_previews(
+    request: Request,
+    user: User | None = Depends(get_current_user_optional),
+) -> None:
+    """Preview is readable by anyone who can read the spectrum, including
+    anonymous visitors on a published one, so this falls back to client IP
+    when there is no user — unlike the authenticated limiters above, which
+    can always key on a user id."""
+    key = str(user.id) if user is not None else (request.client.host if request.client else "unknown")
+    _preview_limiter.check(key)
 
 
 def rate_limit_login(request: Request) -> None:

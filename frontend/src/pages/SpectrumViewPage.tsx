@@ -30,6 +30,14 @@ export default function SpectrumViewPage() {
   const [showRaw, setShowRaw] = useState(true);
   const [peaks, setPeaks] = useState<Peak[]>([]);
   const [showPeaks, setShowPeaks] = useState(true);
+  /** The uncommitted curve for the pipeline currently being edited below,
+   * or null when the draft matches what's saved. */
+  const [previewData, setPreviewData] = useState<SpectrumData | null>(null);
+
+  // Stable by construction — PipelineBuilder's debounce effect depends on
+  // this identity, so an inline arrow here would restart the timer every
+  // render and the preview would never fire.
+  const handlePreview = useCallback((data: SpectrumData | null) => setPreviewData(data), []);
 
   const loadChartData = useCallback((spectrumId: string) => {
     setChartLoading(true);
@@ -57,6 +65,10 @@ export default function SpectrumViewPage() {
   }, [id, loadChartData]);
 
   function handleApplied(updated: Spectrum) {
+    // Cleared explicitly rather than waiting for the builder to report a
+    // clean draft, so the banner can't linger over a chart that is already
+    // refetching the committed result.
+    setPreviewData(null);
     setSpectrum(updated);
     loadChartData(updated.id);
   }
@@ -101,15 +113,27 @@ export default function SpectrumViewPage() {
       {chartError && <p className="error">{chartError}</p>}
       {chartData && (
         <Card className="chart-card">
+          {previewData && (
+            <p className="preview-banner">
+              <strong>Preview</strong> — showing the pipeline you're editing below. Nothing
+              has been saved yet; press <em>Apply pipeline</em> to keep it.
+            </p>
+          )}
           <SpectrumChart
             zoomable
-            wavenumbers={chartData.wavenumbers}
-            intensities={chartData.intensities}
+            wavenumbers={(previewData ?? chartData).wavenumbers}
+            intensities={(previewData ?? chartData).intensities}
             loading={chartLoading}
-            name={hasPipeline ? 'Processed' : 'Raw'}
-            peaks={showPeaks ? peaks : undefined}
+            name={previewData ? 'Preview' : hasPipeline ? 'Processed' : 'Raw'}
+            /* Peaks were detected against the committed spectrum, so they'd
+               sit at the wrong places on a preview curve — a marker claiming
+               a band the shown data doesn't have is worse than no marker. */
+            peaks={showPeaks && !previewData ? peaks : undefined}
             overlay={
-              hasPipeline && showRaw && rawData
+              /* The raw overlay is the whole point while editing: it's what
+                 makes a step's effect readable. Shown during preview even
+                 when the saved spectrum has no pipeline yet. */
+              (hasPipeline || previewData) && showRaw && rawData
                 ? {
                     name: 'Raw',
                     wavenumbers: rawData.wavenumbers,
@@ -119,7 +143,7 @@ export default function SpectrumViewPage() {
             }
           />
           <div className="chart-toolbar">
-            {hasPipeline && (
+            {(hasPipeline || previewData) && (
               <label>
                 <input
                   type="checkbox"
@@ -139,10 +163,11 @@ export default function SpectrumViewPage() {
                 Mark detected peaks
               </label>
             )}
-            {chartData.downsampled && (
+            {(previewData ?? chartData).downsampled && (
               <span className="hint">
-                Showing {chartData.wavenumbers.length.toLocaleString()} of{' '}
-                {chartData.total_points.toLocaleString()} points (downsampled for display).
+                Showing {(previewData ?? chartData).wavenumbers.length.toLocaleString()} of{' '}
+                {(previewData ?? chartData).total_points.toLocaleString()} points (downsampled
+                for display).
               </span>
             )}
           </div>
@@ -152,7 +177,11 @@ export default function SpectrumViewPage() {
 
       {isOwner ? (
         <>
-          <PipelineBuilder spectrum={spectrum} onApplied={handleApplied} />
+          <PipelineBuilder
+            spectrum={spectrum}
+            onApplied={handleApplied}
+            onPreview={handlePreview}
+          />
           <DraftPublishToggle spectrum={spectrum} onPublished={setSpectrum} />
         </>
       ) : (

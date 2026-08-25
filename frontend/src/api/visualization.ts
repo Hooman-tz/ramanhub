@@ -28,6 +28,37 @@ export async function getSpectrumData(
 }
 
 // ---------------------------------------------------------------------------
+// Pipeline preview
+// ---------------------------------------------------------------------------
+
+export interface PreviewStep {
+  type: string;
+  params: Record<string, unknown>;
+  order: number;
+}
+
+/** "What WOULD this pipeline do" — replays `steps` against the raw spectrum
+ * and returns the resulting curve without committing anything.
+ *
+ * A POST rather than a GET because the pipeline goes in the body: a
+ * multi-step pipeline with nested params doesn't survive a query string, and
+ * putting it there would also write every parameter the user tried into
+ * access logs.
+ *
+ * The server persists nothing for a preview — see `app/processing/preview.py`
+ * for why that needs its own compute path rather than the caching one. */
+export async function previewPipeline(
+  spectrumId: string,
+  steps: PreviewStep[],
+  options: { maxPoints?: number } = {},
+): Promise<SpectrumData> {
+  return request<SpectrumData>(`/spectra/${spectrumId}/preview`, {
+    method: 'POST',
+    body: JSON.stringify({ steps, max_points: options.maxPoints ?? 2000 }),
+  });
+}
+
+// ---------------------------------------------------------------------------
 // DOI lookup (Crossref-backed metadata auto-population)
 // ---------------------------------------------------------------------------
 

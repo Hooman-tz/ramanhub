@@ -1,5 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createLedger, updateSpectrum, type Spectrum } from '../api/client';
+import { previewPipeline, type SpectrumData } from '../api/visualization';
+import { useHistory } from '../lib/useHistory';
 import {
   CATEGORY_LABELS,
   defaultParamsFor,
@@ -10,6 +12,13 @@ import {
 import ParamField from './ParamField';
 import { Button, Card, SelectField, Skeleton } from './ui';
 
+/** How long the pipeline must sit unchanged before a preview is requested.
+ * Longer than the palette's 200ms: a preview replays real numerics on the
+ * server, so firing one per slider pixel would be wasteful in a way a
+ * metadata query isn't. Short enough to still feel like a response to the
+ * edit rather than a separate event. */
+const PREVIEW_DEBOUNCE_MS = 400;
+
 interface DraftStep {
   type: string;
   params: Record<string, unknown>;
@@ -18,6 +27,11 @@ interface DraftStep {
 interface Props {
   spectrum: Spectrum;
   onApplied: (spectrum: Spectrum) => void;
+  /** Receives the uncommitted curve for the draft pipeline, or `null` when
+   * the draft matches what's saved (nothing to preview) or the preview
+   * failed. MUST be referentially stable — wrap it in useCallback — or the
+   * debounce effect below re-subscribes every render and never settles. */
+  onPreview?: (data: SpectrumData | null) => void;
 }
 
 /** Compact one-line rendering of a step's params for its collapsed state. */
@@ -92,14 +106,18 @@ const PRESETS: Array<{
   },
 ];
 
-export default function PipelineBuilder({ spectrum, onApplied }: Props) {
+export default function PipelineBuilder({ spectrum, onApplied, onPreview }: Props) {
   const [catalog, setCatalog] = useState<AlgorithmCatalog | null>(null);
   const [catalogError, setCatalogError] = useState<string | null>(null);
-  const [steps, setSteps] = useState<DraftStep[]>([]);
+  const history = useHistory<DraftStep[]>([]);
+  const steps = history.state;
+  const setSteps = history.set;
   const [picked, setPicked] = useState('');
   const [applying, setApplying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [previewing, setPreviewing] = useState(false);
+  const [previewError, setPreviewError] = useState<string | null>(null);
 
   useEffect(() => {
     getAlgorithmCatalog()
@@ -117,9 +135,14 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
   );
 
   useEffect(() => {
-    setSteps(savedSteps);
+    // reset, not set: undoing across a save would restore edits the server no
+    // longer knows about, leaving this form and the server disagreeing.
+    history.reset(savedSteps);
     setExpanded(null);
-  }, [savedSteps]);
+    // `history` is a fresh object every render by construction; depending on
+    // it here would loop. `reset` itself is stable (useCallback).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [savedSteps, history.reset]);
 
   const byType = useMemo(() => {
     const map = new Map<string, AlgorithmInfo>();
@@ -128,6 +151,63 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
   }, [catalog]);
 
   const dirty = JSON.stringify(steps) !== JSON.stringify(savedSteps);
+
+  // Live preview of the uncommitted pipeline. Debounced and guarded against
+  // out-of-order responses: an earlier, slower preview must not overwrite the
+  // curve for a later edit, which on a chart shows up as the plot flicking
+  // back to a pipeline the user has already moved past.
+  useEffect(() => {
+    if (!onPreview) return;
+    if (!dirty) {
+      setPreviewError(null);
+      onPreview(null);
+      return;
+    }
+    let stale = false;
+    const handle = setTimeout(() => {
+      setPreviewing(true);
+      previewPipeline(
+        spectrum.id,
+        steps.map((step, order) => ({ type: step.type, params: step.params, order })),
+      )
+        .then((data) => {
+          if (stale) return;
+          setPreviewError(null);
+          onPreview(data);
+        })
+        .catch((err) => {
+          if (stale) return;
+          // A 422 here is informative, not a failure state: it means this
+          // pipeline can't run on THIS spectrum, which is exactly what the
+          // user needs to know before pressing Apply.
+          setPreviewError(err instanceof Error ? err.message : String(err));
+          onPreview(null);
+        })
+        .finally(() => {
+          if (!stale) setPreviewing(false);
+        });
+    }, PREVIEW_DEBOUNCE_MS);
+    return () => {
+      stale = true;
+      clearTimeout(handle);
+    };
+  }, [steps, dirty, spectrum.id, onPreview]);
+
+  // ⌘Z / ⇧⌘Z. Skipped while a form field has focus so the browser's own
+  // text undo keeps working inside a parameter input — stealing that would
+  // be worse than not having the shortcut.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== 'z') return;
+      const target = event.target as HTMLElement | null;
+      if (target && /^(INPUT|TEXTAREA|SELECT)$/.test(target.tagName)) return;
+      event.preventDefault();
+      if (event.shiftKey) history.redo();
+      else history.undo();
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [history]);
 
   function applyPreset(presetId: string) {
     const preset = PRESETS.find((p) => p.id === presetId);
@@ -165,6 +245,9 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
         else params[key] = value;
         return { ...step, params };
       }),
+      // Coalesce every keystroke in one field into a single undo entry —
+      // otherwise Ctrl-Z walks back one character at a time.
+      `param:${index}:${key}`,
     );
   }
 
@@ -359,11 +442,45 @@ export default function PipelineBuilder({ spectrum, onApplied }: Props) {
         <Button variant="primary" onClick={apply} disabled={!dirty} loading={applying}>
           Apply pipeline
         </Button>
+        <span className="pipeline-commit__history">
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={history.undo}
+            disabled={!history.canUndo || applying}
+            title="Undo (⌘Z)"
+          >
+            ↺ Undo
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={history.redo}
+            disabled={!history.canRedo || applying}
+            title="Redo (⇧⌘Z)"
+          >
+            ↻ Redo
+          </Button>
+        </span>
         <Button variant="ghost" onClick={() => setSteps(savedSteps)} disabled={!dirty || applying}>
           Discard changes
         </Button>
-        {dirty && <span className="hint">Unsaved changes</span>}
+        {dirty && (
+          <span className={previewError ? 'error' : 'hint'}>
+            {previewError
+              ? "This pipeline can't run on this spectrum — see below"
+              : previewing
+                ? 'Previewing…'
+                : 'Previewing unsaved changes on the chart'}
+          </span>
+        )}
       </div>
+
+      {previewError && (
+        <p className="error">
+          {previewError.replace(/^API error \d+:\s*/, '')}
+        </p>
+      )}
 
       {error && <p className="error">{error}</p>}
     </section>
