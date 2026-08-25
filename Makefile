@@ -21,5 +21,13 @@ seed-demo:
 test:
 	cd backend && uv run pytest
 
+# Live check of the OpenRouter setup: lists the models OpenRouter actually
+# serves, then does one real forced tool call on a real vendor header.
+#   make check-llm                     full check
+#   make check-llm ARGS='--list'       just list qwen/flash models
+#   make check-llm ARGS='--model qwen/qwen3-flash'
+check-llm:
+	uv run --project backend python scripts/check_llm.py $(ARGS)
+
 lint:
 	cd backend && uv run ruff check app/

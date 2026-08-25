@@ -174,8 +174,32 @@ OpenRouter when its key is set and falls back to Anthropic:
 | `OPENROUTER_API_KEY` | `OPENROUTER` is accepted as an alias |
 | `ANTHROPIC_API_KEY` | Direct Anthropic API |
 | `LLM_PROVIDER` | `auto` (default), `openrouter`, or `anthropic` |
-| `OPENROUTER_MODEL` | Default `mistralai/mistral-small-3.2-24b-instruct` — open weights, cheap. **Must support tool calling** |
-| `OPENROUTER_FALLBACK_MODELS` | Comma-separated; passed to OpenRouter's `models` routing array so an unavailable model falls through rather than failing the upload |
+| `OPENROUTER_MODEL` | Default `qwen/qwen3-flash`. **Must support tool calling** |
+| `OPENROUTER_FALLBACK_MODELS` | Comma-separated; passed to OpenRouter's `models` routing array |
+
+### Check it works: `make check-llm`
+
+Model slugs get renamed and retired, and a stale one fails inside a
+background ingestion job where nobody sees it. So don't trust the default
+written above — ask OpenRouter:
+
+```bash
+make check-llm ARGS='--list'    # what OpenRouter serves right now
+make check-llm                  # ...then one real tool call on a real header
+make check-llm ARGS='--model qwen/qwen-turbo'
+```
+
+`--list` prints every Qwen/flash model with **whether it supports tool
+calling**, its context length and its price per Mtok — only tool-capable
+models can do header extraction. The full run then sends the real
+`sample-data/horiba_acetaminophen_785nm.txt` header through the same code
+path the parser uses and checks the result against what the header actually
+says (785 nm, 3 accumulations, 1800 lines/mm), so a pass means the parser
+works rather than that a request returned 200.
+
+`OPENROUTER_FALLBACK_MODELS` is a *chain* for the same reason: OpenRouter's
+`models` array skips entries it cannot serve, so a retired slug degrades to
+the next candidate instead of failing the upload.
 
 `app/ingestion/llm_providers.py` is the seam. It returns an **unvalidated
 dict**; `llm_fallback.py` remains the only thing that decides what may reach
