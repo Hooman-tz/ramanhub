@@ -5,6 +5,7 @@ import { getFeed, type FeedItem } from '../api/findings';
 import { useAuth } from '../auth/useAuth';
 import FeedCard from '../components/FeedCard';
 import FollowButton from '../components/FollowButton';
+import SpectrumThumb from '../components/SpectrumThumb';
 import StatRow, { type Stat } from '../components/StatRow';
 import { Card, EmptyState, Skeleton } from '../components/ui';
 
@@ -200,11 +201,33 @@ export default function ProfilePage() {
       {itemsLoading ? (
         <Skeleton lines={3} height="4rem" />
       ) : items.length > 0 ? (
-        <div className="feed-list">
-          {items.map((item) => (
-            <FeedCard key={`${item.kind}-${item.id}`} item={item} />
-          ))}
-        </div>
+        tab === 'spectra' ? (
+          /* Spectra get a grid of previews rather than a list of cards.
+             Every tile is rendered by the server over the SAME wavenumber
+             window, so peak positions line up column-for-column across tiles
+             — which is the only reason a wall of visually near-identical
+             spectra is scannable at all. */
+          <div className="thumb-grid">
+            {items.map((item) => (
+              <Link
+                key={item.id}
+                to={item.accession ? `/s/${item.accession}` : `/spectra/${item.id}`}
+                className="thumb-grid__item"
+              >
+                <SpectrumThumb spectrumId={item.id} label={item.title ?? item.material_type} />
+                <span className="thumb-grid__caption">
+                  {item.title ?? item.material_type ?? 'Untitled'}
+                </span>
+              </Link>
+            ))}
+          </div>
+        ) : (
+          <div className="feed-list">
+            {items.map((item) => (
+              <FeedCard key={`${item.kind}-${item.id}`} item={item} />
+            ))}
+          </div>
+        )
       ) : isSelf && !hasAnything ? (
         /* The owner's own empty profile is the highest-leverage screen here.
            Showing them "0 / 0 / 0" tells a new user the place is empty and

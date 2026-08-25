@@ -22,10 +22,11 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.analysis.peaks import detect_peaks
 from app.auth.deps import get_current_user_optional
 from app.db.session import get_db
 from app.models.processing_ledger import ProcessingLedger
@@ -43,6 +44,8 @@ from app.processing.state_machine import require_owner_or_public
 from app.ratelimit import rate_limit_previews
 from app.schemas.ledger import Ledger, LedgerStep
 from app.spectra_io import load_raw_spectrum, lttb_downsample
+from app.spectrum_access import load_spectrum_arrays
+from app.thumbnails import DEFAULT_RANGE_CM1, render_sparkline
 
 router = APIRouter(tags=["spectrum-data"])
 
@@ -160,4 +163,58 @@ def preview_pipeline(
         intensities=[float(v) for v in intensities],
         downsampled=downsampled,
         total_points=total_points,
+    )
+
+
+@router.get("/spectra/{spectrum_id}/thumbnail.svg")
+def spectrum_thumbnail(
+    spectrum_id: UUID,
+    request: Request,
+    peaks: bool = Query(True, description="Draw tick marks at detected band positions."),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user_optional),
+) -> Response:
+    """A small SVG sparkline for grids and list rows.
+
+    Rendered server-side so a profile showing fifty spectra costs fifty tiny
+    cached images rather than fifty JSON fetches and fifty chart instances.
+    See `app.thumbnails` for why the x-axis is shared across tiles and why the
+    peak ticks are there.
+
+    Caching is an ETag over (spectrum id, current ledger id) rather than a new
+    cache table: the expensive half — the processed arrays — is already
+    content-addressed by ledger hash, and keying on the ledger id means
+    reprocessing invalidates the tile automatically.
+    """
+    spectrum = db.get(Spectrum, spectrum_id)
+    if spectrum is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    require_owner_or_public(spectrum, user)
+
+    etag = f'W/"{spectrum.id}-{spectrum.current_ledger_id or "raw"}-{int(peaks)}"'
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304)
+
+    wavenumbers, intensities = load_spectrum_arrays(spectrum, db)
+
+    peak_positions: list[float] = []
+    if peaks:
+        try:
+            peak_positions = [p.wavenumber for p in detect_peaks(wavenumbers, intensities)]
+        except Exception:  # noqa: BLE001 - a thumbnail must never 500
+            # Peak detection is decoration here. If it fails on some
+            # pathological spectrum the tile should still draw its trace
+            # rather than the whole grid showing broken images.
+            peak_positions = []
+
+    svg = render_sparkline(wavenumbers, intensities, peak_positions, DEFAULT_RANGE_CM1)
+    return Response(
+        content=svg,
+        media_type="image/svg+xml",
+        headers={
+            "ETag": etag,
+            # Private, because a draft spectrum's tile must not be cached by
+            # a shared proxy where a later anonymous request could pick it up.
+            "Cache-Control": "private, max-age=300",
+        },
     )

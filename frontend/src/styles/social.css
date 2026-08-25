@@ -1186,3 +1186,43 @@
     gap: var(--sp-3);
   }
 }
+
+/* --- spectrum thumbnails -------------------------------------------------- */
+
+/* The SVG paints in currentColor, so the tint is set here rather than baked
+   into the cached image — one cached tile serves light mode, dark mode and
+   any future per-material hue. */
+.spectrum-thumb {
+  display: block;
+  width: 100%;
+  height: auto;
+  color: var(--chart-series-1);
+  background: var(--color-surface-raised);
+  border: 1px solid var(--color-border);
+  border-radius: var(--r-sm);
+  padding: var(--sp-1);
+}
+
+/* Every tile is rendered over the SAME wavenumber window by the server, so a
+   band at 1002 cm-1 sits in the same pixel column on every tile. That is what
+   makes a grid of visually near-identical spectra scannable at all — without
+   it the eye has to re-read an invisible axis per tile. */
+.thumb-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(9rem, 1fr));
+  gap: var(--sp-3);
+}
+
+.thumb-grid__item {
+  display: grid;
+  gap: var(--sp-1);
+  min-width: 0;
+}
+
+.thumb-grid__caption {
+  font-size: var(--text-xs);
+  color: var(--color-text-secondary);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

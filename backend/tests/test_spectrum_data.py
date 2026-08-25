@@ -401,3 +401,105 @@ def test_preview_downsamples_above_max_points(data_client, make_user, make_raw_f
     assert body["downsampled"] is True
     assert body["total_points"] == 5000
     assert len(body["wavenumbers"]) <= 500
+
+
+# ---------------------------------------------------------------------------
+# GET /spectra/{id}/thumbnail.svg
+# ---------------------------------------------------------------------------
+
+
+def test_thumbnail_renders_an_svg(data_client, make_user, make_raw_file):
+    owner = make_user()
+    data_client.set_current_user(owner)
+    spectrum = _spectrum(data_client, make_raw_file(owner))
+
+    resp = data_client.get(f"/spectra/{spectrum['id']}/thumbnail.svg")
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("image/svg+xml")
+    assert resp.text.startswith("<svg")
+    assert "<path" in resp.text
+
+
+def test_thumbnail_uses_currentcolor_so_dark_mode_needs_no_second_render(
+    data_client, make_user, make_raw_file
+):
+    owner = make_user()
+    data_client.set_current_user(owner)
+    spectrum = _spectrum(data_client, make_raw_file(owner))
+
+    assert "currentColor" in data_client.get(f"/spectra/{spectrum['id']}/thumbnail.svg").text
+
+
+def test_thumbnail_is_etagged_and_revalidates_to_304(data_client, make_user, make_raw_file):
+    """Fifty tiles on a profile is fifty requests; without a conditional
+    response that is fifty full renders on every navigation."""
+    owner = make_user()
+    data_client.set_current_user(owner)
+    spectrum = _spectrum(data_client, make_raw_file(owner))
+
+    first = data_client.get(f"/spectra/{spectrum['id']}/thumbnail.svg")
+    etag = first.headers["etag"]
+    assert etag
+
+    again = data_client.get(
+        f"/spectra/{spectrum['id']}/thumbnail.svg", headers={"If-None-Match": etag}
+    )
+    assert again.status_code == 304
+
+
+def test_thumbnail_etag_changes_when_the_pipeline_changes(
+    data_client, make_user, make_raw_file
+):
+    """Keying on the ledger id is what makes reprocessing invalidate the tile
+    automatically — otherwise a user would see a stale picture of their data."""
+    owner = make_user()
+    data_client.set_current_user(owner)
+    raw_file = make_raw_file(owner)
+    spectrum = _spectrum(data_client, raw_file)
+
+    before = data_client.get(f"/spectra/{spectrum['id']}/thumbnail.svg").headers["etag"]
+    _apply_crop(data_client, raw_file, spectrum["id"])
+    after = data_client.get(f"/spectra/{spectrum['id']}/thumbnail.svg").headers["etag"]
+
+    assert before != after
+
+
+def test_thumbnail_is_not_cacheable_by_a_shared_proxy(data_client, make_user, make_raw_file):
+    """`private` matters: a draft's tile must never be stored somewhere a
+    later anonymous request could pick it up."""
+    owner = make_user()
+    data_client.set_current_user(owner)
+    spectrum = _spectrum(data_client, make_raw_file(owner))
+
+    cache_control = data_client.get(
+        f"/spectra/{spectrum['id']}/thumbnail.svg"
+    ).headers["cache-control"]
+    assert "private" in cache_control
+
+
+def test_draft_thumbnail_is_not_readable_by_others(data_client, make_user, make_raw_file):
+    """A thumbnail is a rendering of the data, so it is a read and gets the
+    same row-level rule as every other spectrum read."""
+    owner, other = make_user(), make_user()
+    data_client.set_current_user(owner)
+    spectrum = _spectrum(data_client, make_raw_file(owner))
+
+    data_client.set_current_user(other)
+    assert data_client.get(f"/spectra/{spectrum['id']}/thumbnail.svg").status_code == 404
+
+    data_client.set_current_user(None)
+    assert data_client.get(f"/spectra/{spectrum['id']}/thumbnail.svg").status_code == 404
+
+
+def test_thumbnail_can_omit_peak_ticks(data_client, make_user, make_raw_file):
+    owner = make_user()
+    data_client.set_current_user(owner)
+    spectrum = _spectrum(data_client, make_raw_file(owner))
+
+    with_ticks = data_client.get(f"/spectra/{spectrum['id']}/thumbnail.svg?peaks=true")
+    without = data_client.get(f"/spectra/{spectrum['id']}/thumbnail.svg?peaks=false")
+
+    assert without.text.count("<line") == 0
+    # Different content must not share an ETag, or one would serve the other.
+    assert with_ticks.headers["etag"] != without.headers["etag"]
