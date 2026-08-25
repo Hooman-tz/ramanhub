@@ -395,3 +395,53 @@ export async function updateMyProfile(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+// ---------------------------------------------------------------------------
+// Contribution activity + pins
+// ---------------------------------------------------------------------------
+
+export interface ActivityDay {
+  date: string;
+  spectra: number;
+  findings: number;
+  comments: number;
+}
+
+export interface ActivitySummary {
+  days: ActivityDay[];
+  total: number;
+  current_streak: number;
+  longest_streak: number;
+}
+
+export async function getActivity(handle: string, days = 365): Promise<ActivitySummary> {
+  return request<ActivitySummary>(
+    `/users/${encodeURIComponent(handle)}/activity?days=${days}`,
+  );
+}
+
+export interface PinnedItem {
+  kind: 'spectrum' | 'finding';
+  id: string;
+  accession: string | null;
+  title: string | null;
+  position: number;
+}
+
+export async function getPins(handle: string): Promise<PinnedItem[]> {
+  return request<PinnedItem[]>(`/users/${encodeURIComponent(handle)}/pins`);
+}
+
+export async function addPin(kind: 'spectrum' | 'finding', id: string): Promise<PinnedItem[]> {
+  return request<PinnedItem[]>('/pins', {
+    method: 'POST',
+    body: JSON.stringify({ kind, id }),
+  });
+}
+
+export async function removePin(
+  kind: 'spectrum' | 'finding',
+  id: string,
+): Promise<PinnedItem[]> {
+  return request<PinnedItem[]>(`/pins/${kind}/${id}`, { method: 'DELETE' });
+}

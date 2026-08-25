@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
-import { getPublicProfile, type PublicProfile } from '../api/client';
+import { getPins, getPublicProfile, type PinnedItem, type PublicProfile } from '../api/client';
 import { getFeed, type FeedItem } from '../api/findings';
 import { useAuth } from '../auth/useAuth';
 import FeedCard from '../components/FeedCard';
 import FollowButton from '../components/FollowButton';
 import SpectrumThumb from '../components/SpectrumThumb';
+import ContributionChart from '../components/ContributionChart';
 import StatRow, { type Stat } from '../components/StatRow';
 import { Card, EmptyState, Skeleton } from '../components/ui';
 
@@ -38,6 +39,7 @@ export default function ProfilePage() {
   const [itemsLoading, setItemsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [followers, setFollowers] = useState<number | null>(null);
+  const [pins, setPins] = useState<PinnedItem[]>([]);
 
   const tab = (params.get('tab') as TabId) ?? 'overview';
   const isSelf = Boolean(user && profile && user.id === profile.id);
@@ -67,6 +69,13 @@ export default function ProfilePage() {
       .catch(() => setItems([]))
       .finally(() => setItemsLoading(false));
   }, [handle, tab]);
+
+  useEffect(() => {
+    if (!handle) return;
+    // Pins are decoration on someone else's page — a failure here must not
+    // take the profile down, so it swallows rather than setting `error`.
+    getPins(handle).then(setPins).catch(() => setPins([]));
+  }, [handle]);
 
   const onFollowersChange = useCallback((count: number) => setFollowers(count), []);
 
@@ -181,6 +190,35 @@ export default function ProfilePage() {
       <Card>
         <StatRow stats={stats} />
       </Card>
+
+      {tab === 'overview' && pins.length > 0 && (
+        <>
+          {/* Curated, and therefore above the recency-ordered list below:
+              the work someone wants to be known for is often not the thing
+              they touched most recently. */}
+          <h2>Pinned</h2>
+          <div className="pins">
+            {pins.map((pin) => (
+              <Link
+                key={`${pin.kind}-${pin.id}`}
+                to={
+                  pin.kind === 'finding'
+                    ? `/findings/${pin.id}`
+                    : pin.accession
+                      ? `/s/${pin.accession}`
+                      : `/spectra/${pin.id}`
+                }
+                className="pins__item"
+              >
+                <span className="pins__title">{pin.title ?? 'Untitled'}</span>
+                <span className="pins__meta">{pin.accession ?? pin.kind}</span>
+              </Link>
+            ))}
+          </div>
+        </>
+      )}
+
+      {tab === 'overview' && profile.handle && <ContributionChart handle={profile.handle} />}
 
       <nav className="profile__tabs" aria-label="Profile sections">
         {TABS.map((t) => (

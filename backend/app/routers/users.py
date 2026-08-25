@@ -9,10 +9,11 @@ Two distinct surfaces here, and the split is deliberate:
 """
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.activity import ActivitySummary, compute_activity
 from app.auth.deps import get_current_full_user, get_current_user
 from app.db.session import get_db
 from app.models.handles import normalize_handle
@@ -99,3 +100,22 @@ def get_public_profile(handle: str, db: Session = Depends(get_db)) -> PublicProf
     # the day one ships, and so nothing renders a badge in the meantime.
     profile.orcid_verified = False
     return profile
+
+
+@router.get("/{handle}/activity", response_model=ActivitySummary)
+def get_public_activity(
+    handle: str,
+    days: int = Query(365, ge=1, le=730),
+    db: Session = Depends(get_db),
+) -> ActivitySummary:
+    """Per-day contribution counts plus streaks, for the profile chart.
+
+    Public, and published-events-only — see `app.activity` for what each kind
+    counts and why they are kept separate rather than summed into one number.
+    """
+    user = db.execute(
+        select(User).where(User.handle == normalize_handle(handle))
+    ).scalar_one_or_none()
+    if user is None or not user.is_active or user.is_guest:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
+    return compute_activity(user.id, db, days=days)

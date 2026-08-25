@@ -42,6 +42,7 @@ from app.routers import (
     ledgers,
     library,
     licenses,
+    pins,
     processing,
     raw_files,
     routines,
@@ -93,6 +94,7 @@ app.include_router(shares.router)
 # Registered AFTER users.router so its literal routes (/users/me,
 # /users/by-handle/...) win over this one's /users/{handle}/... patterns.
 app.include_router(follows.router)
+app.include_router(pins.router)
 app.include_router(comments.router)
 app.include_router(trending.router)
 
