@@ -11,6 +11,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import re
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -31,6 +32,24 @@ from app.models.raw_file import RawFile
 from app.storage.s3_client import download_bytes
 
 HEADER_SNIFF_BYTES = 65536
+
+# A line consisting only of numbers and separators — i.e. a spectrum data
+# row, not header metadata. Covers "200.00<tab>161.082", comma/semicolon
+# separated columns, scientific notation, and signed values.
+_DATA_ROW_RE = re.compile(
+    r"^\s*[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?"
+    r"(?:[\s,;]+[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)*\s*$"
+)
+
+# How many consecutive data rows must be seen before the header is declared
+# over. Not 1: a legitimate header line can be a bare number (Horiba writes
+# "#Grating:\t1800", but other vendors emit a lone value on its own line),
+# and cutting there would silently truncate the header.
+_CONSECUTIVE_DATA_ROWS = 3
+
+# Backstop for formats where no data rows are ever recognized — e.g. a binary
+# header decoded to mojibake with no line structure at all.
+_MAX_HEADER_LINES = 200
 
 logger = logging.getLogger(__name__)
 
@@ -67,14 +86,56 @@ def run_with_timeout(func: Callable[..., Any], *args: Any, timeout: float, **kwa
         executor.shutdown(wait=False)
 
 
+def _looks_like_data_row(line: str) -> bool:
+    return bool(line.strip()) and _DATA_ROW_RE.match(line) is not None
+
+
 def _extract_header_text(raw_bytes: bytes) -> str:
-    """Best-effort header text: decode a leading chunk of the raw bytes.
+    """Best-effort header text: decode a leading chunk of the raw bytes and
+    stop at the point the spectrum data begins.
+
     Works directly for text-based vendor formats; for binary formats this is
     a lossy approximation used only for hashing/logging, not for parsing —
     `parse()` on binary formats works from the raw bytes directly.
+
+    **Why it stops at the data.** This used to return the whole 64 kB sniff
+    window. For a text spectrum that is the entire file, and the header is a
+    rounding error within it: `sample-data/horiba_acetaminophen_785nm.txt` is
+    22 kB of which the header is 9 lines / 182 bytes. Sending all of it cost
+    ~5,700 tokens per parse where ~45 suffice, and — worse than the money —
+    burying nine useful lines under fifteen hundred rows of numbers is
+    exactly the needle-in-a-haystack setup that makes a small model extract
+    badly.
+
+    It also repairs the vendor-parse cache. `compute_header_hash` runs over
+    whatever this returns, so while that included intensity values, every
+    spectrum hashed differently and `VendorParseCache` — whose entire purpose
+    is "work out this vendor's header template once" — missed on every single
+    upload. Hashing the header alone lets repeat uploads from one instrument
+    actually share an entry.
+
+    Returns "" for a file with no header at all (a bare two-column CSV).
+    That is deliberate: there is no metadata to extract, and a stable empty
+    hash lets all such files share one cache entry instead of each paying for
+    a model call to be told there is nothing there.
     """
     chunk = raw_bytes[:HEADER_SNIFF_BYTES]
-    return chunk.decode("utf-8", errors="ignore")
+    text = chunk.decode("utf-8", errors="ignore")
+    lines = text.splitlines()
+
+    cutoff = min(len(lines), _MAX_HEADER_LINES)
+    run = 0
+    for index, line in enumerate(lines[:_MAX_HEADER_LINES]):
+        if _looks_like_data_row(line):
+            run += 1
+            if run >= _CONSECUTIVE_DATA_ROWS:
+                cutoff = index - run + 1
+                break
+        else:
+            run = 0
+
+    header = "\n".join(lines[:cutoff])
+    return header[: settings.LLM_HEADER_MAX_CHARS]
 
 
 def _latest_pending_job(db, raw_file_id: uuid.UUID) -> IngestionJob | None:

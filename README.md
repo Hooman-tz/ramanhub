@@ -26,9 +26,11 @@ NMR later without a rewrite.
    ```
 
    Fill in `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (Google OAuth login)
-   and `ANTHROPIC_API_KEY` (LLM header parsing) only if you're testing those
-   features — the core scaffold (API, DB, object storage, migrations) works
-   fine with them left blank.
+   and **one** LLM key — either `OPENROUTER_API_KEY` or `ANTHROPIC_API_KEY`
+   — only if you're testing those features. The core scaffold (API, DB,
+   object storage, migrations) works fine with them left blank.
+
+   See [LLM header parsing](#llm-header-parsing) for which key does what.
 
 2. Start Postgres + MinIO:
 
@@ -158,6 +160,51 @@ coalesces consecutive keystrokes in one field into a single undo entry so
 Ctrl-Z doesn't degrade into a character-at-a-time backspace.
 
 
+## LLM header parsing
+
+Most uploads are handled by a deterministic vendor parser. When none
+recognizes a file, `app/ingestion/llm_fallback.py` asks a model to extract the
+metadata instead.
+
+**Configure one key.** `LLM_PROVIDER` defaults to `auto`, which prefers
+OpenRouter when its key is set and falls back to Anthropic:
+
+| Variable | Notes |
+| --- | --- |
+| `OPENROUTER_API_KEY` | `OPENROUTER` is accepted as an alias |
+| `ANTHROPIC_API_KEY` | Direct Anthropic API |
+| `LLM_PROVIDER` | `auto` (default), `openrouter`, or `anthropic` |
+| `OPENROUTER_MODEL` | Default `mistralai/mistral-small-3.2-24b-instruct` — open weights, cheap. **Must support tool calling** |
+| `OPENROUTER_FALLBACK_MODELS` | Comma-separated; passed to OpenRouter's `models` routing array so an unavailable model falls through rather than failing the upload |
+
+`app/ingestion/llm_providers.py` is the seam. It returns an **unvalidated
+dict**; `llm_fallback.py` remains the only thing that decides what may reach
+the database, and every response still goes through
+`ExtractedMetadata.model_validate`. A schema violation writes nothing.
+
+Two details that matter for cheap models:
+
+- **`provider.require_parameters` is set**, because tool-calling support
+  varies between the providers serving a given open model — without it a
+  request can be routed to one that ignores `tools` and answers in prose.
+- **One corrective retry** feeds the schema-validation error back to the
+  model. Small models get structured output wrong more often than frontier
+  ones, and naming the offending field recovers most of those.
+
+### Only the header is sent
+
+`_extract_header_text` stops at the first run of numeric data rows.
+`sample-data/horiba_acetaminophen_785nm.txt` is 22 kB of which the header is
+9 lines / 182 bytes — sending the whole file cost **~5,700 tokens per parse
+where ~45 suffice**, and burying nine useful lines under fifteen hundred rows
+of numbers is what makes a small model extract badly.
+
+This also repairs the vendor-parse cache. `compute_header_hash` runs over
+whatever that function returns, so while it included intensity values every
+spectrum hashed differently and `VendorParseCache` missed on *every* upload —
+defeating the entire point of a cache keyed on a header template.
+
+
 ## Analysis (descriptive, not a ledger step)
 
 Peak picking, PCA and HCA *describe* a spectrum; they don't transform it.
@@ -259,7 +306,8 @@ One-time setup:
 2. **Render** — New → Blueprint → this repo (tracks `main`). Paste the
    `sync: false` secrets: `JWT_SECRET` (generate:
    `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`),
-   `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, the R2
+   `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, one LLM key
+   (`OPENROUTER_API_KEY` or `ANTHROPIC_API_KEY`), the R2
    values, optional `SENTRY_DSN`. Add custom domain `api.serds.ca`.
 3. **Vercel** — import the repo, root directory `frontend`, env vars
    `VITE_API_BASE_URL=https://api.serds.ca` and

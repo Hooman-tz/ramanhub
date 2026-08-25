@@ -54,7 +54,11 @@ services:
         sync: false
       - key: GOOGLE_CLIENT_SECRET
         sync: false
+      # LLM header parsing: set ONE of these. LLM_PROVIDER=auto (the
+      # default) prefers OpenRouter when its key is present.
       - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
         sync: false
       # Cloudflare R2: https://<account-id>.r2.cloudflarestorage.com + an
       # R2 API token's key id/secret.

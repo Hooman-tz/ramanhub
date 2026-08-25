@@ -1,37 +1,31 @@
-"""Tests for app.ingestion.llm_fallback — the Anthropic client is always
-mocked here; the real API is never called.
+"""Tests for app.ingestion.llm_fallback — the LLM provider is always mocked
+here; no real API is ever called.
+
+These tests deliberately patch `resolve_provider` rather than any particular
+vendor SDK. What this module owns is the *security boundary* — every model
+response goes through `ExtractedMetadata.model_validate` and nothing partial
+is ever written — and that must hold no matter which provider produced the
+dict. Pinning them to one SDK is what made them break when the seam landed.
 
 Covers the three required scenarios:
 (a) well-formed tool-call response -> validated ExtractedMetadata + cache write
 (b) malformed/schema-violating response -> clean failure, no partial state written
-(c) cache hit -> client never called
+(c) cache hit -> provider never called
 """
 from __future__ import annotations
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
 from app.ingestion.header_hash import compute_header_hash
 from app.ingestion.llm_fallback import LLMExtractionError, extract_metadata_via_llm
+from app.ingestion.llm_providers import LLMProviderError
 from app.models.enums import ParseSource
 from app.models.vendor_parse_cache import VendorParseCache
 
 HEADER_TEXT = "Some Unknown Vendor Header\nLaser: 785nm\nExposure: 1000ms"
-
-
-class _FakeToolUseBlock:
-    type = "tool_use"
-
-    def __init__(self, name: str, input_: dict):
-        self.name = name
-        self.input = input_
-
-
-class _FakeMessage:
-    def __init__(self, content):
-        self.content = content
 
 
 class _FakeQuery:
@@ -61,16 +55,34 @@ class _FakeDB:
         self.commit_count += 1
 
 
+class _FakeProvider:
+    """Returns a canned payload. Deliberately IGNORES the `validate` callback
+    so that bad payloads reach `llm_fallback`'s own validation — that is the
+    boundary under test. Provider-side retry is covered in
+    tests/test_llm_providers.py."""
+
+    model_id = "fake/model-1"
+
+    def __init__(self, payload=None, error: Exception | None = None):
+        self._payload = payload
+        self._error = error
+        self.calls = 0
+        self.last_kwargs: dict | None = None
+
+    async def call_tool(self, **kwargs):
+        self.calls += 1
+        self.last_kwargs = kwargs
+        if self._error is not None:
+            raise self._error
+        return self._payload
+
+
 def _run(coro):
     return asyncio.run(coro)
 
 
-def _fake_client_returning(tool_input: dict, tool_name: str = "extract_raman_metadata"):
-    fake_client = AsyncMock()
-    fake_client.messages.create = AsyncMock(
-        return_value=_FakeMessage([_FakeToolUseBlock(tool_name, tool_input)])
-    )
-    return fake_client
+def _with_provider(provider):
+    return patch("app.ingestion.llm_fallback.resolve_provider", return_value=provider)
 
 
 # ---------------------------------------------------------------------------
@@ -80,7 +92,7 @@ def _fake_client_returning(tool_input: dict, tool_name: str = "extract_raman_met
 
 def test_well_formed_response_validates_and_writes_cache():
     db = _FakeDB(cached_row=None)
-    fake_client = _fake_client_returning(
+    provider = _FakeProvider(
         {
             "modality": "raman",
             "instrument_vendor": "Acme Spectro",
@@ -90,7 +102,7 @@ def test_well_formed_response_validates_and_writes_cache():
         }
     )
 
-    with patch("app.ingestion.llm_fallback.anthropic.AsyncAnthropic", return_value=fake_client):
+    with _with_provider(provider):
         metadata, source = _run(extract_metadata_via_llm(HEADER_TEXT, db))
 
     assert source == "llm"
@@ -105,7 +117,32 @@ def test_well_formed_response_validates_and_writes_cache():
     assert cache_row.source == ParseSource.llm
     assert cache_row.header_hash == compute_header_hash(HEADER_TEXT)
     assert db.commit_count == 1
-    fake_client.messages.create.assert_awaited_once()
+    assert provider.calls == 1
+
+
+def test_cache_records_the_model_that_actually_produced_it():
+    """`parser_version` used to be a hardcoded Anthropic model id. With a
+    provider seam that would silently mislabel every OpenRouter parse, which
+    matters because the cache is replayed later and you need to know what
+    produced an entry."""
+    db = _FakeDB(cached_row=None)
+    provider = _FakeProvider({"modality": "raman", "instrument_vendor": "Acme"})
+
+    with _with_provider(provider):
+        _run(extract_metadata_via_llm(HEADER_TEXT, db))
+
+    assert db.added[0].parser_version == "fake/model-1"
+
+
+def test_only_the_header_is_sent_to_the_model():
+    db = _FakeDB(cached_row=None)
+    provider = _FakeProvider({"modality": "raman"})
+
+    with _with_provider(provider):
+        _run(extract_metadata_via_llm(HEADER_TEXT, db))
+
+    assert HEADER_TEXT in provider.last_kwargs["user_text"]
+    assert provider.last_kwargs["tool_name"] == "extract_raman_metadata"
 
 
 # ---------------------------------------------------------------------------
@@ -117,12 +154,9 @@ def test_malformed_response_raises_and_writes_nothing():
     db = _FakeDB(cached_row=None)
     # extra="forbid" on ExtractedMetadata means this unexpected top-level key
     # must be rejected outright, not silently merged.
-    fake_client = _fake_client_returning({"modality": "raman", "not_a_real_field": "smuggled"})
+    provider = _FakeProvider({"modality": "raman", "not_a_real_field": "smuggled"})
 
-    with (
-        patch("app.ingestion.llm_fallback.anthropic.AsyncAnthropic", return_value=fake_client),
-        pytest.raises(LLMExtractionError),
-    ):
+    with _with_provider(provider), pytest.raises(LLMExtractionError):
         _run(extract_metadata_via_llm(HEADER_TEXT, db))
 
     assert db.added == []
@@ -131,14 +165,9 @@ def test_malformed_response_raises_and_writes_nothing():
 
 def test_response_with_wrong_types_raises_and_writes_nothing():
     db = _FakeDB(cached_row=None)
-    fake_client = _fake_client_returning(
-        {"modality": "raman", "laser_wavelength_nm": "not-a-number"}
-    )
+    provider = _FakeProvider({"modality": "raman", "laser_wavelength_nm": "not-a-number"})
 
-    with (
-        patch("app.ingestion.llm_fallback.anthropic.AsyncAnthropic", return_value=fake_client),
-        pytest.raises(LLMExtractionError),
-    ):
+    with _with_provider(provider), pytest.raises(LLMExtractionError):
         _run(extract_metadata_via_llm(HEADER_TEXT, db))
 
     assert db.added == []
@@ -147,13 +176,24 @@ def test_response_with_wrong_types_raises_and_writes_nothing():
 
 def test_missing_tool_call_raises_and_writes_nothing():
     db = _FakeDB(cached_row=None)
-    fake_client = AsyncMock()
-    fake_client.messages.create = AsyncMock(return_value=_FakeMessage([]))
+    provider = _FakeProvider(
+        error=LLMProviderError("Model did not return the expected tool call")
+    )
 
-    with (
-        patch("app.ingestion.llm_fallback.anthropic.AsyncAnthropic", return_value=fake_client),
-        pytest.raises(LLMExtractionError),
-    ):
+    with _with_provider(provider), pytest.raises(LLMExtractionError):
+        _run(extract_metadata_via_llm(HEADER_TEXT, db))
+
+    assert db.added == []
+    assert db.commit_count == 0
+
+
+def test_provider_transport_failure_is_a_clean_extraction_error():
+    """A network/HTTP failure must surface as the same domain error as a bad
+    payload — callers (ingestion jobs) have one failure path, not two."""
+    db = _FakeDB(cached_row=None)
+    provider = _FakeProvider(error=LLMProviderError("OpenRouter HTTP 502: upstream down"))
+
+    with _with_provider(provider), pytest.raises(LLMExtractionError):
         _run(extract_metadata_via_llm(HEADER_TEXT, db))
 
     assert db.added == []
@@ -161,11 +201,11 @@ def test_missing_tool_call_raises_and_writes_nothing():
 
 
 # ---------------------------------------------------------------------------
-# (c) cache hit -> client never called
+# (c) cache hit -> provider never called
 # ---------------------------------------------------------------------------
 
 
-def test_cache_hit_never_calls_the_client():
+def test_cache_hit_never_calls_the_provider():
     header_hash = compute_header_hash(HEADER_TEXT)
     cached_row = VendorParseCache(
         header_hash=header_hash,
@@ -177,14 +217,13 @@ def test_cache_hit_never_calls_the_client():
         hit_count=2,
     )
     db = _FakeDB(cached_row=cached_row)
-    fake_client = AsyncMock()
-    fake_client.messages.create = AsyncMock()
+    provider = _FakeProvider({"modality": "raman"})
 
-    with patch("app.ingestion.llm_fallback.anthropic.AsyncAnthropic", return_value=fake_client):
+    with _with_provider(provider):
         metadata, source = _run(extract_metadata_via_llm(HEADER_TEXT, db))
 
     assert source == "cache"
     assert metadata.instrument_vendor == "Cached Vendor"
     assert cached_row.hit_count == 3
-    fake_client.messages.create.assert_not_awaited()
+    assert provider.calls == 0
     assert db.commit_count == 1

@@ -9,7 +9,6 @@ import logging
 import re
 import uuid
 
-import anthropic
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
@@ -17,6 +16,7 @@ from app.auth.deps import get_current_user
 from app.config import settings
 from app.db.session import get_db
 from app.ingestion.jobs import enqueue_ingestion_job
+from app.ingestion.llm_providers import LLMProviderError, resolve_provider
 from app.logging_config import log_event
 from app.models.enums import IngestionStatus, Modality, UploadStatus
 from app.models.ingestion_job import IngestionJob
@@ -146,43 +146,32 @@ async def suggest_rename(
             detail="No extracted metadata available yet for this file",
         )
 
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     try:
-        message = await client.messages.create(
-            model="claude-sonnet-5",
-            max_tokens=256,
+        tool_input = await resolve_provider().call_tool(
             system=(
                 "Suggest a short, descriptive filename (no extension) for a Raman "
                 "spectroscopy data file, based on its extracted metadata. Call the "
                 f"`{_RENAME_TOOL_NAME}` tool exactly once."
             ),
-            tools=[
-                {
-                    "name": _RENAME_TOOL_NAME,
-                    "description": "Record the suggested filename.",
-                    "input_schema": _RENAME_TOOL_SCHEMA,
-                }
-            ],
-            tool_choice={"type": "tool", "name": _RENAME_TOOL_NAME},
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Metadata:\n\n{json.dumps(metadata, default=str)}",
-                }
-            ],
+            user_text=f"Metadata:\n\n{json.dumps(metadata, default=str)}",
+            tool_name=_RENAME_TOOL_NAME,
+            tool_description="Record the suggested filename.",
+            tool_schema=_RENAME_TOOL_SCHEMA,
+            max_tokens=256,
         )
-    except anthropic.APIError as exc:
+    except LLMProviderError as exc:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Rename suggestion failed: {exc}"
         ) from exc
 
+    # The model's string is never trusted as a filename. `_SAFE_FILENAME_RE`
+    # is an allowlist, so a suggestion containing a path separator, a "..",
+    # or a shell metacharacter is discarded rather than sanitized — and this
+    # endpoint only ever *returns* the string, it never renames anything.
+    candidate = tool_input.get("filename") if isinstance(tool_input, dict) else None
     suggestion: str | None = None
-    for block in message.content:
-        if getattr(block, "type", None) == "tool_use" and block.name == _RENAME_TOOL_NAME:
-            candidate = block.input.get("filename")
-            if isinstance(candidate, str) and _SAFE_FILENAME_RE.match(candidate):
-                suggestion = candidate
-            break
+    if isinstance(candidate, str) and _SAFE_FILENAME_RE.match(candidate):
+        suggestion = candidate
 
     if suggestion is None:
         raise HTTPException(

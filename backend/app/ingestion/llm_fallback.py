@@ -1,32 +1,37 @@
 """LLM-based metadata extraction fallback, used when no deterministic vendor
 parser recognizes a raw file's header.
 
-Security boundary: the Anthropic response is coerced into a tool call
-(structured output via tool-use forcing, not free-text parsing) and then
-*always* passed through `ExtractedMetadata.model_validate(...)`. LLM output
-never touches a file path, SQL string, or shell command — it only ever
+Security boundary — unchanged by the provider seam, and the thing to be
+careful about when editing this file: the model response is coerced into a
+tool call (structured output via tool-use forcing, not free-text parsing) and
+then *always* passed through `ExtractedMetadata.model_validate(...)`. LLM
+output never touches a file path, SQL string, or shell command — it only ever
 populates typed pydantic fields on `ExtractedMetadata`. A schema-violating
-response raises `LLMExtractionError` and nothing is written to the
-database.
+response raises `LLMExtractionError` and nothing is written to the database.
+
+`app.ingestion.llm_providers` deliberately returns an unvalidated `dict`, so
+this module remains the only place that decides what may reach the database.
+The `validate=` callback handed to the provider is for its corrective retry
+only — it is not a substitute for the validation below.
+
+Which provider runs (Anthropic direct, or OpenRouter with open-weights
+models) is a config question; see `app.config` and `llm_providers`.
 """
 from __future__ import annotations
 
 import json
-from typing import Any
 
-import anthropic
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.config import settings
 from app.ingestion.header_hash import compute_header_hash
+from app.ingestion.llm_providers import LLMProviderError, resolve_provider
 from app.models.enums import Modality, ParseSource
 from app.models.vendor_parse_cache import VendorParseCache
 from app.schemas.ingestion import ExtractedMetadata
 
-MODEL_ID = "claude-sonnet-5"
-
 _TOOL_NAME = "extract_raman_metadata"
+_TOOL_DESCRIPTION = "Record extracted Raman instrument metadata."
 
 _TOOL_INPUT_SCHEMA = {
     "type": "object",
@@ -77,13 +82,6 @@ class LLMExtractionError(Exception):
     write partial/invalid metadata to the database."""
 
 
-def _extract_tool_input(message: Any) -> dict:
-    for block in message.content:
-        if getattr(block, "type", None) == "tool_use" and block.name == _TOOL_NAME:
-            return block.input
-    raise LLMExtractionError("Model did not return the expected tool call")
-
-
 async def extract_metadata_via_llm(
     header_text: str, db: Session
 ) -> tuple[ExtractedMetadata, str]:
@@ -112,35 +110,32 @@ async def extract_metadata_via_llm(
         db.commit()
         return metadata, "cache"
 
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
+    provider = resolve_provider()
+
+    # Only the header is sent, never the spectrum body — see
+    # `app.ingestion.jobs._extract_header_text`, which truncates at the first
+    # numeric data row. Sending the whole file costs ~100x the tokens and
+    # makes extraction *worse*, because nine useful lines end up buried in
+    # a thousand rows of numbers.
+    prompt = f"Raw header text:\n\n{header_text}"
+
     try:
-        message = await client.messages.create(
-            model=MODEL_ID,
-            max_tokens=1024,
+        tool_input = await provider.call_tool(
             system=_SYSTEM_PROMPT,
-            tools=[
-                {
-                    "name": _TOOL_NAME,
-                    "description": "Record extracted Raman instrument metadata.",
-                    "input_schema": _TOOL_INPUT_SCHEMA,
-                }
-            ],
-            tool_choice={"type": "tool", "name": _TOOL_NAME},
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Raw header text:\n\n{header_text}",
-                }
-            ],
+            user_text=prompt,
+            tool_name=_TOOL_NAME,
+            tool_description=_TOOL_DESCRIPTION,
+            tool_schema=_TOOL_INPUT_SCHEMA,
+            # Lets the provider retry once with the schema error fed back.
+            # This is a quality aid for small models, NOT the security
+            # boundary — the authoritative validation is below and runs
+            # regardless of what happened in here.
+            validate=lambda payload: ExtractedMetadata.model_validate(payload),
         )
-    except anthropic.APIError as exc:
-        raise LLMExtractionError(f"Anthropic API call failed: {exc}") from exc
-
-    tool_input = _extract_tool_input(message)
+    except LLMProviderError as exc:
+        raise LLMExtractionError(str(exc)) from exc
 
     try:
-        # tool_input may arrive as a dict already; guard against a stray
-        # JSON-string edge case from some SDK/response shapes.
         if isinstance(tool_input, str):
             tool_input = json.loads(tool_input)
         metadata = ExtractedMetadata.model_validate(tool_input)
@@ -156,7 +151,7 @@ async def extract_metadata_via_llm(
         header_hash=header_hash,
         modality=cache_modality,
         vendor_format=None,
-        parser_version=MODEL_ID,
+        parser_version=provider.model_id,
         source=ParseSource.llm,
         parsed_template=metadata.model_dump(mode="json"),
         hit_count=0,
