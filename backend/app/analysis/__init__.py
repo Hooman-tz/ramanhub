@@ -1,0 +1,1 @@
+"""Reproducible multi-spectrum analysis contracts and local execution."""

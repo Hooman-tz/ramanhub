@@ -3,9 +3,12 @@ import {
   listRoutines,
   createRoutine,
   applyRoutineToRawFile,
+  updateSpectrum,
   type Routine,
   type LedgerStep,
 } from '../api/client';
+import { getMyLibrary, type SpectrumSearchResult } from '../api/search';
+import { Button, Card, EmptyState, InputField, SelectField, TextareaField } from '../components/ui';
 
 const KNOWN_STEP_TYPES: LedgerStep['type'][] = [
   'raman.snv',
@@ -13,8 +16,15 @@ const KNOWN_STEP_TYPES: LedgerStep['type'][] = [
   'raman.fluorescence_suppression.airpls',
 ];
 
+const STEP_LABELS: Record<string, string> = {
+  'raman.snv': 'Standard normal variate',
+  'raman.msc': 'Multiplicative scatter correction',
+  'raman.fluorescence_suppression.airpls': 'Fluorescence suppression (airPLS)',
+};
+
 export default function RoutinesPage() {
   const [routines, setRoutines] = useState<Routine[]>([]);
+  const [library, setLibrary] = useState<SpectrumSearchResult[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -24,11 +34,14 @@ export default function RoutinesPage() {
   const [paramsText, setParamsText] = useState('{}');
   const [creating, setCreating] = useState(false);
 
-  const [applyInputs, setApplyInputs] = useState<Record<string, string>>({});
+  const [selectedSpectra, setSelectedSpectra] = useState<Record<string, string>>({});
   const [applyStatus, setApplyStatus] = useState<Record<string, string>>({});
 
   useEffect(() => {
     refresh();
+    getMyLibrary({ modality: 'raman', limit: 100 })
+      .then(setLibrary)
+      .catch((err) => setError(err instanceof Error ? err.message : String(err)));
   }, []);
 
   function refresh() {
@@ -73,15 +86,20 @@ export default function RoutinesPage() {
   }
 
   async function handleApply(routineId: string) {
-    const rawFileId = applyInputs[routineId];
-    if (!rawFileId) {
-      setApplyStatus((prev) => ({ ...prev, [routineId]: 'Enter a raw file ID first.' }));
+    const spectrumId = selectedSpectra[routineId];
+    const spectrum = library.find((candidate) => candidate.id === spectrumId);
+    if (!spectrum?.raw_file_id) {
+      setApplyStatus((prev) => ({ ...prev, [routineId]: 'Choose a spectrum from your library first.' }));
       return;
     }
     try {
       setApplyStatus((prev) => ({ ...prev, [routineId]: 'Applying...' }));
-      await applyRoutineToRawFile(rawFileId, routineId);
-      setApplyStatus((prev) => ({ ...prev, [routineId]: 'Applied.' }));
+      const applied = await applyRoutineToRawFile(spectrum.raw_file_id, routineId);
+      await updateSpectrum(spectrum.id, { current_ledger_id: applied.ledger_id });
+      setApplyStatus((prev) => ({
+        ...prev,
+        [routineId]: `Applied to ${spectrum.title ?? spectrum.id}.`,
+      }));
     } catch (err) {
       setApplyStatus((prev) => ({
         ...prev,
@@ -91,79 +109,68 @@ export default function RoutinesPage() {
   }
 
   return (
-    <div>
-      <h1>Routines</h1>
+    <div className="workspace-page">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Reusable processing</p>
+          <h1>Routines</h1>
+          <p className="page-intro">Save a repeatable preparation step and apply it to a spectrum in your private library.</p>
+        </div>
+      </header>
 
-      <fieldset>
-        <legend>Create routine</legend>
+      <Card title="Create a routine" className="routine-create">
         <form onSubmit={handleCreate}>
-          <div className="field-row">
-            <label htmlFor="routine-name">Name</label>
-            <input id="routine-name" value={name} onChange={(e) => setName(e.target.value)} required />
-          </div>
-          <div className="field-row">
-            <label htmlFor="routine-description">Description</label>
-            <input
-              id="routine-description"
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-            />
-          </div>
-          <div className="field-row">
-            <label htmlFor="routine-step-type">Step type</label>
-            <select
-              id="routine-step-type"
-              value={stepType}
-              onChange={(e) => setStepType(e.target.value as LedgerStep['type'])}
-            >
+          <div className="routine-create__grid">
+            <InputField label="Routine name" value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Fluorescence clean-up" required />
+            <InputField label="Purpose (optional)" value={description} onChange={(e) => setDescription(e.target.value)} placeholder="When to use this routine" />
+            <SelectField label="Processing method" value={stepType} onChange={(e) => setStepType(e.target.value as LedgerStep['type'])}>
               {KNOWN_STEP_TYPES.map((t) => (
-                <option key={t} value={t}>
-                  {t}
-                </option>
+                <option key={t} value={t}>{STEP_LABELS[t] ?? t}</option>
               ))}
-            </select>
-          </div>
-          <div className="field-row">
-            <label htmlFor="routine-params">Params (JSON)</label>
-            <textarea
-              id="routine-params"
+            </SelectField>
+            <TextareaField
+              label="Advanced parameters (JSON)"
+              hint="Leave {} to use the algorithm’s validated defaults."
               rows={3}
               value={paramsText}
               onChange={(e) => setParamsText(e.target.value)}
             />
           </div>
-          <button type="submit" disabled={creating}>
-            {creating ? 'Creating...' : 'Create routine'}
-          </button>
+          <div className="inline-actions">
+            <Button type="submit" variant="primary" loading={creating}>Save routine</Button>
+            <span className="hint">Routines do not modify source files.</span>
+          </div>
         </form>
-      </fieldset>
+      </Card>
 
       {error && <p className="error">{error}</p>}
       {loading && <p>Loading routines...</p>}
 
-      {!loading && routines.length === 0 && <p>No routines yet.</p>}
+      {!loading && routines.length === 0 && <EmptyState title="No saved routines yet"><p>Create one above to apply a consistent preparation step across your library.</p></EmptyState>}
 
       {routines.map((routine) => (
-        <fieldset key={routine.id}>
-          <legend>{routine.name}</legend>
-          {routine.description && <p>{routine.description}</p>}
-          <pre>{JSON.stringify(routine.steps_template, null, 2)}</pre>
-
-          <div className="field-row">
-            <label htmlFor={`apply-${routine.id}`}>Raw file ID</label>
-            <input
-              id={`apply-${routine.id}`}
-              value={applyInputs[routine.id] ?? ''}
-              onChange={(e) =>
-                setApplyInputs((prev) => ({ ...prev, [routine.id]: e.target.value }))
-              }
-            />
+        <Card key={routine.id} title={routine.name} className="routine-card">
+          {routine.description && <p className="hint">{routine.description}</p>}
+          <p className="routine-card__steps">
+            {routine.steps_template.map((step) => STEP_LABELS[step.type] ?? step.type.replace(/^raman\./, '')).join(' → ')}
+          </p>
+          <div className="routine-card__apply">
+            <SelectField
+              label="Apply to a saved spectrum"
+              value={selectedSpectra[routine.id] ?? ''}
+              onChange={(e) => setSelectedSpectra((prev) => ({ ...prev, [routine.id]: e.target.value }))}
+            >
+              <option value="">Choose from your Raman library...</option>
+              {library.map((spectrum) => (
+                <option key={spectrum.id} value={spectrum.id}>
+                  {spectrum.title ?? 'Untitled spectrum'} · {spectrum.state}
+                </option>
+              ))}
+            </SelectField>
+            <Button type="button" onClick={() => handleApply(routine.id)}>Apply routine</Button>
           </div>
-          <button type="button" onClick={() => handleApply(routine.id)}>
-            Apply to raw file
-          </button>
-          {applyStatus[routine.id] && <p>{applyStatus[routine.id]}</p>}
-        </fieldset>
+          {applyStatus[routine.id] && <p className="hint" role="status">{applyStatus[routine.id]}</p>}
+        </Card>
       ))}
     </div>
   );

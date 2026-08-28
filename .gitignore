@@ -36,3 +36,6 @@ infra/minio-data/
 
 # Local-dev object storage (STORAGE_BACKEND=local)
 storage-data/
+
+# Local editor/agent state
+.claude/

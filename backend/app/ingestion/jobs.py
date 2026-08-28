@@ -1,22 +1,23 @@
-"""Async orchestration of the ingestion pipeline via FastAPI BackgroundTasks.
+"""Durable, database-backed orchestration of the ingestion pipeline.
 
-No Redis/Celery — per the project's "don't build ahead of evidence"
-principle, background tasks are enough for v1. `run_ingestion_job` opens its
-own DB session rather than depending on the request-scoped `get_db`
-dependency, so it can be called from a plain background task today or,
-later, a Celery task with no change.
+The API only persists jobs. A separate worker claims rows with a lease, so
+uploads survive API restarts and duplicate workers cannot process one job at
+the same time. This keeps the deployment small without making request-bound
+FastAPI background tasks responsible for scientific ingestion.
 """
 from __future__ import annotations
 
 import asyncio
 import concurrent.futures
 import logging
+import time
 import uuid
-from collections.abc import Callable
-from datetime import UTC, datetime
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from fastapi import BackgroundTasks
+from sqlalchemy import or_
 
 from app.config import settings
 from app.db.base import SessionLocal
@@ -28,19 +29,40 @@ from app.logging_config import log_event
 from app.models.enums import IngestionStatus, UploadStatus
 from app.models.ingestion_job import IngestionJob
 from app.models.raw_file import RawFile
+from app.raman_contract import (
+    RAMAN_CANONICALIZATION_VERSION,
+    canonicalize_raman_arrays,
+    checksum_bytes,
+)
+from app.spectra_io import parse_two_column_raman
 from app.storage.s3_client import download_bytes
 
 HEADER_SNIFF_BYTES = 65536
+LEASE_SECONDS = 300
+HEARTBEAT_INTERVAL_SECONDS = 20
+LLM_EXTRACTION_TIMEOUT_SECONDS = min(120, LEASE_SECONDS - HEARTBEAT_INTERVAL_SECONDS)
+RETRY_DELAYS_SECONDS = (5, 20, 60)
 
 logger = logging.getLogger(__name__)
 
 
-def enqueue_ingestion_job(background_tasks: BackgroundTasks, raw_file_id: uuid.UUID) -> None:
-    """Schedule `run_ingestion_job` to run after the current request returns."""
-    background_tasks.add_task(run_ingestion_job, raw_file_id)
+class LeaseLostError(RuntimeError):
+    """A worker lost its exclusive lease and must not persist stale results."""
 
 
-def run_with_timeout(func: Callable[..., Any], *args: Any, timeout: float, **kwargs: Any) -> Any:
+@dataclass(frozen=True)
+class IngestionClaim:
+    job_id: uuid.UUID
+    lease_token: str
+
+
+def run_with_timeout(
+    func: Callable[..., Any],
+    *args: Any,
+    timeout: float,
+    on_heartbeat: Callable[[], bool] | None = None,
+    **kwargs: Any,
+) -> Any:
     """Run `func(*args, **kwargs)` in a worker thread and enforce a
     wall-clock `timeout` (seconds), raising `TimeoutError` if it's exceeded.
 
@@ -59,12 +81,42 @@ def run_with_timeout(func: Callable[..., Any], *args: Any, timeout: float, **kwa
     """
     executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
     future = executor.submit(func, *args, **kwargs)
+    deadline = time.monotonic() + timeout
     try:
-        return future.result(timeout=timeout)
-    except concurrent.futures.TimeoutError as exc:
-        raise TimeoutError(f"Parsing timed out after {timeout}s") from exc
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError(f"Parsing timed out after {timeout}s")
+            try:
+                return future.result(timeout=min(HEARTBEAT_INTERVAL_SECONDS, remaining))
+            except concurrent.futures.TimeoutError:
+                if on_heartbeat is not None and not on_heartbeat():
+                    raise LeaseLostError("Worker lease was lost while parsing.")
     finally:
         executor.shutdown(wait=False)
+
+
+async def await_with_lease_heartbeats(
+    awaitable: Awaitable[Any],
+    *,
+    on_heartbeat: Callable[[], bool],
+    timeout: float = LLM_EXTRACTION_TIMEOUT_SECONDS,
+    heartbeat_interval: float = HEARTBEAT_INTERVAL_SECONDS,
+) -> Any:
+    """Await network-backed extraction without allowing its worker claim to expire."""
+    task = asyncio.ensure_future(awaitable)
+    try:
+        async with asyncio.timeout(timeout):
+            while True:
+                done, _pending = await asyncio.wait({task}, timeout=heartbeat_interval)
+                if task in done:
+                    return task.result()
+                if not on_heartbeat():
+                    raise LeaseLostError("Worker lease was lost while awaiting AI metadata extraction.")
+    finally:
+        if not task.done():
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
 
 
 def _extract_header_text(raw_bytes: bytes) -> str:
@@ -77,42 +129,204 @@ def _extract_header_text(raw_bytes: bytes) -> str:
     return chunk.decode("utf-8", errors="ignore")
 
 
-def _latest_pending_job(db, raw_file_id: uuid.UUID) -> IngestionJob | None:
-    return (
+def _recover_expired_leases(db) -> None:
+    """Return abandoned worker leases to the queue before the next claim."""
+    now = datetime.now(UTC)
+    recovered = (
         db.query(IngestionJob)
-        .filter(IngestionJob.raw_file_id == raw_file_id)
-        .order_by(IngestionJob.created_at.desc())
-        .first()
+        .filter(
+            IngestionJob.status == IngestionStatus.running,
+            or_(
+                IngestionJob.lease_expires_at.is_(None),
+                IngestionJob.lease_expires_at < now,
+            ),
+        )
+        .update(
+            {
+                IngestionJob.status: IngestionStatus.pending,
+                IngestionJob.run_after: now,
+                IngestionJob.error_message: "Worker lease expired; safely queued for retry.",
+                IngestionJob.lease_token: None,
+                IngestionJob.lease_expires_at: None,
+            },
+            synchronize_session=False,
+        )
     )
+    if recovered:
+        db.commit()
 
 
-def run_ingestion_job(raw_file_id: uuid.UUID) -> None:
+def claim_next_ingestion_job() -> IngestionClaim | None:
+    """Atomically lease the next ready job for one worker process."""
+    db = SessionLocal()
+    try:
+        _recover_expired_leases(db)
+        now = datetime.now(UTC)
+        job = (
+            db.query(IngestionJob)
+            .filter(
+                IngestionJob.status == IngestionStatus.pending,
+                or_(IngestionJob.run_after.is_(None), IngestionJob.run_after <= now),
+            )
+            .order_by(IngestionJob.created_at.asc())
+            .with_for_update(skip_locked=True)
+            .first()
+        )
+        if job is None:
+            return None
+        lease_token = uuid.uuid4().hex
+        job.status = IngestionStatus.running
+        job.started_at = now
+        job.last_heartbeat_at = now
+        job.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
+        job.lease_token = lease_token
+        job.attempt_count += 1
+        db.add(job)
+        db.commit()
+        return IngestionClaim(job_id=job.id, lease_token=lease_token)
+    finally:
+        db.close()
+
+
+def _claim_job_by_id(db, job_id: uuid.UUID) -> IngestionJob | None:
+    """Test/CLI helper that only claims a pending row once."""
+    now = datetime.now(UTC)
+    job = (
+        db.query(IngestionJob)
+        .filter(IngestionJob.id == job_id, IngestionJob.status == IngestionStatus.pending)
+        .with_for_update(skip_locked=True)
+        .one_or_none()
+    )
+    if job is None:
+        return None
+    job.lease_token = uuid.uuid4().hex
+    job.status = IngestionStatus.running
+    job.started_at = now
+    job.last_heartbeat_at = now
+    job.lease_expires_at = now + timedelta(seconds=LEASE_SECONDS)
+    job.attempt_count += 1
+    db.add(job)
+    db.commit()
+    return job
+
+
+def _renew_lease(db, job_id: uuid.UUID, lease_token: str) -> bool:
+    """Extend a lease only if this worker still owns an unexpired claim."""
+    now = datetime.now(UTC)
+    updated = (
+        db.query(IngestionJob)
+        .filter(
+            IngestionJob.id == job_id,
+            IngestionJob.status == IngestionStatus.running,
+            IngestionJob.lease_token == lease_token,
+            IngestionJob.lease_expires_at >= now,
+        )
+        .update(
+            {
+                IngestionJob.last_heartbeat_at: now,
+                IngestionJob.lease_expires_at: now + timedelta(seconds=LEASE_SECONDS),
+            },
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return updated == 1
+
+
+def _quality_flags_for_arrays(raw_bytes: bytes) -> dict[str, str]:
+    """Report canonical-array readiness without mutating the immutable raw file."""
+    try:
+        x, y = parse_two_column_raman(raw_bytes)
+        _canonical_x, _canonical_y, repairs = canonicalize_raman_arrays(x, y)
+    except Exception as exc:  # noqa: BLE001 - parser support gaps are actionable QC, not worker crashes
+        return {"array": f"canonical Raman array unavailable: {exc}"}
+    return {f"array.{repair}": "canonicalization repair applied" for repair in repairs}
+
+
+def _retry_or_fail(
+    db, job: IngestionJob, raw_file: RawFile, lease_token: str, exc: Exception
+) -> None:
+    now = datetime.now(UTC)
+    if job.attempt_count < job.max_attempts:
+        delay = RETRY_DELAYS_SECONDS[min(job.attempt_count - 1, len(RETRY_DELAYS_SECONDS) - 1)]
+        job_values = {
+            IngestionJob.error_message: str(exc)[:2_000],
+            IngestionJob.lease_token: None,
+            IngestionJob.lease_expires_at: None,
+            IngestionJob.last_heartbeat_at: now,
+            IngestionJob.status: IngestionStatus.pending,
+            IngestionJob.run_after: now + timedelta(seconds=delay),
+        }
+        raw_status = UploadStatus.uploaded
+    else:
+        job_values = {
+            IngestionJob.error_message: str(exc)[:2_000],
+            IngestionJob.lease_token: None,
+            IngestionJob.lease_expires_at: None,
+            IngestionJob.last_heartbeat_at: now,
+            IngestionJob.status: IngestionStatus.failed,
+            IngestionJob.finished_at: now,
+        }
+        raw_status = UploadStatus.failed
+    updated = (
+        db.query(IngestionJob)
+        .filter(
+            IngestionJob.id == job.id,
+            IngestionJob.status == IngestionStatus.running,
+            IngestionJob.lease_token == lease_token,
+        )
+        .update(job_values, synchronize_session=False)
+    )
+    if updated != 1:
+        db.rollback()
+        return
+    db.query(RawFile).filter(RawFile.id == raw_file.id).update(
+        {RawFile.upload_status: raw_status}, synchronize_session=False
+    )
+    db.commit()
+
+
+def run_ingestion_job(
+    job_id: uuid.UUID,
+    *,
+    already_claimed: bool = False,
+    lease_token: str | None = None,
+) -> None:
     """Download the raw file, run deterministic parsers (falling back to the
     LLM on a miss), sanity-check the result, and persist it onto the
     IngestionJob + RawFile rows. Opens and closes its own DB session.
     """
     db = SessionLocal()
     try:
-        raw_file = db.get(RawFile, raw_file_id)
-        job = _latest_pending_job(db, raw_file_id)
-        if raw_file is None or job is None:
+        job = db.get(IngestionJob, job_id) if already_claimed else _claim_job_by_id(db, job_id)
+        if job is None or job.status != IngestionStatus.running:
             return
-
-        job.status = IngestionStatus.running
-        job.started_at = datetime.now(UTC)
-        raw_file.upload_status = UploadStatus.parsing
-        db.add_all([job, raw_file])
+        active_lease_token = lease_token if already_claimed else job.lease_token
+        if active_lease_token is None or job.lease_token != active_lease_token:
+            return
+        if not _renew_lease(db, job.id, active_lease_token):
+            return
+        raw_file = db.get(RawFile, job.raw_file_id)
+        if raw_file is None:
+            return
+        db.query(RawFile).filter(RawFile.id == raw_file.id).update(
+            {RawFile.upload_status: UploadStatus.parsing}, synchronize_session=False
+        )
         db.commit()
 
         log_event(
             logger,
             "ingestion_job.started",
             ingestion_job_id=str(job.id),
-            raw_file_id=str(raw_file_id),
+            raw_file_id=str(raw_file.id),
         )
 
         try:
             raw_bytes = download_bytes(raw_file.storage_bucket, raw_file.storage_key)
+            if checksum_bytes(raw_bytes) != raw_file.content_hash:
+                raise ValueError("raw object checksum does not match the immutable upload record")
+            if not _renew_lease(db, job.id, active_lease_token):
+                raise LeaseLostError("Worker lease was lost while downloading the raw object.")
             header_text = _extract_header_text(raw_bytes)
             header_hash = compute_header_hash(header_text)
 
@@ -127,47 +341,79 @@ def run_ingestion_job(raw_file_id: uuid.UUID) -> None:
                     parser.parse,
                     raw_bytes,
                     timeout=settings.INGESTION_PARSE_TIMEOUT_SECONDS,
+                    on_heartbeat=lambda: _renew_lease(db, job.id, active_lease_token),
                 )
                 parser_used = parser.vendor_format
+                parser_version = parser.version
+                parser_confidence = 1.0
             else:
-                metadata, source = asyncio.run(extract_metadata_via_llm(header_text, db))
+                metadata, source = asyncio.run(
+                    await_with_lease_heartbeats(
+                        extract_metadata_via_llm(header_text, db),
+                        on_heartbeat=lambda: _renew_lease(db, job.id, active_lease_token),
+                    )
+                )
                 parser_used = f"llm:{source}"
+                parser_version = source
+                parser_confidence = 0.7 if source == "cache" else 0.55
 
             flags = run_sanity_check(metadata, metadata.modality, db)
-
-            job.header_hash = header_hash
-            job.parser_used = parser_used
-            job.extracted_metadata_raw = metadata.model_dump(mode="json")
-            job.sanity_check_flags = flags
-            job.status = IngestionStatus.succeeded
-            job.finished_at = datetime.now(UTC)
-
-            raw_file.vendor_format = parser_used
-            raw_file.upload_status = UploadStatus.parsed
-            db.add_all([job, raw_file])
+            flags.update(_quality_flags_for_arrays(raw_bytes))
+            now = datetime.now(UTC)
+            succeeded = (
+                db.query(IngestionJob)
+                .filter(
+                    IngestionJob.id == job.id,
+                    IngestionJob.status == IngestionStatus.running,
+                    IngestionJob.lease_token == active_lease_token,
+                )
+                .update(
+                    {
+                        IngestionJob.header_hash: header_hash,
+                        IngestionJob.parser_used: parser_used,
+                        IngestionJob.parser_version: parser_version,
+                        IngestionJob.parser_confidence: parser_confidence,
+                        IngestionJob.canonicalization_version: RAMAN_CANONICALIZATION_VERSION,
+                        IngestionJob.extracted_metadata_raw: metadata.model_dump(mode="json"),
+                        IngestionJob.sanity_check_flags: flags,
+                        IngestionJob.status: IngestionStatus.succeeded,
+                        IngestionJob.finished_at: now,
+                        IngestionJob.lease_token: None,
+                        IngestionJob.lease_expires_at: None,
+                        IngestionJob.last_heartbeat_at: now,
+                    },
+                    synchronize_session=False,
+                )
+            )
+            if succeeded != 1:
+                db.rollback()
+                return
+            db.query(RawFile).filter(RawFile.id == raw_file.id).update(
+                {
+                    RawFile.vendor_format: parser_used,
+                    RawFile.upload_status: UploadStatus.parsed,
+                    RawFile.checksum_verified_at: now,
+                },
+                synchronize_session=False,
+            )
             db.commit()
 
             log_event(
                 logger,
                 "ingestion_job.succeeded",
                 ingestion_job_id=str(job.id),
-                raw_file_id=str(raw_file_id),
+                raw_file_id=str(raw_file.id),
                 parser_used=parser_used,
             )
         except Exception as exc:  # noqa: BLE001 - any failure here must land as a failed job, not crash the background task
             db.rollback()
-            job.status = IngestionStatus.failed
-            job.error_message = str(exc)
-            job.finished_at = datetime.now(UTC)
-            raw_file.upload_status = UploadStatus.failed
-            db.add_all([job, raw_file])
-            db.commit()
+            _retry_or_fail(db, job, raw_file, active_lease_token, exc)
 
             log_event(
                 logger,
                 "ingestion_job.failed",
                 ingestion_job_id=str(job.id),
-                raw_file_id=str(raw_file_id),
+                raw_file_id=str(raw_file.id),
                 error=str(exc),
             )
     finally:

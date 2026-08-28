@@ -24,6 +24,8 @@ def _as_aware_utc(dt: datetime) -> datetime:
 
 def _is_private(spectrum: Spectrum) -> bool:
     """True if `spectrum` should NOT be visible to a non-owner right now."""
+    if getattr(spectrum, "moderation_status", "visible") != "visible":
+        return True
     if spectrum.state == SpectrumState.draft:
         return True
     if spectrum.state == SpectrumState.embargoed:

@@ -8,6 +8,14 @@ import RoutinesPage from './pages/RoutinesPage';
 import SearchPage from './pages/SearchPage';
 import LibraryPage from './pages/LibraryPage';
 import TrendingPage from './pages/TrendingPage';
+import CommonsPage from './pages/CommonsPage';
+import PublicRecordPage from './pages/PublicRecordPage';
+import PublicProfilePage from './pages/PublicProfilePage';
+import PostPage from './pages/PostPage';
+import CreatePostPage from './pages/CreatePostPage';
+import NotificationsPage from './pages/NotificationsPage';
+import AccountPage from './pages/AccountPage';
+import AnalysisPage from './pages/AnalysisPage';
 import TermsPage from './pages/TermsPage';
 import PrivacyPage from './pages/PrivacyPage';
 
@@ -27,6 +35,14 @@ export default function App() {
           <Route path="/search" element={<SearchPage />} />
           <Route path="/library" element={<LibraryPage />} />
           <Route path="/trending" element={<TrendingPage />} />
+          <Route path="/commons" element={<CommonsPage />} />
+          <Route path="/public/spectra/:id" element={<PublicRecordPage />} />
+          <Route path="/profiles/:handle" element={<PublicProfilePage />} />
+          <Route path="/community/posts/:id" element={<PostPage />} />
+          <Route path="/community/new" element={<CreatePostPage />} />
+          <Route path="/notifications" element={<NotificationsPage />} />
+          <Route path="/account" element={<AccountPage />} />
+          <Route path="/analysis" element={<AnalysisPage />} />
           <Route path="/terms" element={<TermsPage />} />
           <Route path="/privacy" element={<PrivacyPage />} />
         </Routes>

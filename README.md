@@ -1,21 +1,24 @@
-# RamanHub
+# Spectra Insight (RamanHub repository)
 
-RamanHub is "GitHub for spectral data" — an open, collaborative, versioned
-platform for sharing Raman spectroscopy data, built with the same ethos
-GitHub brought to sharing code. It differentiates from existing open
-spectroscopy infrastructure through LLM-based parsing of arbitrary/messy
-vendor headers, a private per-user reference library alongside the shared
-public commons, a social/trending layer kept quarantined from core
-scientific search, a freemium compute model (local by default, cloud tier
-paid), and DOI/manuscript-linkage as the central trust and provenance
+Spectra Insight is "GitHub for spectral data" — an open, collaborative,
+versioned platform for sharing and understanding spectral data. The current
+application is Raman-first and uses the repository codename **RamanHub**.
+It differentiates from existing spectroscopy infrastructure through
+LLM-assisted parsing of arbitrary/messy vendor headers, a private per-user
+reference library alongside the shared public commons, a social/trending layer
+kept quarantined from core scientific search, a local-first/hosted-compute
+roadmap, and DOI/manuscript linkage as the central trust and provenance
 mechanism.
 
 The backend is Python/FastAPI (for direct access to SciPy/NumPy/scikit-learn),
 backed by PostgreSQL for metadata and an S3-compatible object store
 (MinIO locally, Cloudflare R2 in production) for raw and processed spectra.
-The frontend is a React PWA. Raman spectroscopy is the initial modality,
-with the schema namespaced from the start to support mass spectrometry and
-NMR later without a rewrite.
+The frontend is a React PWA. Raman spectroscopy is the initial modality, with
+the schema namespaced from the start to support mass spectrometry and NMR later
+without a rewrite. The product architecture and staged delivery plan live in
+[`raman-platform-architecture-v2.md`](raman-platform-architecture-v2.md), with
+unresolved decisions in
+[`docs/architecture-decisions.md`](docs/architecture-decisions.md).
 
 ## Local development
 
@@ -132,39 +135,50 @@ schema restated in two places.
 
 ## Deployment (production)
 
-Topology: **Vercel** serves the frontend at `https://serds.ca`; **Render**
-runs the API at `https://api.serds.ca` (same registrable domain, so the
-SameSite=lax session cookie works) plus managed Postgres; **Cloudflare R2**
-holds raw/processed spectra. `render.yaml` at the repo root is the Render
-blueprint; `frontend/vercel.json` adds the SPA rewrite.
+> **Brand/domain migration note:** the checked-in deployment configuration
+> still contains older RamanHub/`serds.ca` URLs. The target public topology is
+> `spectra-in.site` for product pages, `raman.spectra-in.site` for the Raman
+> application, and `api.spectra-in.site` for the shared API. Update deployment
+> configuration, OAuth redirects, CORS, canonical URLs, and redirects together
+> before launch; do not mix old and new domains.
+
+Target topology: a static frontend host serves the public/product applications;
+a FastAPI service plus managed PostgreSQL runs the API; Cloudflare R2 (or
+another private S3-compatible store) holds raw and processed spectra.
+`render.yaml` at the repository root and `frontend/vercel.json` are legacy
+deployment starting points, not the completed Spectra Insight launch setup.
 
 One-time setup:
 
 1. **Cloudflare R2** — create buckets `raw-spectra` and `processed-spectra`
    and an API token. Endpoint is
    `https://<account-id>.r2.cloudflarestorage.com`, region `auto`.
-2. **Render** — New → Blueprint → this repo (tracks `main`). Paste the
+2. **Backend host** — Create the API service from this repo. Paste the
    `sync: false` secrets: `JWT_SECRET` (generate:
    `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`),
    `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, the R2
-   values, optional `SENTRY_DSN`. Add custom domain `api.serds.ca`.
-3. **Vercel** — import the repo, root directory `frontend`, env vars
-   `VITE_API_BASE_URL=https://api.serds.ca` and
-   `VITE_GITHUB_REPO=Hooman-tz/ramanhub`. Add domain `serds.ca`.
-4. **DNS (Cloudflare)** — CNAME `api` → the Render hostname; apex →
-   Vercel, per each dashboard's instructions.
+    values, optional `SENTRY_DSN`. Add the target custom API domain.
+3. **Frontend host** — import the repo, root directory `frontend`, env vars
+    `VITE_API_BASE_URL=https://api.spectra-in.site` and
+    `VITE_GITHUB_REPO=Hooman-tz/ramanhub`. Add
+    `spectra-in.site` and `raman.spectra-in.site`.
+4. **DNS (Cloudflare)** — route `api.spectra-in.site` to the API host and
+    `spectra-in.site` / `raman.spectra-in.site` to the frontend host, per the
+    hosting dashboards' instructions.
 5. **Google Cloud Console** — add
-   `https://api.serds.ca/auth/callback` to the OAuth client's Authorized
-   redirect URIs; move the consent screen out of Testing (or add testers).
-6. **Seed** — from the Render service Shell:
+    `https://api.spectra-in.site/auth/callback` to the OAuth client's
+    Authorized redirect URIs; move the consent screen out of Testing (or add
+    testers).
+6. **Seed** — from the backend service shell:
    `uv run python -m app.seed.seed_data` (required reference data), and
    optionally `uv run python -m app.seed.demo_data` (demo spectra).
 
-Migrations run automatically before each deploy (`preDeployCommand` in
-`render.yaml`). The in-process rate limiter assumes a single instance —
-swap in a shared store before scaling horizontally (see
-`backend/app/ratelimit.py`). `/terms` and `/privacy` ship placeholder
-text — review before announcing publicly.
+The selected backend host must run database migrations as an explicit,
+verified pre-deploy step. `render.yaml` includes an older implementation of
+that pattern. The in-process rate limiter assumes a single instance — swap in
+a shared store before scaling horizontally (see `backend/app/ratelimit.py`).
+`/terms` and `/privacy` ship placeholder text — review before announcing
+publicly.
 
 ### Services
 

@@ -1,0 +1,1 @@
+"""Modality-specific discovery features and compatibility policies."""

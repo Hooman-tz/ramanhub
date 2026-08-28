@@ -2,7 +2,7 @@
 
 .shell {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: 248px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -12,8 +12,8 @@
   height: 100vh;
   display: flex;
   flex-direction: column;
-  gap: var(--sp-5);
-  padding: var(--sp-5) var(--sp-3);
+  gap: var(--sp-4);
+  padding: var(--sp-6) var(--sp-4);
   background: var(--glass-bg);
   -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
   backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
@@ -21,8 +21,8 @@
 }
 
 .shell__main {
-  padding: var(--sp-6) var(--sp-6) var(--sp-8);
-  max-width: 980px;
+  padding: var(--sp-7) clamp(var(--sp-5), 5vw, var(--sp-8)) var(--sp-8);
+  max-width: 1180px;
   width: 100%;
   margin: 0 auto;
 }
@@ -33,12 +33,25 @@
   display: flex;
   align-items: center;
   gap: var(--sp-2);
-  padding: 0 var(--sp-3);
-  font-size: var(--text-md);
-  font-weight: 700;
+  padding: 0 var(--sp-2);
+  font-size: 1.08rem;
+  font-weight: 750;
   letter-spacing: -0.02em;
   color: var(--color-text);
   text-decoration: none;
+}
+
+.shell__brand-accent {
+  color: var(--color-accent-text);
+}
+
+.shell__workspace-label {
+  margin: var(--sp-5) var(--sp-2) var(--sp-1);
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 .shell__brand:hover {
@@ -57,7 +70,7 @@
 .shell__nav {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: var(--sp-1);
   flex: 1;
 }
 
@@ -65,10 +78,10 @@
   display: flex;
   align-items: center;
   gap: var(--sp-3);
-  padding: var(--sp-2) var(--sp-3);
+  padding: 0.7rem var(--sp-3);
   border-radius: var(--r-md);
   font-size: var(--text-sm);
-  font-weight: 550;
+  font-weight: 600;
   color: var(--color-text-secondary);
   text-decoration: none;
   transition: background var(--dur-fast) var(--ease-out),
@@ -98,7 +111,22 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
-  padding: 0 var(--sp-3);
+  padding: 0 var(--sp-2);
+}
+
+.shell__footer-link {
+  display: flex;
+  justify-content: space-between;
+  color: var(--color-text-muted);
+  font-size: var(--text-xs);
+  text-decoration: none;
+  padding: var(--sp-2) 0;
+  border-top: 1px solid var(--color-border);
+}
+
+.shell__footer-link:hover {
+  color: var(--color-accent-text);
+  text-decoration: none;
 }
 
 .shell__user {
@@ -170,6 +198,7 @@
   }
 
   .shell__brand,
+  .shell__workspace-label,
   .shell__footer {
     display: none;
   }
@@ -189,5 +218,44 @@
 
   .shell__main {
     padding: var(--sp-5) var(--sp-4) calc(var(--sp-8) + 56px);
+  }
+}
+
+@media (min-width: 761px) and (max-width: 980px) {
+  .shell {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .shell__sidebar {
+    align-items: center;
+    padding-inline: var(--sp-2);
+  }
+
+  .shell__brand {
+    padding: 0;
+  }
+
+  .shell__brand > span,
+  .shell__workspace-label,
+  .shell__nav-link:not(.active)::after,
+  .shell__nav-link {
+    font-size: 0;
+  }
+
+  .shell__nav-link {
+    justify-content: center;
+    padding: var(--sp-3);
+  }
+
+  .shell__nav-link svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .shell__user-name,
+  .shell__footer-link,
+  .shell__legal,
+  .report-bug-button {
+    display: none;
   }
 }

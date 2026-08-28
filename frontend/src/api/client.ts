@@ -15,8 +15,15 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL;
 export interface User {
   id: string;
   email: string;
-  name?: string;
+  display_name?: string | null;
   avatar_url?: string;
+  profile_handle?: string | null;
+  bio?: string | null;
+  affiliation?: string | null;
+  research_interests?: string[] | null;
+  is_profile_public?: boolean;
+  orcid_id?: string | null;
+  orcid_verified_at?: string | null;
   /** True for try-before-login guest sessions: can upload and process, but
    * publishing/votes/comments/profile linking need a full Google account. */
   is_guest?: boolean;
@@ -24,15 +31,18 @@ export interface User {
 
 export interface RawFileUploadResponse {
   raw_file_id: string;
-  // ASSUMPTION: ingestion is kicked off synchronously on upload and the
-  // job id is returned immediately. Field name could also be `job_id`.
   ingestion_job_id: string;
+  deduplicated: boolean;
 }
 
 export interface IngestionJob {
   id: string;
   raw_file_id: string;
   status: 'pending' | 'running' | 'succeeded' | 'failed';
+  parser_used?: string | null;
+  parser_version?: string | null;
+  parser_confidence?: number | null;
+  canonicalization_version?: string | null;
   // Generic bag of extracted metadata fields; shape varies by
   // modality/vendor, so we treat it as an untyped record and render it
   // generically rather than hardcoding field names.
@@ -45,6 +55,9 @@ export interface IngestionJob {
   // an array of { field, reason } objects — adjust `SanityFlags` below if so.
   sanity_check_flags?: Record<string, string>;
   error_message?: string;
+  attempt_count: number;
+  max_attempts: number;
+  draft_spectrum_id?: string | null;
 }
 
 export interface LedgerStep {
@@ -63,11 +76,55 @@ export interface Spectrum {
   title?: string;
   description?: string;
   state: 'draft' | 'published' | 'embargoed';
-  owner_id?: string;
+  is_owner?: boolean;
   raw_file_id?: string;
+  confirmed_metadata?: Record<string, unknown> | null;
+  quality_flags?: Record<string, string> | null;
+  canonicalization_version?: string | null;
+  parent_spectrum_id?: string | null;
   current_ledger?: Ledger;
   license_id?: string;
   embargo_release_at?: string | null;
+  doi?: string | null;
+  publish_readiness?: {
+    ready: boolean;
+    blockers: string[];
+    warnings: string[];
+    metadata_state: string;
+    qc_state: string;
+    doi_verification: string;
+  };
+  provenance?: {
+    raw_file?: {
+      id: string;
+      filename: string;
+      checksum_sha256: string;
+      object_version?: string | null;
+      checksum_verified_at?: string | null;
+    } | null;
+    ingestion?: {
+      parser?: string | null;
+      parser_version?: string | null;
+      parser_confidence?: number | null;
+      header_hash?: string | null;
+      canonicalization_version?: string | null;
+      confirmed_at?: string | null;
+    } | null;
+    processing?: {
+      ledger_id: string;
+      ledger_hash: string;
+      schema_version: number;
+      environment?: Record<string, unknown> | null;
+    } | null;
+    lineage?: { parent_spectrum_id?: string | null };
+    publication?: {
+      doi: string;
+      provider: string;
+      verification_status: string;
+      verified_at: string;
+      snapshot: Record<string, unknown>;
+    } | null;
+  };
   // Generic axes dump — charting is out of scope, a plain array/table is fine.
   wavenumbers?: number[];
   intensities?: number[];
@@ -94,7 +151,7 @@ export interface License {
 // Low-level request helper
 // ---------------------------------------------------------------------------
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API_BASE_URL}${path}`, {
     credentials: 'include', // httpOnly cookie auth
     ...init,
@@ -132,15 +189,33 @@ export function getGoogleLoginUrl(): string {
   return `${API_BASE_URL}/auth/login`;
 }
 
+export function getOrcidLinkUrl(): string {
+  return `${API_BASE_URL}/users/me/orcid/link`;
+}
+
 export async function getCurrentUser(): Promise<User> {
-  return request<User>('/users/me');
+  return apiRequest<User>('/auth/session');
+}
+
+export async function updateCurrentUser(payload: Partial<Pick<User,
+  'display_name' | 'profile_handle' | 'bio' | 'affiliation' | 'research_interests' | 'is_profile_public'
+>>): Promise<User> {
+  return apiRequest<User>('/users/me', { method: 'PATCH', body: JSON.stringify(payload) });
+}
+
+export async function exportCurrentUser(): Promise<unknown> {
+  return apiRequest('/users/me/export');
+}
+
+export async function deleteCurrentUser(): Promise<void> {
+  return apiRequest<void>('/users/me', { method: 'DELETE' });
 }
 
 /** Mint a guest session (server sets the same session cookie the OAuth flow
  * would). Signing in with Google later migrates the guest's work to the
  * real account. */
 export async function startGuestSession(): Promise<User> {
-  return request<User>('/auth/guest', { method: 'POST' });
+  return apiRequest<User>('/auth/guest', { method: 'POST' });
 }
 
 // ---------------------------------------------------------------------------
@@ -150,21 +225,21 @@ export async function startGuestSession(): Promise<User> {
 export async function uploadRawFile(file: File): Promise<RawFileUploadResponse> {
   const formData = new FormData();
   formData.append('file', file);
-  return request<RawFileUploadResponse>('/raw-files', {
+  return apiRequest<RawFileUploadResponse>('/raw-files', {
     method: 'POST',
     body: formData,
   });
 }
 
 export async function getIngestionJob(jobId: string): Promise<IngestionJob> {
-  return request<IngestionJob>(`/ingestion-jobs/${jobId}`);
+  return apiRequest<IngestionJob>(`/ingestion-jobs/${jobId}`);
 }
 
 export async function confirmIngestionJob(
   jobId: string,
   metadata: Record<string, unknown>,
 ): Promise<IngestionJob> {
-  return request<IngestionJob>(`/ingestion-jobs/${jobId}`, {
+  return apiRequest<IngestionJob>(`/ingestion-jobs/${jobId}`, {
     method: 'PATCH',
     // Backend wraps the edited metadata under a `metadata` key so it can
     // reuse ExtractedMetadata's strict pydantic validation directly.
@@ -172,12 +247,16 @@ export async function confirmIngestionJob(
   });
 }
 
+export async function retryIngestionJob(jobId: string): Promise<IngestionJob> {
+  return apiRequest<IngestionJob>(`/ingestion-jobs/${jobId}/retry`, { method: 'POST' });
+}
+
 // ---------------------------------------------------------------------------
 // Spectra / ledgers
 // ---------------------------------------------------------------------------
 
 export async function getSpectrum(id: string): Promise<Spectrum> {
-  return request<Spectrum>(`/spectra/${id}`);
+  return apiRequest<Spectrum>(`/spectra/${id}`);
 }
 
 export async function createSpectrum(payload: {
@@ -188,7 +267,7 @@ export async function createSpectrum(payload: {
   confirmed_metadata?: Record<string, unknown>;
   material_type?: string;
 }): Promise<Spectrum> {
-  return request<Spectrum>('/spectra', {
+  return apiRequest<Spectrum>('/spectra', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -203,7 +282,7 @@ export async function updateSpectrum(
     confirmed_metadata: Record<string, unknown>;
   }>,
 ): Promise<Spectrum> {
-  return request<Spectrum>(`/spectra/${id}`, {
+  return apiRequest<Spectrum>(`/spectra/${id}`, {
     method: 'PATCH',
     body: JSON.stringify(payload),
   });
@@ -221,30 +300,37 @@ export async function createLedger(
   rawFileId: string,
   steps: Array<{ type: string; params: Record<string, unknown>; order: number }>,
 ): Promise<CreateLedgerResponse> {
-  return request<CreateLedgerResponse>(`/raw-files/${rawFileId}/ledgers`, {
+  return apiRequest<CreateLedgerResponse>(`/raw-files/${rawFileId}/ledgers`, {
     method: 'POST',
     body: JSON.stringify({ steps }),
   });
 }
 
 export async function getLicenses(): Promise<License[]> {
-  return request<License[]>('/licenses');
+  return apiRequest<License[]>('/licenses');
 }
 
 /** Fork a readable spectrum into the caller's own workspace as a new draft
  * (copied raw file + replayed pipeline) — the way to experiment on public
  * spectra, since pipelines only attach to raw files you own. */
 export async function forkSpectrum(id: string): Promise<Spectrum> {
-  return request<Spectrum>(`/spectra/${id}/fork`, { method: 'POST' });
+  return apiRequest<Spectrum>(`/spectra/${id}/fork`, { method: 'POST' });
 }
 
 export async function publishSpectrum(
   id: string,
-  payload: { license_id: string; embargo_release_at?: string | null; doi?: string | null },
+  payload: { license_id: string; embargo_release_at?: string | null },
 ): Promise<Spectrum> {
-  return request<Spectrum>(`/spectra/${id}/publish`, {
+  return apiRequest<Spectrum>(`/spectra/${id}/publish`, {
     method: 'POST',
     body: JSON.stringify(payload),
+  });
+}
+
+/** Resolve and persist DOI evidence on a draft before it is labelled verified. */
+export async function verifySpectrumDoi(id: string, doi: string): Promise<Spectrum> {
+  return apiRequest<Spectrum>(`/spectra/${id}/doi/verify?doi=${encodeURIComponent(doi)}`, {
+    method: 'POST',
   });
 }
 
@@ -253,13 +339,13 @@ export async function publishSpectrum(
 // ---------------------------------------------------------------------------
 
 export async function listRoutines(): Promise<Routine[]> {
-  return request<Routine[]>('/routines');
+  return apiRequest<Routine[]>('/routines');
 }
 
 export async function createRoutine(
   payload: Omit<Routine, 'id'>,
 ): Promise<Routine> {
-  return request<Routine>('/routines', {
+  return apiRequest<Routine>('/routines', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
@@ -268,8 +354,8 @@ export async function createRoutine(
 export async function applyRoutineToRawFile(
   rawFileId: string,
   routineId: string,
-): Promise<Ledger> {
-  return request<Ledger>(`/raw-files/${rawFileId}/apply-routine/${routineId}`, {
+): Promise<CreateLedgerResponse> {
+  return apiRequest<CreateLedgerResponse>(`/raw-files/${rawFileId}/apply-routine/${routineId}`, {
     method: 'POST',
   });
 }

@@ -65,9 +65,12 @@ export async function getVotes(spectrumId: string): Promise<VoteStatus> {
 export interface Comment {
   id: number;
   spectrum_id: string;
-  user_id: string;
   body: string;
   created_at: string;
+  author: {
+    display_name: string;
+    profile_path: string | null;
+  };
 }
 
 export async function listComments(

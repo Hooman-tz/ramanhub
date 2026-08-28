@@ -147,7 +147,10 @@ export default function SpectrumChart({
       tooltip: {
         trigger: 'axis',
         axisPointer: { type: 'cross', label: { backgroundColor: theme.axisInk } },
-        valueFormatter: (value: unknown) => (typeof value === 'number' ? value.toFixed(2) : String(value)),
+        // Do not append arbitrary zeroes to measured values. String preserves
+        // the numeric representation supplied by the scientific data API
+        // rather than implying a fixed two-decimal measurement precision.
+        valueFormatter: (value: unknown) => String(value),
         // Glass-adjacent tooltip: translucent, blurred, rounded like every
         // other elevated surface in the app.
         backgroundColor: 'rgba(252, 252, 251, 0.85)',

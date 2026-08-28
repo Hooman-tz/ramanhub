@@ -41,11 +41,12 @@ def test_fork_published_spectrum_copies_content_and_replays_ledger(
 
     assert resp.status_code == 201, resp.text
     fork = resp.json()
-    assert fork["owner_id"] == str(forker.id)
+    assert "owner_id" not in fork
     assert fork["state"] == "draft"
     assert fork["title"] == "Source (fork)"
     assert fork["material_type"] == "quartz"
     assert fork["raw_file_id"] != source["raw_file_id"]
+    assert fork["parent_spectrum_id"] == source["id"]
     # The ledger was replayed onto the fork's own raw file.
     assert fork["current_ledger_id"] is not None
     assert fork["current_ledger_id"] != source["current_ledger_id"]

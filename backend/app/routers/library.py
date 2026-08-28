@@ -20,11 +20,33 @@ from app.models.enums import Modality
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.routers.search import SpectrumSearchResult, serialize_search_result
+from app.spectrum_lifecycle import publication_readiness
 
 router = APIRouter(tags=["library"])
 
 
-@router.get("/library/mine", response_model=list[SpectrumSearchResult])
+class LibrarySpectrumResult(SpectrumSearchResult):
+    """Private-library list row with compact, non-sensitive trust signals."""
+
+    raw_file_id: str
+    metadata_state: str
+    qc_state: str
+    publish_ready: bool
+
+
+def _serialize_library_result(spectrum: Spectrum, db: Session) -> LibrarySpectrumResult:
+    base = serialize_search_result(spectrum)
+    readiness = publication_readiness(spectrum, db)
+    return LibrarySpectrumResult(
+        **base.model_dump(),
+        raw_file_id=str(spectrum.raw_file_id),
+        metadata_state=readiness["metadata_state"],
+        qc_state=readiness["qc_state"],
+        publish_ready=readiness["ready"],
+    )
+
+
+@router.get("/library/mine", response_model=list[LibrarySpectrumResult])
 def get_my_library(
     material_type: str | None = None,
     excitation_wavelength_nm: float | None = None,
@@ -35,7 +57,7 @@ def get_my_library(
     offset: int = 0,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
-) -> list[SpectrumSearchResult]:
+) -> list[LibrarySpectrumResult]:
     """The requester's private reference library: every spectrum they own,
     in any state (draft/published/embargoed all visible to the owner here —
     unlike `/search/spectra`, which is published-only). No `trust_tier`
@@ -64,4 +86,4 @@ def get_my_library(
         )
 
     query = query.order_by(Spectrum.created_at.desc()).offset(offset).limit(limit)
-    return [serialize_search_result(s) for s in query.all()]
+    return [_serialize_library_result(spectrum, db) for spectrum in query.all()]

@@ -24,6 +24,7 @@ class ProcessingLedger(Base):
     modality: Mapped[Modality] = mapped_column(modality_enum)
     schema_version: Mapped[int] = mapped_column(Integer, default=1, server_default=text("1"))
     steps: Mapped[dict] = mapped_column(JSONB)
+    processing_environment: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     ledger_hash: Mapped[str] = mapped_column(String, unique=True, index=True)
     derived_from_routine_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("processing_routines.id"), nullable=True

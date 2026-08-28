@@ -20,6 +20,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # pydantic-settings' normal source ordering, so this only changes the
 # fallback lookup, not anything already working under docker.
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+DEFAULT_JWT_SECRET = "change-me-to-a-long-random-string"
 
 # Public alias — other modules (e.g. the local storage backend) that need a
 # CWD-independent anchor should use this rather than re-deriving it.
@@ -71,9 +72,14 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/auth/callback"
+    # ORCID is only an optional proof-of-control link for a researcher
+    # profile. It is deliberately not an application login provider.
+    ORCID_CLIENT_ID: str = ""
+    ORCID_CLIENT_SECRET: str = ""
+    ORCID_REDIRECT_URI: str = "http://localhost:8000/users/me/orcid/callback"
 
     # JWT / auth
-    JWT_SECRET: str = "change-me-to-a-long-random-string"
+    JWT_SECRET: str = DEFAULT_JWT_SECRET
     JWT_EXPIRES_HOURS: int = 24
 
     # LLM (ingestion parsing fallback)
@@ -82,6 +88,9 @@ class Settings(BaseSettings):
     # URLs
     FRONTEND_URL: str = "http://localhost:5173"
     BACKEND_URL: str = "http://localhost:8000"
+    # Leave empty until spectra-in.site (or a future modality domain) is
+    # configured with OAuth/CORS/redirects. APIs still return canonical paths.
+    PUBLIC_APP_URL: str = ""
 
     # Uploads
     MAX_UPLOAD_SIZE_MB: int = 50
@@ -97,3 +106,11 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+
+def require_secure_production_settings() -> None:
+    """Fail closed if a deploy accidentally uses the development JWT secret."""
+    if settings.ENVIRONMENT.lower() in {"production", "prod"} and (
+        settings.JWT_SECRET == DEFAULT_JWT_SECRET or len(settings.JWT_SECRET) < 32
+    ):
+        raise RuntimeError("JWT_SECRET must be a non-default value of at least 32 characters in production")

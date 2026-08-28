@@ -36,7 +36,8 @@ def test_post_and_list_comments(social_client, make_user, make_raw_file):
     assert resp.status_code == 201, resp.text
     body = resp.json()
     assert body["body"] == "Nice spectrum!"
-    assert body["user_id"] == str(commenter.id)
+    assert body["author"]["display_name"] == "Test User"
+    assert "user_id" not in body
 
     resp = social_client.get(f"/spectra/{spectrum['id']}/comments")
     assert resp.status_code == 200

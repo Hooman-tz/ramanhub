@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.models.publication import PublicationSnapshot
 from app.models.social import Vote
 from app.models.spectrum import Spectrum
 
@@ -95,6 +96,7 @@ def test_material_type_filter_matches_substring(client, make_user, make_raw_file
 
     resp = client.get("/search/spectra", params={"material_type": "quartz"})
     assert resp.status_code == 200
+    assert all("owner_id" not in row for row in resp.json())
     ids = [row["id"] for row in resp.json()]
     assert quartz["id"] in ids
     assert silicon["id"] not in ids
@@ -140,9 +142,21 @@ def test_min_snr_filter(client, make_user, make_raw_file):
     assert flat["id"] not in ids
 
 
-def test_trust_tier_filter(client, make_user, make_raw_file):
+def test_trust_tier_filter(client, make_user, make_raw_file, db_session):
     owner = make_user()
-    verified = _create_and_publish(client, owner, make_raw_file, doi="10.1234/example")
+    verified = _create_and_publish(client, owner, make_raw_file)
+    verified_row = db_session.get(Spectrum, uuid.UUID(verified["id"]))
+    verified_row.doi = "10.1234/example"
+    db_session.add(
+        PublicationSnapshot(
+            spectrum_id=verified_row.id,
+            doi="10.1234/example",
+            provider="crossref",
+            verification_status="verified",
+            snapshot={"doi": "10.1234/example", "title": "Verified Raman record"},
+        )
+    )
+    db_session.commit()
     community = _create_and_publish(client, owner, make_raw_file)
 
     resp = client.get("/search/spectra", params={"trust_tier": "doi_verified"})
@@ -224,6 +238,34 @@ def test_similarity_search_ranks_identical_above_different(client, make_user, ma
     assert target["id"] not in by_id  # target never compared against itself
     assert by_id[twin["id"]] > by_id[different["id"]]
     assert by_id[twin["id"]] == pytest.approx(1.0, abs=1e-6)
+
+
+def test_similarity_search_excludes_non_overlapping_spectra(client, make_user, make_raw_file):
+    owner = make_user()
+    near = _create_and_publish(
+        client,
+        owner,
+        make_raw_file,
+        content=b"100 1\n200 3\n300 5\n400 3\n500 1\n600 2\n",
+    )
+    far = _create_and_publish(
+        client,
+        owner,
+        make_raw_file,
+        content=b"1000 1\n1100 3\n1200 5\n1300 3\n1400 1\n1500 2\n",
+    )
+    twin = _create_and_publish(
+        client,
+        owner,
+        make_raw_file,
+        content=b"100 2\n200 4\n300 7\n400 4\n500 2\n600 3\n",
+    )
+
+    response = client.get(f"/search/similar/{near['id']}")
+    assert response.status_code == 200, response.text
+    ids = {row["spectrum"]["id"] for row in response.json()}
+    assert twin["id"] in ids
+    assert far["id"] not in ids
 
 
 def test_similarity_search_target_must_be_owned_or_public(client, make_user, make_raw_file):

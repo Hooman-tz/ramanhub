@@ -8,15 +8,16 @@ import json
 import logging
 import re
 import uuid
+from pathlib import Path
 
 import anthropic
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, status
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user
 from app.config import settings
 from app.db.session import get_db
-from app.ingestion.jobs import enqueue_ingestion_job
 from app.logging_config import log_event
 from app.models.enums import IngestionStatus, Modality, UploadStatus
 from app.models.ingestion_job import IngestionJob
@@ -24,7 +25,7 @@ from app.models.raw_file import RawFile
 from app.models.user import User
 from app.ratelimit import rate_limit_uploads
 from app.security.file_validation import validate_upload_content, validate_upload_size
-from app.storage.s3_client import upload_bytes
+from app.storage.s3_client import object_exists, upload_bytes
 
 router = APIRouter(prefix="/raw-files", tags=["raw-files"])
 logger = logging.getLogger(__name__)
@@ -32,7 +33,6 @@ logger = logging.getLogger(__name__)
 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 async def upload_raw_file(
-    background_tasks: BackgroundTasks,
     file: UploadFile,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
@@ -47,15 +47,41 @@ async def upload_raw_file(
     validate_upload_content(raw_bytes)
 
     content_hash = hashlib.sha256(raw_bytes).hexdigest()
-    filename = file.filename or "upload"
-    storage_key = f"{user.id}/{content_hash}/{filename}"
+    filename = Path(file.filename or "upload").name or "upload"
 
-    upload_bytes(
-        bucket=settings.S3_BUCKET_RAW,
-        key=storage_key,
-        data=raw_bytes,
-        content_type=file.content_type,
+    # A stable, server-controlled key makes retries safe: an interrupted
+    # request can upload the same content again without creating another
+    # object, and the DB's direct-upload dedupe key returns the existing job.
+    storage_key = f"raw/{user.id}/{content_hash}/source"
+    existing = (
+        db.query(RawFile)
+        .filter(RawFile.owner_id == user.id, RawFile.dedupe_hash == content_hash)
+        .one_or_none()
     )
+    if existing is not None:
+        existing_job = (
+            db.query(IngestionJob)
+            .filter(IngestionJob.raw_file_id == existing.id)
+            .one_or_none()
+        )
+        if existing_job is None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Existing upload is missing its ingestion job; contact support with the raw file ID.",
+            )
+        return {
+            "raw_file_id": existing.id,
+            "ingestion_job_id": existing_job.id,
+            "deduplicated": True,
+        }
+
+    if not object_exists(settings.S3_BUCKET_RAW, storage_key):
+        upload_bytes(
+            bucket=settings.S3_BUCKET_RAW,
+            key=storage_key,
+            data=raw_bytes,
+            content_type=file.content_type,
+        )
 
     raw_file = RawFile(
         owner_id=user.id,
@@ -64,23 +90,40 @@ async def upload_raw_file(
         storage_key=storage_key,
         original_filename=filename,
         content_hash=content_hash,
+        dedupe_hash=content_hash,
+        storage_version=f"sha256:{content_hash}",
         file_size_bytes=len(raw_bytes),
         vendor_format=None,
         upload_status=UploadStatus.uploaded,
     )
-    db.add(raw_file)
-    db.flush()
-
-    ingestion_job = IngestionJob(
-        raw_file_id=raw_file.id,
-        status=IngestionStatus.pending,
-    )
-    db.add(ingestion_job)
-    db.commit()
+    try:
+        db.add(raw_file)
+        db.flush()
+        ingestion_job = IngestionJob(
+            raw_file_id=raw_file.id,
+            status=IngestionStatus.pending,
+        )
+        db.add(ingestion_job)
+        db.commit()
+    except IntegrityError:
+        # Concurrent retries can race after the object is safely uploaded. The
+        # unique direct-upload key lets the loser recover the canonical job.
+        db.rollback()
+        existing = (
+            db.query(RawFile)
+            .filter(RawFile.owner_id == user.id, RawFile.dedupe_hash == content_hash)
+            .one_or_none()
+        )
+        if existing is None:
+            raise
+        existing_job = db.query(IngestionJob).filter(IngestionJob.raw_file_id == existing.id).one()
+        return {
+            "raw_file_id": existing.id,
+            "ingestion_job_id": existing_job.id,
+            "deduplicated": True,
+        }
     db.refresh(raw_file)
     db.refresh(ingestion_job)
-
-    enqueue_ingestion_job(background_tasks, raw_file.id)
 
     log_event(
         logger,
@@ -91,7 +134,7 @@ async def upload_raw_file(
         size_bytes=raw_file.file_size_bytes,
     )
 
-    return {"raw_file_id": raw_file.id, "ingestion_job_id": ingestion_job.id}
+    return {"raw_file_id": raw_file.id, "ingestion_job_id": ingestion_job.id, "deduplicated": False}
 
 
 # --- Rename suggestion -------------------------------------------------

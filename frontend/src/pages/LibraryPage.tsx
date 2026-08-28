@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getMyLibrary, type SpectrumSearchResult } from '../api/search';
+import { Button, EmptyState, InputField, Skeleton } from '../components/ui';
 
 /** Functional, not polished: same filter pattern as `SearchPage`, scoped to
  * the current user's own private reference library (`GET /library/mine`) —
@@ -40,75 +41,81 @@ export default function LibraryPage() {
   }
 
   return (
-    <div>
-      <h1>My library</h1>
+    <div className="workspace-page">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Private workspace</p>
+          <h1>Library</h1>
+          <p className="page-intro">Your spectra, processing history, and publication readiness in one place.</p>
+        </div>
+        <Link to="/upload" className="ui-button ui-button--primary">Upload spectrum</Link>
+      </header>
 
-      <form onSubmit={refresh}>
-        <div className="field-row">
-          <label htmlFor="library-material-type">Material type</label>
-          <input
-            id="library-material-type"
-            value={materialType}
-            onChange={(e) => setMaterialType(e.target.value)}
-            placeholder="e.g. quartz"
-          />
-        </div>
-        <div className="field-row">
-          <label htmlFor="library-excitation">Excitation wavelength (nm)</label>
-          <input
-            id="library-excitation"
-            type="number"
-            value={excitationWavelengthNm}
-            onChange={(e) => setExcitationWavelengthNm(e.target.value)}
-          />
-        </div>
-        <div className="field-row">
-          <label htmlFor="library-min-snr">Min SNR</label>
-          <input
-            id="library-min-snr"
-            type="number"
-            value={minSnr}
-            onChange={(e) => setMinSnr(e.target.value)}
-          />
-        </div>
-        <button type="submit" disabled={loading}>
-          {loading ? 'Loading...' : 'Filter'}
-        </button>
+      <form onSubmit={refresh} className="surface filter-surface" aria-label="Filter library">
+        <InputField
+          id="library-material-type"
+          label="Material"
+          value={materialType}
+          onChange={(e) => setMaterialType(e.target.value)}
+          placeholder="e.g. quartz"
+        />
+        <InputField
+          id="library-excitation"
+          label="Excitation (nm)"
+          type="number"
+          value={excitationWavelengthNm}
+          onChange={(e) => setExcitationWavelengthNm(e.target.value)}
+          placeholder="532"
+        />
+        <InputField
+          id="library-min-snr"
+          label="Minimum SNR"
+          type="number"
+          value={minSnr}
+          onChange={(e) => setMinSnr(e.target.value)}
+          placeholder="—"
+        />
+        <Button type="submit" variant="glass" loading={loading}>Apply filters</Button>
       </form>
 
       {error && <p className="error">{error}</p>}
-      {loading && <p>Loading library...</p>}
-      {!loading && results.length === 0 && <p>Nothing in your library yet.</p>}
+      {loading && <Skeleton lines={5} height="3rem" />}
+      {!loading && results.length === 0 && (
+        <EmptyState title="Your library is ready for its first spectrum">
+          <p>Upload a raw file to begin a private, reproducible analysis.</p>
+          <Link to="/upload" className="ui-button ui-button--primary">Upload a spectrum</Link>
+        </EmptyState>
+      )}
 
       {results.length > 0 && (
-        <table>
-          <thead>
-            <tr>
-              <th>Title</th>
-              <th>State</th>
-              <th>Material type</th>
-              <th>Excitation (nm)</th>
-              <th>SNR</th>
-              <th>Modality</th>
-            </tr>
-          </thead>
-          <tbody>
-            {results.map((row) => (
-              <tr key={row.id}>
-                <td>
-                  <Link to={`/spectra/${row.id}`}>{row.title ?? row.id}</Link>
-                </td>
-                <td>
-                  <span className={`badge badge-${row.state}`}>{row.state}</span>
-                </td>
-                <td>{row.material_type ?? '—'}</td>
-                <td>{row.excitation_wavelength_nm ?? '—'}</td>
-                <td>{row.snr !== null && row.snr !== undefined ? row.snr.toFixed(2) : '—'}</td>
-                <td>{row.modality}</td>
+        <div className="data-table-wrap">
+          <table className="data-table">
+            <caption className="sr-only">Private spectrum library</caption>
+            <thead>
+              <tr>
+                <th>Title</th><th>Visibility</th><th>Material</th><th>Excitation</th>
+                <th>SNR</th><th>Readiness</th><th>Modality</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {results.map((row) => (
+                <tr key={row.id}>
+                  <td><Link to={`/spectra/${row.id}`}>{row.title ?? 'Untitled spectrum'}</Link></td>
+                  <td><span className={`badge badge-${row.state}`}><span className="status-dot" aria-hidden="true" />{row.state}</span></td>
+                  <td>{row.material_type ?? '—'}</td>
+                  <td>{row.excitation_wavelength_nm ?? '—'}{row.excitation_wavelength_nm ? ' nm' : ''}</td>
+                  <td>{row.snr !== null && row.snr !== undefined ? row.snr.toFixed(2) : '—'}</td>
+                  <td>
+                    <span className={`badge badge-${row.qc_state === 'passed' ? 'published' : row.qc_state === 'blocked' ? 'embargoed' : 'draft'}`}>
+                      {row.publish_ready ? 'Ready' : row.qc_state === 'blocked' ? 'Blocked' : 'Needs review'}
+                    </span>
+                  </td>
+                  <td>{row.modality}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       )}
     </div>
   );

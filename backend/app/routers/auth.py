@@ -93,6 +93,13 @@ async def start_guest_session(
     return response
 
 
+@router.get("/session", response_model=UserOut | None)
+def get_session_user(user: User | None = Depends(get_current_user_optional)) -> User | None:
+    """Return the signed-in user or null, without treating public browsing as
+    an authorization error. `/users/me` remains the strict private endpoint."""
+    return user
+
+
 @router.get("/login")
 async def login() -> RedirectResponse:
     """Redirect the browser to Google's consent screen, carrying CSRF
@@ -169,11 +176,30 @@ async def callback(
     email = claims.get("email")
     name = claims.get("name")
     picture = claims.get("picture")
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google ID token did not include a verified email address",
+        )
+    if claims.get("email_verified") is False:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Google must verify the email address before it can be used to sign in",
+        )
 
     user = db.query(User).filter(User.google_sub == google_sub).first()
     if user is None:
-        user = User(google_sub=google_sub, email=email, display_name=name, avatar_url=picture)
-        db.add(user)
+        # Google verifies the email claim. Reuse an account that already owns
+        # this email rather than failing the unique constraint or duplicating
+        # its scientific records under a second account.
+        user = db.query(User).filter(User.email == email).first()
+        if user is None:
+            user = User(google_sub=google_sub, email=email, display_name=name, avatar_url=picture)
+            db.add(user)
+            db.flush()
+            user.profile_handle = f"researcher-{user.id.hex[:12]}"
+        else:
+            user.google_sub = google_sub
     else:
         if email and user.email != email:
             user.email = email

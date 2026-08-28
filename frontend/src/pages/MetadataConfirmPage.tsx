@@ -3,7 +3,7 @@ import { useParams, Link } from 'react-router-dom';
 import {
   getIngestionJob,
   confirmIngestionJob,
-  createSpectrum,
+  retryIngestionJob,
   type IngestionJob,
 } from '../api/client';
 import { Button, Card, Skeleton } from '../components/ui';
@@ -36,21 +36,36 @@ export default function MetadataConfirmPage() {
     setFields((prev) => ({ ...prev, [key]: value }));
   }
 
+  function metadataForConfirmation(): Record<string, unknown> {
+    const numericFields = new Set([
+      'laser_wavelength_nm',
+      'laser_power_mw',
+      'integration_time_ms',
+      'accumulations',
+      'resolution_cm1',
+      'grating_lines_mm',
+      'objective_magnification',
+    ]);
+    return Object.fromEntries(
+      Object.entries(fields).map(([key, value]) => {
+        if (value === '') return [key, null];
+        if (numericFields.has(key) && typeof value === 'string') return [key, Number(value)];
+        return [key, value];
+      }),
+    );
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!jobId) return;
     try {
       setSubmitting(true);
-      const updated = await confirmIngestionJob(jobId, fields);
+      const updated = await confirmIngestionJob(jobId, metadataForConfirmation());
       setJob(updated);
-      // Confirming metadata only updates the ingestion job — it does not
-      // create a Spectrum row. Do that explicitly here so "Open the
-      // spectrum" below has a real id to link to.
-      const spectrum = await createSpectrum({
-        raw_file_id: updated.raw_file_id,
-        confirmed_metadata: updated.extracted_metadata_confirmed ?? undefined,
-      });
-      setSpectrumId(spectrum.id);
+      if (!updated.draft_spectrum_id) {
+        throw new Error('The draft could not be recovered from this confirmed ingestion.');
+      }
+      setSpectrumId(updated.draft_spectrum_id);
       setConfirmed(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -62,7 +77,8 @@ export default function MetadataConfirmPage() {
   if (loading) {
     return (
       <div className="confirm-page">
-        <h1>Confirm extracted metadata</h1>
+        <p className="eyebrow">Step 2 of 3 · Review</p>
+        <h1>Confirm the sample metadata</h1>
         <Card>
           <Skeleton lines={6} height="2rem" />
         </Card>
@@ -72,9 +88,54 @@ export default function MetadataConfirmPage() {
   if (error) return <p className="error">{error}</p>;
   if (!job) return <p>Ingestion job not found.</p>;
 
+  if (job.status === 'failed') {
+    return (
+      <div className="confirm-page">
+        <p className="eyebrow">Ingestion stopped</p>
+        <Card title="This file needs another analysis attempt">
+          <p className="error">{job.error_message ?? 'The parser could not read this file.'}</p>
+          <p className="hint">
+            The original file remains private and unchanged. You can retry the same durable job
+            without uploading a duplicate.
+          </p>
+          <Button
+            onClick={() => {
+              setSubmitting(true);
+              retryIngestionJob(job.id)
+                .then(setJob)
+                .catch((err) => setError(err instanceof Error ? err.message : String(err)))
+                .finally(() => setSubmitting(false));
+            }}
+            loading={submitting}
+          >
+            Retry analysis
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+
+  if (job.status !== 'succeeded') {
+    return (
+      <div className="confirm-page">
+        <p className="eyebrow">Step 1 of 3 · Ingest</p>
+        <Card title="Analysis in progress">
+          <p className="hint">
+            This durable job is still being processed. Refresh this page in a moment; your upload
+            remains private while it is analyzed.
+          </p>
+          <Button onClick={() => getIngestionJob(job.id).then(setJob)} loading={submitting}>
+            Refresh status
+          </Button>
+        </Card>
+      </div>
+    );
+  }
+
   if (confirmed && spectrumId) {
     return (
       <div className="confirm-page">
+        <p className="eyebrow">Ready for processing</p>
         <Card title="Metadata confirmed">
           <p>This upload is now in your private library as a draft.</p>
           <Link to={`/spectra/${spectrumId}`} className="ui-button ui-button--primary">
@@ -86,22 +147,61 @@ export default function MetadataConfirmPage() {
   }
 
   const flags = job.sanity_check_flags ?? {};
-  const fieldKeys = Object.keys(fields);
+  const fieldKeys = Object.keys(fields).filter((key) => key !== 'raw_extra_fields');
   const flaggedCount = fieldKeys.filter((key) => flags[key]).length;
 
   return (
     <div className="confirm-page">
-      <h1>Confirm extracted metadata</h1>
+      <p className="eyebrow">Step 2 of 3 · Review</p>
+      <div className="page-header">
+        <div>
+          <h1>Confirm the sample metadata</h1>
+          <p className="page-intro">Check the parser’s interpretation before this draft enters your private library.</p>
+        </div>
+      </div>
+      <Card className="ingestion-status" title="Extraction evidence">
+        <div className="status-item">
+          <span className="status-label">Parser</span>
+          <strong>
+          {job.parser_used?.startsWith('llm:')
+            ? 'AI-assisted extraction'
+            : `Parser: ${job.parser_used ?? 'unknown'}`}
+          </strong>
+        </div>
+        <div className="status-item">
+          <span className="status-label">Confidence</span>
+          <strong>
+          {job.parser_confidence === undefined || job.parser_confidence === null
+            ? 'not available'
+            : `${Math.round(job.parser_confidence * 100)}%`}
+          </strong>
+        </div>
+        <div className="status-item">
+          <span className="status-label">Canonical form</span>
+          <strong>{job.canonicalization_version ?? 'pending'}</strong>
+        </div>
+      </Card>
       <p className="hint">
-        Review what the parser extracted before it's committed — nothing is saved until you
-        confirm.
+        Review what the parser extracted before it becomes the confirmed metadata on your private
+        draft. The original upload and parser output are retained privately for provenance.
         {flaggedCount > 0 &&
           ` ${flaggedCount} value${flaggedCount > 1 ? 's look' : ' looks'} physically implausible and ${flaggedCount > 1 ? 'are' : 'is'} highlighted below.`}
       </p>
 
-      <Card>
+      <Card className="metadata-editor">
+        {flaggedCount > 0 && (
+          <div className="notice notice--warning" role="status">
+            <strong>Review {flaggedCount} flagged value{flaggedCount === 1 ? '' : 's'}</strong>
+            <span>These values look physically implausible and need your confirmation.</span>
+          </div>
+        )}
         <form onSubmit={handleSubmit}>
           {fieldKeys.length === 0 && <p>No extracted metadata fields.</p>}
+          {Boolean(fields.raw_extra_fields) && (
+            <p className="hint">
+              Additional parser fields are retained with the raw record and are not edited here.
+            </p>
+          )}
           <div className="confirm-grid">
             {fieldKeys.map((key) => {
               const value = fields[key];
@@ -109,7 +209,7 @@ export default function MetadataConfirmPage() {
               const inputType = typeof value === 'number' ? 'number' : 'text';
               return (
                 <div key={key} className={`field-row${flagReason ? ' flagged' : ''}`}>
-                  <label htmlFor={`field-${key}`}>{key}</label>
+                    <label htmlFor={`field-${key}`}>{key.split('_').join(' ')}</label>
                   <input
                     id={`field-${key}`}
                     type={inputType}

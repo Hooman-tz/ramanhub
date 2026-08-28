@@ -6,6 +6,8 @@ Mounted with no prefix — `POST /raw-files/{raw_file_id}/ledgers`.
 from __future__ import annotations
 
 import logging
+import platform
+import sys
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
@@ -112,6 +114,11 @@ def build_and_persist_ledger(
         modality=raw_file.modality,
         schema_version=1,
         steps=[step.model_dump(mode="json") for step in steps],
+        processing_environment={
+            "python": platform.python_version(),
+            "platform": platform.platform(),
+            "runtime": sys.implementation.name,
+        },
         ledger_hash=ledger_hash,
         derived_from_routine_id=derived_from_routine_id,
         created_by=user.id,

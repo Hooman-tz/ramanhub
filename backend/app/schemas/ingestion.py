@@ -9,9 +9,10 @@ can never smuggle nested/structured data into storage.
 """
 from __future__ import annotations
 
+import re
 import uuid
 from datetime import datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -33,17 +34,20 @@ class ExtractedMetadata(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
-    modality: str = "raman"
-    instrument_vendor: str | None = None
-    instrument_model: str | None = None
+    modality: Literal["raman"] = "raman"
+    instrument_vendor: str | None = Field(default=None, max_length=200)
+    instrument_model: str | None = Field(default=None, max_length=200)
+    # Expected physical ranges live in the modality field registry and become
+    # visible QC flags. Hard-rejecting unusual values here would make it
+    # impossible for a scientist to preserve and explain a legitimate outlier.
     laser_wavelength_nm: float | None = None
     laser_power_mw: float | None = None
     integration_time_ms: float | None = None
     accumulations: int | None = None
     spectral_range_cm1: str | None = None  # stored as "min-max"
     resolution_cm1: float | None = None
-    acquisition_datetime: str | None = None
-    sample_description: str | None = None
+    acquisition_datetime: str | None = Field(default=None, max_length=64)
+    sample_description: str | None = Field(default=None, max_length=4_000)
     grating_lines_mm: float | None = None
     objective_magnification: float | None = None
     raw_extra_fields: dict[str, str | float | int] = Field(default_factory=dict)
@@ -64,6 +68,19 @@ class ExtractedMetadata(BaseModel):
                 raise ValueError(f"raw_extra_fields value for {key!r} too long")
         return value
 
+    @field_validator("spectral_range_cm1")
+    @classmethod
+    def _validate_spectral_range(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        match = re.fullmatch(r"\s*(-?\d+(?:\.\d+)?)\s*-\s*(-?\d+(?:\.\d+)?)\s*", value)
+        if match is None:
+            raise ValueError("spectral_range_cm1 must be formatted as 'min-max'")
+        lower, upper = (float(match.group(1)), float(match.group(2)))
+        if lower >= upper or lower < -5_000 or upper > 100_000:
+            raise ValueError("spectral_range_cm1 must be a plausible ascending Raman range")
+        return f"{lower:g}-{upper:g}"
+
 
 class IngestionJobOut(BaseModel):
     """Response shape for GET /ingestion-jobs/{id}."""
@@ -74,11 +91,19 @@ class IngestionJobOut(BaseModel):
     raw_file_id: uuid.UUID
     status: str
     parser_used: str | None = None
+    parser_version: str | None = None
+    parser_confidence: float | None = None
+    canonicalization_version: str | None = None
     header_hash: str | None = None
     extracted_metadata_raw: dict[str, Any] | None = None
     sanity_check_flags: dict[str, Any] | None = None
     extracted_metadata_confirmed: dict[str, Any] | None = None
     error_message: str | None = None
+    attempt_count: int = 0
+    max_attempts: int = 3
+    run_after: datetime | None = None
+    lease_expires_at: datetime | None = None
+    draft_spectrum_id: uuid.UUID | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None

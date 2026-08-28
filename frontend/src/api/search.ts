@@ -53,14 +53,18 @@ export interface SpectrumSearchResult {
   snr?: number | null;
   modality: string;
   doi?: string | null;
-  owner_id: string;
   published_at?: string | null;
   state: 'draft' | 'published' | 'embargoed';
+  raw_file_id?: string;
+  metadata_state?: 'confirmed' | 'needs_review';
+  qc_state?: 'passed' | 'review' | 'blocked';
+  publish_ready?: boolean;
 }
 
 export interface SimilarSpectrumResult {
   spectrum: SpectrumSearchResult;
   similarity: number;
+  overlap_fraction: number;
 }
 
 // ---------------------------------------------------------------------------

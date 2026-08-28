@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 from app.auth.deps import get_current_user, get_current_user_optional
 from app.db.session import get_db
-from app.routers import comments, spectra, trending, votes
+from app.routers import comments, community, profiles, public_records, spectra, trending, votes
 
 
 def build_social_client(db_session) -> TestClient:
@@ -20,6 +20,9 @@ def build_social_client(db_session) -> TestClient:
     test_app.include_router(votes.router)
     test_app.include_router(comments.router)
     test_app.include_router(trending.router)
+    test_app.include_router(profiles.router)
+    test_app.include_router(public_records.router)
+    test_app.include_router(community.router)
 
     def _override_get_db():
         yield db_session

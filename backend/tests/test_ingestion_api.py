@@ -149,7 +149,7 @@ async def _upload_ocean_insight_file(test_app, user):
 
 
 @requires_db
-def test_upload_creates_pending_job_then_succeeds(test_app, db_session, fake_storage):
+def test_upload_creates_pending_job_then_worker_succeeds(test_app, db_session, fake_storage):
     user = _make_user(db_session, "sub-upload-1", "upload1@example.com")
 
     resp = run_async(_upload_ocean_insight_file(test_app, user))
@@ -158,11 +158,16 @@ def test_upload_creates_pending_job_then_succeeds(test_app, db_session, fake_sto
     assert "raw_file_id" in body
     assert "ingestion_job_id" in body
 
-    # By the time the ASGI response has been returned, the BackgroundTask
-    # (run via Starlette's background-task mechanism) has already executed.
     db_session.expire_all()
     job = db_session.get(IngestionJob, uuid.UUID(body["ingestion_job_id"]))
     assert job is not None
+    assert job.status == IngestionStatus.pending
+
+    # The API does not parse request-bound uploads. A durable worker claims
+    # and runs this persisted job independently.
+    jobs_module.run_ingestion_job(job.id)
+    db_session.expire_all()
+    job = db_session.get(IngestionJob, job.id)
     assert job.status == IngestionStatus.succeeded
     assert job.parser_used == "ocean_insight"
     assert job.extracted_metadata_raw is not None
@@ -211,6 +216,7 @@ def test_confirm_metadata_writes_confirmed_field_and_reruns_sanity_check(
     user = _make_user(db_session, "sub-confirm-1", "confirm1@example.com")
     upload_resp = run_async(_upload_ocean_insight_file(test_app, user))
     job_id = upload_resp.json()["ingestion_job_id"]
+    jobs_module.run_ingestion_job(uuid.UUID(job_id))
     token = encode_session_token(user)
 
     async def _run():
@@ -235,6 +241,13 @@ def test_confirm_metadata_writes_confirmed_field_and_reruns_sanity_check(
     assert body["extracted_metadata_confirmed"]["laser_wavelength_nm"] == 660.0
     assert body["confirmed_at"] is not None
     assert "laser_wavelength_nm" in (body["sanity_check_flags"] or {})
+    assert body["draft_spectrum_id"] is not None
+
+    # Confirming a durable job is safe to repeat: it returns the same draft
+    # instead of creating another private spectrum.
+    repeat = run_async(_run())
+    assert repeat.status_code == 200
+    assert repeat.json()["draft_spectrum_id"] == body["draft_spectrum_id"]
 
 
 @requires_db
@@ -242,6 +255,7 @@ def test_confirm_metadata_rejects_unknown_fields(test_app, db_session, fake_stor
     user = _make_user(db_session, "sub-confirm-2", "confirm2@example.com")
     upload_resp = run_async(_upload_ocean_insight_file(test_app, user))
     job_id = upload_resp.json()["ingestion_job_id"]
+    jobs_module.run_ingestion_job(uuid.UUID(job_id))
     token = encode_session_token(user)
 
     async def _run():
@@ -293,3 +307,16 @@ def test_unauthenticated_upload_requires_auth(test_app, db_session, fake_storage
 
     resp = run_async(_run())
     assert resp.status_code == 401
+
+
+@requires_db
+def test_direct_duplicate_upload_reuses_private_raw_file_and_job(test_app, db_session, fake_storage):
+    user = _make_user(db_session, "sub-dedupe-1", "dedupe@example.com")
+
+    first = run_async(_upload_ocean_insight_file(test_app, user))
+    second = run_async(_upload_ocean_insight_file(test_app, user))
+
+    assert first.status_code == second.status_code == 202
+    assert second.json()["deduplicated"] is True
+    assert second.json()["raw_file_id"] == first.json()["raw_file_id"]
+    assert second.json()["ingestion_job_id"] == first.json()["ingestion_job_id"]

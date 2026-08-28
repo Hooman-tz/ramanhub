@@ -76,3 +76,10 @@ def get_current_full_user(user: User = Depends(get_current_user)) -> User:
             "linking need a full account.",
         )
     return user
+
+
+def get_current_moderator(user: User = Depends(get_current_full_user)) -> User:
+    """Gate moderation queues to explicitly designated researcher moderators."""
+    if not user.is_moderator:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Moderator access required")
+    return user

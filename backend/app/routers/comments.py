@@ -6,7 +6,7 @@ Deliberately quarantined from core search/discovery, same as votes — see
 """
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user, get_current_user_optional
+from app.community import create_notification, public_author
 from app.db.session import get_db
 from app.models.social import Comment
 from app.models.spectrum import Spectrum
@@ -34,11 +35,9 @@ class CommentCreate(BaseModel):
 class CommentResponse(BaseModel):
     id: int
     spectrum_id: UUID
-    user_id: UUID
     body: str
     created_at: datetime
-
-    model_config = {"from_attributes": True}
+    author: dict
 
 
 def _get_visible_spectrum_or_404(spectrum_id: UUID, user: User | None, db: Session) -> Spectrum:
@@ -47,6 +46,16 @@ def _get_visible_spectrum_or_404(spectrum_id: UUID, user: User | None, db: Sessi
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     require_owner_or_public(spectrum, user)
     return spectrum
+
+
+def _serialize_comment(comment: Comment, db: Session) -> CommentResponse:
+    return CommentResponse(
+        id=comment.id,
+        spectrum_id=comment.spectrum_id,
+        body=comment.body,
+        created_at=comment.created_at,
+        author=public_author(db.get(User, comment.user_id)),
+    )
 
 
 @router.post(
@@ -69,9 +78,21 @@ def post_comment(
 
     comment = Comment(spectrum_id=spectrum.id, user_id=user.id, body=stripped)
     db.add(comment)
+    db.flush()
+    if spectrum.owner_id != user.id:
+        create_notification(
+            db,
+            user_id=spectrum.owner_id,
+            kind="spectrum_comment",
+            payload={
+                "spectrum_id": str(spectrum.id),
+                "comment_id": comment.id,
+                "actor": public_author(user),
+            },
+        )
     db.commit()
     db.refresh(comment)
-    return CommentResponse.model_validate(comment)
+    return _serialize_comment(comment, db)
 
 
 @router.get("/spectra/{spectrum_id}/comments", response_model=list[CommentResponse])
@@ -88,9 +109,32 @@ def list_comments(
     # (ascending) order reads most naturally.
     rows = db.scalars(
         select(Comment)
-        .where(Comment.spectrum_id == spectrum.id)
+        .where(
+            Comment.spectrum_id == spectrum.id,
+            Comment.moderation_status == "visible",
+            Comment.deleted_at.is_(None),
+        )
         .order_by(Comment.created_at.asc(), Comment.id.asc())
         .limit(limit)
         .offset(offset)
     ).all()
-    return [CommentResponse.model_validate(row) for row in rows]
+    return [_serialize_comment(row, db) for row in rows]
+
+
+@router.delete("/spectra/{spectrum_id}/comments/{comment_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_comment(
+    spectrum_id: UUID,
+    comment_id: int,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_full_user),
+) -> None:
+    spectrum = _get_visible_spectrum_or_404(spectrum_id, user, db)
+    comment = db.get(Comment, comment_id)
+    if comment is None or comment.spectrum_id != spectrum.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    if comment.user_id != user.id and not user.is_moderator:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    comment.moderation_status = "hidden"
+    comment.deleted_at = datetime.now(UTC)
+    db.add(comment)
+    db.commit()

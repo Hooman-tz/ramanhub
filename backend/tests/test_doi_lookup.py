@@ -12,7 +12,7 @@ from __future__ import annotations
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from app.doi_lookup import DoiMetadata, lookup_doi
+from app.doi_lookup import DoiMetadata, lookup_doi, normalize_doi
 
 DOI = "10.1021/acs.analchem.0c00001"
 
@@ -85,6 +85,12 @@ def test_empty_doi_returns_none_without_a_request():
         result = _run(lookup_doi("   "))
     assert result is None
     fake_client.get.assert_not_called()
+
+
+def test_normalize_doi_accepts_resolver_urls_and_removes_case_variation():
+    assert normalize_doi(" https://doi.org/10.1021/ACS.ANALCHEM.0C00001 ") == DOI
+    assert normalize_doi("doi:10.1021/ACS.ANALCHEM.0C00001") == DOI
+    assert normalize_doi("not a doi") is None
 
 
 # ---------------------------------------------------------------------------

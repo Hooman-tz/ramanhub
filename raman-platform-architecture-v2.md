@@ -1,252 +1,558 @@
-# SYSTEM INSTRUCTION FOR AI DEVELOPMENT AGENT (v2 — Revised)
+# Spectra Insight — Product Architecture & Development Roadmap
 
-## POSITIONING NOTE (read first)
-An existing open-source platform, SpectraGuru (NSF POSE-funded, published in
-Analytical Chemistry in 2026, PostgreSQL-backed, browser-based, no install),
-already covers upload, preprocessing (baseline correction, smoothing,
-normalization, despiking, interpolation), peak identification, and
-multivariate ML (PCA, clustering, classification) against a shared spectral
-database. Its own stated goal is to become open, reproducible infrastructure
-for the spectroscopy community — close to this project's mission.
+**Product:** Spectra Insight
+**Tagline:** *Spectra in sight. Spectral insight.*
+**Status:** Product and technical roadmap — August 2026
+**Repository codename:** RamanHub
 
-This project's differentiation must therefore be explicit and load-bearing in
-every module below, not assumed:
-1. LLM-based parsing for arbitrary/messy vendor headers, not just
-   standardized upload
-2. A private per-user reference library alongside the shared public commons
-3. A social/trending layer, quarantined from core scientific search
-4. A freemium compute model (local by default, cloud tier paid) — this is a
-   product, not grant-funded academic infrastructure
-5. DOI/manuscript-linkage as the central trust and provenance mechanism, tied
-   to the actual publication workflow
+## 1. Product thesis
 
-If a proposed feature doesn't serve one of these five, treat it as lower
-priority — it's likely already solved elsewhere.
+Spectra Insight is a reproducible workspace and trusted commons for spectral
+data. It begins with Raman spectroscopy, where users can upload imperfect
+real-world files, understand and correct their metadata, process them through
+a transparent toolbox, keep work private, and publish a citable public record
+when ready.
 
-Core framing: this is "GitHub for spectral data" — GitHub for sharing code,
-this platform for sharing spectra, with the same open, collaborative,
-versioned ethos. Hands-on testing of SpectraGuru confirms preprocessing
-quality and interface polish are the two biggest, most winnable gaps —
-prioritize both heavily.
+The long-term product is not a generic social network or an arbitrary-file
+converter. It is a set of connected scientific capabilities:
 
-## PREREQUISITES — DO THESE BEFORE / ALONGSIDE BUILDING
-Everything here is something only you can do (create accounts, obtain
-credentials) — the coding agent needs the resulting keys/IDs as environment
-variables, but can't get them itself.
-1. Register a domain name (Cloudflare Registrar or Namecheap are both fine)
-2. Create a Google Cloud Console project → OAuth 2.0 Client ID/Secret, for
-   login
-3. Create a Cloudflare account → an R2 bucket → an R2 API token (object
-   storage)
-4. Create an Anthropic Console account → an API key, and set a monthly
-   spending cap/alert immediately
-5. Create a GitHub repo for the codebase (public fits the "GitHub for data"
-   framing, and doubles as the bug tracker via Issues)
-6. Create a Sentry account (free tier) for error tracking
-7. Create a Vercel or Netlify account for frontend hosting
-8. Ask Edward Grant to sponsor a Digital Research Alliance of Canada (UBC
-   ARC) cloud account for you — free hosting built for exactly this kind of
-   research web portal, but sponsorship + setup can take some back-and-forth,
-   so start it in parallel rather than waiting on it (see Hosting below)
-9. Decide the default data license now (CC-BY 4.0 is the sane default) and
-   draft a short Terms of Service / Privacy Policy before public launch —
-   you're collecting accounts and user data from day one, this shouldn't be
-   an afterthought
+1. **Personal workspace** — private uploads, metadata, processing, visualization,
+   reusable routines, and later exploratory analysis.
+2. **Trusted public commons** — licensed, provenance-rich datasets and spectra
+   that can be cited, searched, compared, and reused.
+3. **Scientific community** — publication-linked posts and discussion around
+   public records, explicitly separate from scientific search ranking.
+4. **Discovery and computation** — scientifically constrained similarity search,
+   multi-spectrum exploration, and eventually equivalent local and hosted
+   compute options.
 
-## GUIDING PRINCIPLES
-- Simple, traditional architecture over trendy frameworks; lean, efficient,
-  scientifically precise code
-- Build for the scale you have today (hundreds to low thousands of users),
-  not the scale you might have in five years. Leave clean interfaces (the
-  ledger pattern below is one) so pieces can be swapped or scaled later
-  without a rewrite — don't pre-build infrastructure you have no evidence you
-  need yet
-- Raw spectral data is immutable and sacred: never overwritten, always
-  recoverable
-- Confirmed roadmap: Raman first (the primary use case), then expansion to
-  mass spectrometry and NMR. Namespace the schema (metadata fields, ledger
-  step definitions) by modality from the start so this doesn't force a
-  rewrite later — but don't build mass-spec- or NMR-specific features now
+The product differentiates through five commitments:
 
-## CORE ARCHITECTURE
-- Frontend: React or Vue, responsive PWA
-- Backend: Python via FastAPI, for direct access to SciPy/NumPy/scikit-learn
-- Relational DB: PostgreSQL — metadata, users, DOIs, comments, processing
-  ledgers
-- Object storage: Cloudflare R2 (S3-compatible) — see Hosting & Deployment
-  below for why. Same S3 API as AWS, so nothing else in this spec changes if
-  you ever migrate off it
-- Cache/queue: Redis, added once synchronous processing becomes a bottleneck
-  (see Scaling Posture) — not required for the first version
+- Deterministic parser support with a guarded AI fallback for messy files
+- A private per-user reference library alongside a public commons
+- Immutable raw data plus replayable, versioned processing provenance
+- DOI/manuscript linkage that is genuinely verified, not just user-entered text
+- A social layer that helps researchers discover work without changing
+  objective scientific ranking
 
-## HOSTING & DEPLOYMENT
-- Frontend: Vercel or Netlify — trivial deploy straight from the GitHub
-  repo, free tier, automatic HTTPS and global CDN
-- Object storage: Cloudflare R2. 10 GB/month free, and critically, zero
-  egress fees — this matters specifically for a data-sharing platform, where
-  people repeatedly downloading/viewing shared spectra is the whole point,
-  and that's exactly the traffic pattern S3-style providers charge for
-- Backend (FastAPI) + Postgres — two viable paths:
-  - Free, best fit long-term: Digital Research Alliance of Canada cloud via
-    UBC ARC. It's explicitly built for researchers developing web portals
-    and continuously-running services, is free once Edward Grant sponsors a
-    cloud project, and keeps hosting cost at zero indefinitely. Tradeoff:
-    application/setup friction, and research-grade rather than
-    commercial-grade uptime support
-  - Faster to start, small monthly cost: Railway or Render. Both deploy
-    FastAPI + managed Postgres with minimal setup, no sponsorship required.
-    Reasonable to start here this week and migrate the backend to the
-    Alliance cloud once sponsorship comes through
-- All of the above serve HTTPS by default or via a one-line reverse-proxy
-  config — never serve the app over plain HTTP
+## 2. Scope and guiding principles
 
-## MODULE 0: IDENTITY, TRUST & LICENSING
-- Google OAuth as the only login method — simplest onboarding, and it
-  removes password-storage risk entirely. Standard scopes return name,
-  email, and profile photo, and nothing about academic affiliation or
-  citation metrics — don't rely on Google for anything beyond basic identity
-- Optional ORCID iD field in the user's profile (a linked identifier, not a
-  second login path) — this is what actually carries scientist credibility
-  and powers the DOI-verified trust tier in Module 4
-- Mandatory license selection at publish time (CC-BY 4.0 default, CC0
-  optional) — needed from day one on a public data repository, not
-  retrofitted later
-- Every public spectrum links to the contributor's linked ORCID profile, if
-  they've added one
+### Raman first, modality contracts before expansion
 
-## MODULE 1: DATA INGESTION & PARSING
-- Try deterministic parsers first, for known vendor header formats (Renishaw
-  WiRE, Horiba LabSpec, WITec Project, Ocean Insight, Bruker OPUS, Thermo).
-  Fall back to an LLM call only for headers that don't match a known template
-- Cache successful LLM-derived parses by a hash of the header structure, so
-  the same instrument/software-version signature is never re-parsed by the
-  LLM twice — this is what keeps ingestion cheap and fast at scale, more than
-  the parsing method itself
-- Sanity-check extracted metadata against physically plausible ranges (laser
-  wavelength near a known line unless flagged custom, positive integration
-  time, etc.)
-- Show extracted metadata to the user for confirm/edit before it's committed
-  — on a reproducibility-focused platform, metadata accuracy is the product
-- Run ingestion (especially any LLM call) as an async job, not inline in the
-  upload request
-- Optional LLM-assisted rename suggestion for uploaded files, so filenames
-  stay consistent and easier for both users and the header-parsing step to
-  work with
+Raman is the only operational modality in the first launch. The platform may
+share identity, ownership, provenance, storage, and publication concepts
+across Raman, NMR, and mass spectrometry, but it must not pretend that a
+two-column Raman array is a universal representation.
 
-## MODULE 2: TRACEABLE PROCESSING PIPELINE
-- Keep raw-immutable-in-storage + processing-steps-as-a-JSON-ledger — this is
-  the strongest part of the original design and the right call for
-  reproducibility
-- Preprocessing suite explicitly includes SNV and MSC normalization and
-  dedicated fluorescence-background suppression, not just generic "baseline
-  correction" — real-world Raman data (biological, environmental, industrial
-  samples) is very often fluorescence-swamped, and handling this well is a
-  genuine, specific edge, not a commodity feature
-- Cache processed output keyed by hash(raw_file_id + ledger) so repeated
-  views don't recompute the same pipeline
-- Version-stamp each ledger step with the exact algorithm + parameters, not
-  just a method name, so ledgers stay replayable as the codebase evolves
-- Add a Draft (private) vs. Published (public, DOI-linked) state. Users can
-  process and explore entirely privately — this is the free-tool hook that
-  earns trust before asking for data. Publishing is a distinct, explicit
-  action, with an optional embargo (private now, auto-released on a set date
-  or manual trigger) for pre-publication data, mirroring Zenodo/Figshare
-- Let users save a named processing routine (a reusable ledger template) and
-  reapply it to new uploads in one action; execution can run server-side or
-  be dispatched to a local agent (see Phase 2 compute tiers)
+NMR and mass spectrometry will each be separate, accepted verticals with their
+own canonical data model, metadata profile, quality checks, parsers,
+algorithms, fixtures, and similarity rules. No cross-modality comparison or
+processing is allowed without an explicitly validated scientific contract.
 
-## MODULE 3: VISUALIZATION & CORE UX
-- Landing experience drops the user straight into the toolbox (upload/input
-  box) on first load, not a static informational page — closer to opening a
-  chat app than reading an academic poster, so it's low-friction enough that
-  even long-time Raman users fold it into their routine
-- Apache ECharts over Plotly for mobile weight/performance
-- Downsample large arrays (e.g. LTTB algorithm) before sending to the client
-  for high-resolution or hyperspectral-adjacent data
-- Auto-populate paper metadata via Crossref/DataCite DOI lookup rather than
-  manual entry
+### Product principles
 
-## MODULE 4: DISCOVERY, LIBRARY SEARCH & VALIDATION
-- Core search stays on objective metadata (material type, excitation
-  wavelength, SNR) — define the SNR calculation once, explicitly, and apply
-  it consistently so it's actually comparable across submissions
-- Spectral similarity / library search: cosine similarity or
-  correlation-based matching returning nearest-neighbor spectra from the
-  database. Prioritize this — it plays directly to the ML background behind
-  this project
-- Personal reference library: a private per-user collection, separate from
-  the shared commons, searchable on its own, with individual entries
-  promotable into the public database
-- Trust tiers, surfaced as a filter: "DOI-verified" (linked to a published,
-  peer-reviewed paper) vs. "community" (unreviewed) — distinct from social
-  voting
-- Social features (upvote/comment) stay quarantined to a separate Trending
-  feed and never affect core search ranking
-- Basic rate limiting on uploads and votes to blunt spam/abuse
+- Raw source files are immutable and recoverable.
+- The user confirms metadata; AI may suggest, never silently decide.
+- Every displayed or published result is traceable to source data and exact
+  processing steps.
+- Privacy defaults to private; publishing is explicit and reversible only by
+  creating a new access state, never by deleting provenance.
+- Search answers scientific questions; social popularity belongs only in
+  community surfaces.
+- Build for hundreds to low thousands of users, measure bottlenecks, then add
+  infrastructure deliberately.
+- AI output is untrusted input. It may return validated structured extraction
+  or a proposed mapping, but it may never execute generated code or modify a
+  user dataset without confirmation and isolation.
 
-## MODULE 5: SECURITY, LOGGING & OPERATIONS
-- Secrets (OAuth secret, LLM API key, DB credentials, R2 tokens) live only
-  in environment variables or the hosting platform's secret manager — never
-  in the git repo, even a private one. Commit a `.env.example` with empty
-  placeholders instead
-- Validate uploaded files by content, not file extension; enforce a size
-  limit; run header/spectrum parsing in a resource-limited step so a
-  malformed file can't crash or hang the server
-- Treat LLM output as untrusted input: strictly validate the returned JSON's
-  schema and value ranges before it's written anywhere — never let LLM
-  output drive a raw database query or file path directly
-- Use an ORM (e.g. SQLAlchemy) with parameterized queries, never hand-built
-  SQL strings, to close off SQL injection
-- The app's database user should be least-privilege, not a superuser;
-  automated daily backups stored somewhere other than the primary server
-- Row-level access control so Draft/embargoed spectra are visible only to
-  their owner — this is the one bug that would matter most, since it
-  directly breaks the platform's core trust promise
-- Rate limit uploads, votes, and login attempts
-- Turn on GitHub Dependabot (free) for automatic dependency vulnerability
-  alerts on both the Python and JS sides
-- Error tracking via Sentry (generous free tier) — captures stack traces and
-  request context automatically, which is what a bug report actually needs
-  to be actionable
-- Structured (JSON) application logs for key events (upload, processing run,
-  auth) — plain rotated log files are enough at this stage; no need for a
-  full log-aggregation stack yet
-- A simple in-app "report a bug" action that opens a GitHub Issue on the
-  repo, pre-filled with the session/error ID — consistent with the
-  GitHub-for-data framing, and free
+## 3. Brand, domains, and public surface
 
-## PHASE 2 (explicitly deferred — don't build in v1)
-- Advisory pipeline recommendations: given a spectrum's characteristics,
-  suggest a starting processing recipe through a chat-style interface, and,
-  after initial unsupervised exploration (clustering/PCA-style), suggest
-  candidate downstream approaches (regression, calibration, classification)
-  worth trying. Must stay suggest-and-let-the-user-confirm, never
-  auto-execute — a UX layer on top of Module 2's deterministic ledger, not a
-  replacement for it
-- Compute tiers: local CPU/GPU execution free by default (user's own
-  machine) for heavier ML workflows; a paid tier offers hosted cloud compute
-  for the same. The platform itself does not train or host custom models as
-  a core free feature — it validates, processes, and supports unsupervised
-  exploration (PCA-style), not model training
+### Recommended domain model
 
-## SCALING POSTURE
-- Launch: single FastAPI instance + Postgres + R2. Synchronous processing is
-  fine for MVP validation
-- Add a Redis-backed job queue (Celery or RQ) once upload volume or
-  processing time makes synchronous painful — this is also where LLM parsing
-  calls belong
-- Add a CDN in front of object storage, plus the processed-spectrum cache,
-  once read traffic grows
-- Add a read replica or dedicated search index (Postgres full-text, or
-  OpenSearch/pgvector for the similarity search) only when query patterns
-  actually demand it
-- Don't build any of the above ahead of evidence you need it
+| Host | Purpose | Rollout |
+| --- | --- | --- |
+| `spectra-in.site` | Product landing page, documentation, policy pages, account-level links, and cross-modality navigation | Launch |
+| `raman.spectra-in.site` | Raman workspace and Raman public commons | Launch application |
+| `api.spectra-in.site` | Stable API boundary shared by current and future modality applications | Launch application |
+| `nmr.spectra-in.site` | NMR workspace/commons after the NMR modality contract is accepted | Later |
+| `ms.spectra-in.site` | Mass-spectrometry workspace/commons after its modality contract is accepted | Later |
 
-## DEVELOPMENT DIRECTIVE
-- Begin by defining the PostgreSQL schema and the basic upload-to-storage
-  flow (Cloudflare R2, S3-compatible)
-- Build the backend in isolated, testable functions
-- The LLM is a functional text parser for ingestion only in v1 — never an
-  autonomous agent modifying data or pipelines unsupervised. The Phase 2
-  advisory feature, when built, only suggests
-- Keep all code lean, efficient, and scientifically precise
+Use one identity namespace, stable public record IDs, and canonical redirects
+across hosts. A Raman record may be displayed at the Raman host, while its
+citation and API identifier remain stable as the product adds modalities.
+
+### Brand transition
+
+The running code, UI labels, deployment instructions, and existing URLs still
+use the RamanHub/older-domain naming. Treat **Spectra Insight** and the hosts
+above as the target public brand. Update application copy, canonical URLs,
+OAuth redirect URIs, API CORS, deployment configuration, sitemap, sharing
+metadata, and redirects together in Stage 2 (trusted publication and public
+Raman commons), before issuing stable citation URLs—never as a partial rename.
+
+## 4. Current delivery baseline
+
+The table below is a truthful view of the current RamanHub implementation, not
+a claim that the public product is launch-ready.
+
+| Area | Current state | Notes |
+| --- | --- | --- |
+| Web app and API | **Shipped prototype** | React/Vite PWA, FastAPI, PostgreSQL, health checks, structured logs, and optional error reporting hooks exist. |
+| Identity | **Partial** | Guest sessions and Google OAuth flows exist. ORCID is an optional profile value, not a completed sign-in or verified-link flow. |
+| Raman ingestion | **Partial** | Deterministic vendor parsers, content/size checks, parser sanity checks, and an AI fallback exist. Jobs currently run in-process and are not durable across restarts. |
+| Personal library | **Partial** | Users can create private drafts, process them, and browse an owner-scoped library. Recovery and user-facing workflow polish remain incomplete. |
+| Processing toolbox | **Shipped prototype** | Versioned ledgers, cached outputs, routines, charts, despiking, smoothing, baseline correction, fluorescence suppression, normalization, crop, and resampling exist. |
+| Metadata and publishing | **Partial** | Draft, published, and embargo states plus licensing exist. Metadata completeness, DOI verification, persisted publication records, and provenance gates do not. |
+| Public discovery | **Partial** | Objective metadata filters and Raman similarity search exist. Similarity is a small-corpus, request-time comparison and needs QC/overlap controls before scale. |
+| Social/community | **Partial** | Comments, upvotes, and a separate trending surface exist. Posts, public profiles, moderation, reporting, notifications, and sharing are not complete. |
+| Multi-spectrum analysis | **Deferred** | PCA, clustering, regression/classification workflows, analysis artifacts, local workers, and hosted jobs are not implemented. |
+| NMR and mass spectrometry | **Schema preparation only** | Modality enums/registries exist, but ingestion, representation, algorithms, and discovery are Raman-only. |
+| Production operations | **Partial** | Deployment templates and operations notes exist. Production secrets, R2, backups, legal copy, durable jobs, and launch observability must be completed before public launch. |
+
+## 5. Product domain model
+
+The following boundaries keep the three product areas connected without
+conflating their rules.
+
+```text
+Researcher / identity
+        │ owns
+        ▼
+Personal workspace ── contains ──► immutable raw file
+        │                                  │
+        │                                  ▼
+        │                         ingestion + metadata review
+        │                                  │
+        ▼                                  ▼
+private spectrum ── uses ──► processing ledger ── produces ──► derived output
+        │
+        │ explicit publication with license, provenance, and optional embargo
+        ▼
+public spectrum / dataset ── links ──► publication record / DOI snapshot
+        │                                      │
+        ├── appears in ──► objective scientific search and similarity discovery
+        └── may be announced by ──► social post, comments, reactions, reports
+```
+
+### Personal workspace
+
+The workspace is the default home for uploads. It holds private raw files,
+draft spectra, metadata revisions, processing ledgers, routines, and later
+analysis runs. A user can explore and download their data without publishing
+anything. A personal reference library is a workspace view, not a weaker copy
+of the public commons.
+
+### Toolbox
+
+The toolbox turns a selected private or public spectrum into transparent,
+replayable outputs. Its processing order, algorithm versions, parameters, and
+input identifiers are part of the record. The interface should guide users
+through defensible defaults while always allowing inspection and confirmation.
+
+### Public commons
+
+The commons contains only intentionally published records. It is optimized for
+metadata quality, provenance, licensing, citation, scientific search, and
+reuse—not engagement metrics. A publication can group one or more spectra or
+datasets, preserving author attribution and a stable citable landing page.
+
+### Community layer
+
+The community layer can announce public records, host discussion, and surface
+trending activity. It may use reactions and recency, but it never affects
+metadata filters, similarity rank, quality flags, or trust tier in core search.
+
+## 6. Core user journeys
+
+### A. Explore privately
+
+1. A guest or signed-in researcher uploads a Raman file.
+2. The system stores the original bytes immutably and starts ingestion.
+3. Deterministic parsing runs first; the AI fallback is used only when needed.
+4. The user reviews extracted metadata, parser confidence, quality flags, and
+   suggested naming before confirming a draft.
+5. The user visualizes the spectrum, builds a processing ledger, saves a
+   reusable routine, and keeps all results private by default.
+
+### B. Publish a trusted record
+
+1. The owner completes required Raman metadata and selects a license.
+2. The system validates the current data/QC state and captures immutable
+   provenance: raw checksum, parsing details, metadata revision, ledger, and
+   data representation version.
+3. The user links a DOI. The system resolves and stores a publication snapshot;
+   a DOI is only marked verified after the configured verification policy passes.
+4. The user publishes immediately or chooses an embargo date.
+5. The system creates a stable public record with citations, download rules,
+   author/ORCID attribution, and a clear trust/completeness display.
+
+### C. Discover and discuss
+
+1. A visitor searches the public commons by objective scientific fields.
+2. They inspect quality, provenance, license, processing history, and the
+   linked publication before using a record.
+3. They run only scientifically compatible Raman similarity searches.
+4. They can view related community posts, comment, react, report abuse, or
+   share the public record without altering scientific ranking.
+
+### D. Analyze a collection
+
+1. A researcher selects spectra they are allowed to use.
+2. The system records the selection, preprocessing contract, analysis
+   parameters, software versions, and output artifacts.
+3. Light analysis runs in the workspace; heavier work can later be sent to a
+   local worker or an explicitly metered hosted worker using the same contract.
+4. Results remain private unless the owner intentionally publishes them.
+
+## 7. Scientific data and provenance contracts
+
+These contracts are the prerequisite for trustworthy publishing and for any
+future modality work.
+
+### 7.1 Canonical Raman representation
+
+For Raman v1, the canonical processed representation is a one-dimensional,
+ordered set of:
+
+- **Raman shift / wavenumber** in `cm⁻¹`
+- **Intensity** with declared source/normalized units
+
+The canonicalization contract must define:
+
+- Axis direction, monotonicity, duplicate-point handling, missing-value rules,
+  numeric precision, and permitted interpolation behavior
+- A representation version and canonicalization version
+- The original raw object as the authoritative archival source
+- Whether the output is raw, processed, resampled, or normalized
+- The valid input range and any information lost during canonicalization
+
+NMR complex data, multidimensional arrays, MS `m/z` data, chromatograms, and
+vendor binary formats must be stored and modeled as modality-specific assets;
+they cannot be coerced into the Raman representation.
+
+### 7.2 Metadata contract
+
+Each modality owns a versioned metadata profile made of:
+
+| Level | Raman examples | Publication behavior |
+| --- | --- | --- |
+| Required | modality, axis/intensity meaning, excitation wavelength, acquisition context, material/sample description, owner, data license | Must pass before public publication |
+| Recommended | integration time, laser power, instrument/vendor, objective/grating, sample preparation, concentration, substrate, replicate details | Display completeness state; may be required for selected record types |
+| Optional/domain-specific | temperature, solvent, pH, batch, biological/industrial context, custom fields | Preserved with units and definitions |
+| Derived | SNR, axis range, point count, parser confidence, QC flags, processing status | Computed and versioned, never silently edited |
+
+The confirmed metadata schema is not merely free-form JSON. It must validate
+against the active modality profile at confirmation and again at publication,
+while preserving unknown source fields separately for traceability.
+
+### 7.3 Quality-control contract
+
+Every canonical Raman record should expose machine-readable, versioned flags:
+
+- Source/parser type and confidence
+- File integrity and canonicalization result
+- Axis monotonicity, range, resolution, point count, duplicates, and gaps
+- Signal/noise definition and result
+- Possible cosmic-ray spikes, fluorescence/background burden, saturation, or
+  invalid intensity conditions
+- Metadata completeness and manual-review state
+- Processing compatibility warnings
+
+Quality flags inform display, filtering, and similarity eligibility. They do
+not overwrite the raw source or claim to be scientific certification.
+
+### 7.4 Reproducibility and lineage contract
+
+A public spectrum or analysis output must be reconstructable from:
+
+- Immutable raw-file identifier, content checksum, storage object version, and
+  source filename/format facts
+- Parser identifier, parser version, parse source, and canonicalization version
+- User-confirmed metadata revision and active modality schema version
+- Ordered processing ledger schema, algorithm versions, exact parameters, and
+  generated ledger hash
+- Processing runtime/environment version and derived-output checksum
+- Parent/fork/source relationships and routine template, where applicable
+- License, publication state history, DOI/publication verification snapshot,
+  and timestamps
+
+Raw bytes are never overwritten. Corrections create a new metadata or derived
+revision linked to the same immutable source, rather than erasing history.
+
+### 7.5 Publication, license, embargo, and DOI contract
+
+- **Draft:** owner-visible private work; not present in public discovery.
+- **Embargoed:** owner-visible private work with a declared release date; public
+  visibility must be evaluated consistently in every endpoint and job.
+- **Published:** public, licensed, provenance-complete record.
+- **Withdrawn/superseded:** a future state that preserves a resolvable record
+  and reason without silently deleting citations or lineage.
+
+Publishing requires an accepted license and the required metadata/provenance
+gate. A DOI string is not evidence by itself. The system must resolve the DOI,
+persist a source snapshot (title, authors, journal, abstract where permitted,
+publication date, resolver/source, and retrieval time), record validation
+outcome, and reserve the **DOI-verified** label for records that pass the
+agreed policy.
+
+## 8. Platform contracts and safety boundaries
+
+### Identity and ORCID
+
+**Provisional recommendation:** use Google as the first sign-in method and let
+researchers link and verify an ORCID iD from their profile. This minimizes
+account-recovery ambiguity while still presenting ORCID on public scientific
+records. A second ORCID sign-in method should only be introduced after account
+linking, conflict resolution, and recovery behavior are explicitly designed.
+
+Guest access may support low-friction private exploration, but publishing,
+social interactions, saved routines, and persistent collections require a
+verified account.
+
+### Access control and storage
+
+Every resource has a consistent visibility policy: raw files, metadata,
+processed outputs, analysis artifacts, downloads, comments, posts, and
+publication snapshots. Public IDs must not become an authorization mechanism.
+
+Before a public beta, choose and document one enforcement model:
+
+1. database row-level security with a non-owner application role, or
+2. a central policy layer applied by every data access path and backed by
+   authorization regression tests.
+
+Object storage must remain private by default. Serve private assets through
+short-lived authorized URLs or a policy-enforcing application endpoint; never
+make a bucket broadly public to simplify previews.
+
+### AI-assisted ingestion
+
+The ingestion sequence is deterministic parser → validated structured fallback
+→ user confirmation. The fallback may extract metadata or propose a declarative
+mapping that a sandboxed, reviewed converter understands. It must never run
+arbitrary AI-generated code against production data or use raw file content
+beyond the user-approved processing boundary. Cache successful structural
+parses, enforce spending/time limits, and retain an auditable parse result.
+
+### Durable jobs and compute tiers
+
+In-process background jobs are acceptable for local development only. Before
+public beta or paid compute, ingestion, AI parsing, batch processing, and
+analysis must use durable, idempotent jobs with retry, cancellation,
+observability, and owner-aware authorization.
+
+The same versioned analysis contract must be executed by:
+
+- a **local worker** for free, user-controlled heavy workloads, and
+- a **hosted worker** for paid, quota-governed workloads.
+
+Hosted compute must have resource isolation, usage accounting, cancellation,
+audit logs, and an explicit payment/subscription decision before it is offered.
+
+### API and compatibility
+
+The platform has one stable API namespace at `api.spectra-in.site`. Before any
+external client, local worker, or modality-specific application depends on it,
+public endpoints must be versioned (for example, `/v1/...`) and their response
+schemas documented. Additive fields may be introduced within a version; removed
+or meaning-changing fields require a new major version, documented migration
+guidance, and a published deprecation window.
+
+The current unversioned internal API is a prototype interface. It must be
+migrated behind the first public API version before external integrations,
+public SDKs, or NMR/MS applications rely on it. Processing, metadata, QC, and
+similarity records continue to carry their own domain-specific versions; an API
+version does not replace scientific provenance versions.
+
+### Search and similarity
+
+Core discovery ranks by documented scientific inputs: modality, metadata,
+quality flags, provenance/trust filters, and a versioned similarity method.
+Social activity never participates.
+
+Raman similarity begins with exact small-corpus comparison only when records
+meet compatible axis, overlap, QC, and preprocessing requirements. Persist
+versioned feature vectors and benchmarks before adding a vector index or
+external search service. Indexing is an optimization decision driven by corpus
+size, latency, and relevance evaluation—not a substitute for a valid method.
+
+### Community, moderation, and legal readiness
+
+The community layer requires rate limits, reporting, moderation states, content
+retention/deletion policy, notification preferences, and clear separation
+between author claims and platform trust indicators. Terms, privacy, acceptable
+use, copyright/takedown, and data-license guidance must be reviewed before
+public launch; placeholder policy pages are not sufficient.
+
+### Operations
+
+Production requires:
+
+- Secrets only in the hosting secret manager; startup must reject insecure
+  default secrets in production.
+- Separate migration and runtime database credentials with least privilege.
+- Tested automated backups, off-primary retention, and restoration drills.
+- Structured application and job logs, error tracking, metrics, and alerts.
+- Dependency-update automation and a repeatable security review.
+- A documented incident, data-removal, and user-support process.
+
+## 9. Staged delivery roadmap
+
+### Stage 0 — Ratify the Spectra Insight foundation
+
+**Purpose:** make one product/technical source of truth before adding features.
+
+**Deliverables**
+
+- This architecture, decision register, and consistent brand/domain plan
+- Canonical Raman, metadata, QC, provenance, DOI, and publication contracts
+- Product-owner decisions for identity, license, moderation, hosting, and
+  local/hosted compute
+
+**Exit criteria**
+
+- A contributor can state exactly what qualifies as a publishable Raman record.
+- Private workspace, public commons, social feed, and objective search have
+  distinct data/visibility/ranking rules.
+- NMR/MS expansion criteria are documented rather than implied by enum values.
+
+### Stage 1 — Trustworthy private Raman beta
+
+**Purpose:** make the personal workspace reliable enough for invited researchers.
+
+**Deliverables**
+
+- Durable and recoverable ingestion with parser confidence and structured
+  failure states
+- Validated Raman metadata review and atomic draft creation
+- Reproducible pipelines, routines, QC display, provenance capture, and
+  private-library workflow improvements
+- Full private-data authorization audit and user-journey regression coverage
+
+**Exit criteria**
+
+- A researcher can upload, correct, process, save, reopen, and download a
+  private Raman record without data loss or ambiguous ownership.
+- A restart does not lose an accepted ingestion/processing job.
+- No unauthorized user can read a private raw or derived resource.
+
+### Stage 2 — Trusted publication and public Raman commons
+
+**Purpose:** make published records citable and scientifically defensible.
+
+**Deliverables**
+
+- Publish gates for metadata, license, quality, provenance, and DOI policy
+- Persisted publication/DOI records, stable public pages, and citation/export
+- Reliable embargo behavior, provenance/lineage views, and permanent redirects
+  from any temporary legacy public URLs
+- Public profiles and the approved ORCID-linking experience
+- Domain/OAuth/CORS/redirect migration to the accepted Spectra Insight hosts
+  before issuing stable public citations
+
+**Exit criteria**
+
+- Every public record clearly communicates its source, processing, metadata
+  completeness, license, and trust state.
+- DOI-verified has a documented and enforced meaning.
+- Public links remain stable and no private content leaks through previews,
+  downloads, or search.
+- No public record is issued a stable citation URL on a temporary or
+  legacy-domain host; the Spectra Insight domain release has been verified.
+
+### Stage 3 — Public commons and community
+
+**Purpose:** make public records discoverable and discussable without turning
+the scientific database into an engagement-ranking system.
+
+**Deliverables**
+
+- Dataset/paper announcements, comments, reactions, reporting, moderation,
+  notifications, and share previews
+- Public author/profile pages and clear community/trust labels
+
+**Exit criteria**
+
+- A visitor can find a public Raman record through objective search, inspect
+  its publication context, and participate in a moderated discussion.
+- Trending/community surfaces cannot change core scientific search results.
+
+### Stage 4 — Analysis, discovery, and measured scale
+
+**Purpose:** support meaningful multi-spectrum exploration and prepare demand-led
+scaling.
+
+**Deliverables**
+
+- Reproducible PCA/clustering-style analysis runs and visual outputs
+- Safe dataset selection/export and analysis provenance
+- Compatibility-gated, benchmarked Raman similarity with precomputed features
+- Durable local-worker and hosted-worker execution contracts
+
+**Exit criteria**
+
+- Analysis outputs can be reproduced from saved inputs and versions.
+- Similarity relevance and latency are measured against a representative corpus.
+- Hosted workloads have explicit limits, auditability, and a commercial model
+  before payment is enabled.
+
+### Stage 5 — New modalities, one vertical at a time
+
+**Purpose:** expand only when the shared platform has proved its trust model.
+
+**Recommended order:** NMR, then mass spectrometry, subject to user demand and
+available scientific validation partners.
+
+**Per-modality entry criteria**
+
+- Accepted canonical data and metadata/QC contract
+- Real vendor/sample fixtures and domain-expert validation
+- Modality-specific parsers, algorithms, visualization, and discovery rules
+- Clear rules for what can and cannot be compared to existing records
+
+**Exit criteria**
+
+- A new modality delivers a complete trustworthy journey, rather than a partial
+  upload form attached to Raman assumptions.
+
+## 10. Launch gates
+
+Do not announce a public service until all of the following are true:
+
+1. Production secrets are configured and insecure defaults cause startup failure.
+2. Private raw and derived data access has been independently tested.
+3. Ingestion jobs survive redeployments and report understandable failures.
+4. Published Raman records enforce metadata, license, provenance, and DOI
+   verification policy.
+5. Terms, privacy, content/moderation, data licensing, retention, and takedown
+   policies are reviewed for the jurisdictions and users being served.
+6. Backups run off the primary system and restoration has been tested.
+7. Error tracking, logs, basic alerts, and an owner response process exist.
+8. The custom-domain/OAuth/CORS/redirect configuration is deployed as one
+   verified release.
+
+## 11. Explicit product-owner decisions
+
+The following must be decided before the affected delivery stage begins:
+
+| Decision | Accountable role | Recommended default | Needed by |
+| --- | --- | --- | --- |
+| Initial login methods | Product owner | Google sign-in; verified ORCID profile link | Stage 1 |
+| ORCID as a second sign-in method | Product owner + technical lead | Defer until account-linking/recovery policy is designed | Stage 2 |
+| Default publication license | Product owner + scientific lead | CC BY 4.0, with CC0 where appropriate | Stage 2 |
+| DOI verification standard | Scientific lead + technical lead | Resolver-backed snapshot plus stated match/validation rules | Stage 2 |
+| Private-data enforcement model | Technical lead | Central policy coverage immediately; evaluate PostgreSQL RLS before public beta | Stage 1 |
+| Initial hosting path | Product owner + operations owner | Managed Postgres + private S3-compatible storage + one durable worker path | Stage 1 |
+| Hosted compute pricing | Product owner + operations owner | Do not enable until quotas, costs, billing, and support model are approved | Stage 4 |
+| Community moderation | Product owner | Named policy, reporting workflow, reviewer roles, retention/takedown rules | Stage 3 |
+| NMR versus MS next | Product owner + scientific lead | Choose using validated user demand, fixtures, and scientific partners | Stage 5 |
+
+See `docs/architecture-decisions.md` for the detailed decision register.
+
+## 12. Implementation boundaries
+
+This roadmap does **not** authorize automatic changes to scientific data,
+unreviewed generated parsers, NMR/MS support, payment providers, production
+hosting, or public launch. Each subsequent delivery task must implement its
+accepted contract, add targeted tests, and update this document when a
+provisional decision becomes final.

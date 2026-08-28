@@ -19,13 +19,22 @@ from uuid import UUID
 import numpy as np
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_user_optional
 from app.db.session import get_db
+from app.discovery.raman_similarity import (
+    FEATURE_VERSION,
+    compatible,
+    cosine_feature_similarity,
+    warm_features,
+)
 from app.models.enums import Modality, SpectrumState
 from app.models.processing_ledger import ProcessingLedger
+from app.models.publication import PublicationSnapshot
 from app.models.raw_file import RawFile
+from app.models.similarity import SimilarityFeature
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.processing.cache import get_or_compute
@@ -52,7 +61,6 @@ class SpectrumSearchResult(BaseModel):
     snr: float | None
     modality: str
     doi: str | None
-    owner_id: UUID
     published_at: datetime | None
     state: str
 
@@ -62,6 +70,7 @@ class SpectrumSearchResult(BaseModel):
 class SimilarSpectrumResult(BaseModel):
     spectrum: SpectrumSearchResult
     similarity: float
+    overlap_fraction: float
 
 
 def serialize_search_result(spectrum: Spectrum) -> SpectrumSearchResult:
@@ -156,7 +165,10 @@ def search_spectra(
     Module 4b's vote/comment counts must never appear in this endpoint's
     filtering or ordering.
     """
-    query = db.query(Spectrum).filter(Spectrum.state == SpectrumState.published)
+    query = db.query(Spectrum).filter(
+        Spectrum.state == SpectrumState.published,
+        Spectrum.moderation_status == "visible",
+    )
 
     if material_type:
         query = query.filter(Spectrum.material_type.ilike(f"%{material_type}%"))
@@ -178,9 +190,18 @@ def search_spectra(
             Spectrum.excitation_wavelength_nm <= excitation_wavelength_nm + tolerance,
         )
     if trust_tier == "doi_verified":
-        query = query.filter(Spectrum.doi.is_not(None))
+        query = query.join(
+            PublicationSnapshot, PublicationSnapshot.spectrum_id == Spectrum.id
+        ).filter(PublicationSnapshot.verification_status == "verified")
     elif trust_tier == "community":
-        query = query.filter(Spectrum.doi.is_(None))
+        query = query.outerjoin(
+            PublicationSnapshot, PublicationSnapshot.spectrum_id == Spectrum.id
+        ).filter(
+            or_(
+                PublicationSnapshot.id.is_(None),
+                PublicationSnapshot.verification_status != "verified",
+            )
+        )
 
     query = query.order_by(Spectrum.published_at.desc()).offset(offset).limit(limit)
     return [serialize_search_result(s) for s in query.all()]
@@ -193,52 +214,83 @@ def search_similar(
     db: Session = Depends(get_db),
     user: User | None = Depends(get_current_user_optional),
 ) -> list[SimilarSpectrumResult]:
-    """Cosine-similarity nearest-neighbor search: compares `spectrum_id`'s
-    processed (or raw) intensity array against every OTHER published
-    spectrum's array, returns the `top_k` most similar, sorted descending.
+    """Cosine nearest-neighbor search over persisted Raman feature vectors.
 
     The target itself must be published or owned by the requester (reuses
     `require_owner_or_public`, so drafts stay private); candidates are
-    always restricted to published spectra regardless of who's asking.
-
-    Deliberately O(n) full-corpus, in-Python: no vector index/pgvector/
-    caching layer. Fine for "hundreds to low thousands of users" per the
-    architecture doc's Scaling Posture; not fine at a much larger corpus
-    size, but that's a "when we have evidence we need it" problem, not a v1
-    one.
+    always restricted to visible published spectra regardless of who's asking.
+    A cold request warms missing compact features once; subsequent requests
+    query those features rather than replaying every raw file. The exact
+    scorer remains intentional until index-coverage/latency measurements show
+    that additional infrastructure is warranted.
     """
     target = db.get(Spectrum, spectrum_id)
     if target is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     require_owner_or_public(target, user)
 
-    target_wavenumbers, target_intensities = load_spectrum_arrays(target, db)
-    if target_intensities.size == 0:
-        return []
-
     candidates = (
         db.query(Spectrum)
-        .filter(Spectrum.state == SpectrumState.published, Spectrum.id != target.id)
+        .filter(
+            Spectrum.state == SpectrumState.published,
+            Spectrum.moderation_status == "visible",
+            Spectrum.id != target.id,
+        )
         .all()
     )
+    candidate_ids = [candidate.id for candidate in candidates]
+    try:
+        features = warm_features([target.id, *candidate_ids], db)
+    except Exception as exc:
+        raise HTTPException(status_code=422, detail=f"Similarity feature could not be built: {exc}") from exc
+    by_spectrum_id = {feature.spectrum_id: feature for feature in features}
+    target_feature = by_spectrum_id.get(target.id)
+    if target_feature is None or not target_feature.qc_eligible:
+        return []
 
-    scored: list[tuple[float, Spectrum]] = []
+    scored: list[tuple[float, float, Spectrum]] = []
     for candidate in candidates:
-        try:
-            cand_wavenumbers, cand_intensities = load_spectrum_arrays(candidate, db)
-        except Exception:  # noqa: BLE001, S112 - one bad candidate must not fail the whole search
+        feature = by_spectrum_id.get(candidate.id)
+        if feature is None:
             continue
-        if cand_intensities.size == 0:
-            continue
-        similarity = cosine_similarity(
-            target_wavenumbers, target_intensities, cand_wavenumbers, cand_intensities
-        )
-        if similarity is None:
-            continue
-        scored.append((similarity, candidate))
+        is_compatible, overlap = compatible(target_feature, feature)
+        if is_compatible:
+            scored.append((cosine_feature_similarity(target_feature, feature), overlap, candidate))
 
     scored.sort(key=lambda pair: pair[0], reverse=True)
     return [
-        SimilarSpectrumResult(spectrum=serialize_search_result(candidate), similarity=similarity)
-        for similarity, candidate in scored[:top_k]
+        SimilarSpectrumResult(
+            spectrum=serialize_search_result(candidate),
+            similarity=similarity,
+            overlap_fraction=overlap,
+        )
+        for similarity, overlap, candidate in scored[:top_k]
     ]
+
+
+@router.get("/index-status")
+def similarity_index_status(db: Session = Depends(get_db)) -> dict[str, int | str]:
+    """Measured exact-index coverage; avoids premature index infrastructure."""
+    eligible = (
+        db.query(Spectrum)
+        .filter(
+            Spectrum.state == SpectrumState.published,
+            Spectrum.moderation_status == "visible",
+            Spectrum.modality == Modality.raman,
+        )
+        .count()
+    )
+    indexed = (
+        db.query(SimilarityFeature)
+        .filter(
+            SimilarityFeature.feature_version == FEATURE_VERSION,
+            SimilarityFeature.qc_eligible.is_(True),
+        )
+        .count()
+    )
+    return {
+        "feature_version": FEATURE_VERSION,
+        "eligible_spectra": eligible,
+        "indexed_spectra": indexed,
+        "unindexed_spectra": max(eligible - indexed, 0),
+    }

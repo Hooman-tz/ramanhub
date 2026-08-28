@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { getTrending, type TrendingItem } from '../api/social';
+import { Card, EmptyState, SelectField, Skeleton } from '../components/ui';
 
 const WINDOW_OPTIONS = [1, 7, 30];
 
@@ -25,17 +26,19 @@ export default function TrendingPage() {
   }
 
   return (
-    <div>
-      <h1>Trending</h1>
-      <p className="hint">
-        Ranked by upvotes in the trailing window. This is a separate feed from
-        Search — it never affects core search ranking.
-      </p>
+    <div className="workspace-page">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Community signals</p>
+          <h1>Trending spectra</h1>
+          <p className="page-intro">Popular shared spectra, kept separate from objective scientific search results.</p>
+        </div>
+      </header>
 
-      <div className="field-row">
-        <label htmlFor="window-days">Window</label>
-        <select
+      <div className="trending-toolbar">
+        <SelectField
           id="window-days"
+          label="Time window"
           value={windowDays}
           onChange={(e) => setWindowDays(Number(e.target.value))}
         >
@@ -44,22 +47,24 @@ export default function TrendingPage() {
               Last {d} day{d === 1 ? '' : 's'}
             </option>
           ))}
-        </select>
+        </SelectField>
       </div>
 
       {error && <p className="error">{error}</p>}
-      {loading && <p>Loading trending spectra...</p>}
-      {!loading && items.length === 0 && <p>Nothing trending yet.</p>}
+      {loading && <Skeleton lines={4} height="3rem" />}
+      {!loading && items.length === 0 && <EmptyState title="Nothing is trending yet"><p>Community activity will appear here without changing search ranking.</p></EmptyState>}
 
-      <ol>
-        {items.map((item) => (
-          <li key={item.id}>
-            <Link to={`/spectra/${item.id}`}>{item.title ?? `Spectrum ${item.id}`}</Link>
-            {' — '}
-            {item.vote_count} vote{item.vote_count === 1 ? '' : 's'}
-          </li>
-        ))}
-      </ol>
+      {items.length > 0 && <Card className="trending-list">
+        <ol>
+          {items.map((item, index) => (
+            <li key={item.id}>
+              <span className="trending-list__rank">{String(index + 1).padStart(2, '0')}</span>
+              <Link to={`/spectra/${item.id}`}>{item.title ?? 'Untitled spectrum'}</Link>
+              <span className="trending-list__votes">{item.vote_count} vote{item.vote_count === 1 ? '' : 's'}</span>
+            </li>
+          ))}
+        </ol>
+      </Card>}
     </div>
   );
 }

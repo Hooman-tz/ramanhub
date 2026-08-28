@@ -1,6 +1,11 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, patch
 
+from app.doi_lookup import DoiMetadata
+from app.models.enums import FieldDataType, Modality
+from app.models.field_registry import MetadataFieldDefinition
+from app.models.publication import PublicationSnapshot
 from app.models.spectrum import Spectrum
 
 
@@ -39,6 +44,90 @@ def test_publish_requires_license_id(app_client, make_user, make_raw_file):
 
     resp = app_client.post(f"/spectra/{spectrum['id']}/publish", json={})
     assert resp.status_code == 422
+
+
+def test_publish_rejects_a_bare_doi_claim(app_client, make_user, make_raw_file):
+    owner = make_user()
+    app_client.set_current_user(owner)
+    spectrum = _create_spectrum(app_client, make_raw_file(owner))
+
+    resp = app_client.post(
+        f"/spectra/{spectrum['id']}/publish",
+        json={"license_id": "CC-BY-4.0", "doi": "10.1234/unverified"},
+    )
+
+    assert resp.status_code == 422
+    assert "verify" in resp.json()["detail"].lower()
+
+
+def test_doi_verification_persists_snapshot_before_publish(
+    app_client, make_user, make_raw_file, db_session
+):
+    owner = make_user()
+    app_client.set_current_user(owner)
+    spectrum = _create_spectrum(app_client, make_raw_file(owner))
+    metadata = DoiMetadata(
+        doi="10.1234/verified",
+        title="Verified Raman study",
+        authors=["Ada Lovelace"],
+        journal="Journal of Spectra",
+        year=2026,
+        url="https://doi.org/10.1234/verified",
+    )
+
+    with patch("app.routers.spectra.lookup_doi", new=AsyncMock(return_value=metadata)):
+        verified = app_client.post(
+            f"/spectra/{spectrum['id']}/doi/verify?doi=https%3A%2F%2Fdoi.org%2F10.1234%2FVERIFIED"
+        )
+
+    assert verified.status_code == 200, verified.text
+    assert verified.json()["doi"] == "10.1234/verified"
+    snapshot = db_session.query(PublicationSnapshot).filter_by(
+        spectrum_id=uuid.UUID(spectrum["id"])
+    ).one()
+    assert snapshot.verification_status == "verified"
+    assert snapshot.snapshot["title"] == "Verified Raman study"
+
+    published = app_client.post(
+        f"/spectra/{spectrum['id']}/publish", json={"license_id": "CC-BY-4.0"}
+    )
+    assert published.status_code == 200, published.text
+
+
+def test_metadata_edit_recomputes_quality_flags_before_publication(
+    app_client, make_user, make_raw_file, db_session
+):
+    owner = make_user()
+    app_client.set_current_user(owner)
+    db_session.add(
+        MetadataFieldDefinition(
+            modality=Modality.raman,
+            field_key="laser_wavelength_nm",
+            data_type=FieldDataType.number,
+            min_value=100,
+            max_value=800,
+        )
+    )
+    db_session.commit()
+    spectrum = _create_spectrum(app_client, make_raw_file(owner))
+
+    updated = app_client.patch(
+        f"/spectra/{spectrum['id']}",
+        json={
+            "confirmed_metadata": {
+                "modality": "raman",
+                "instrument_vendor": "Test Vendor",
+                "laser_wavelength_nm": 1064,
+                "spectral_range_cm1": "100-2000",
+                "sample_description": "Edited test sample",
+            }
+        },
+    )
+
+    assert updated.status_code == 200, updated.text
+    body = updated.json()
+    assert "laser_wavelength_nm" in body["quality_flags"]
+    assert body["publish_readiness"]["qc_state"] == "review"
 
 
 def test_publish_then_readable_by_anyone(app_client, make_user, make_raw_file):

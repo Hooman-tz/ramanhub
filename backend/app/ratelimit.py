@@ -53,6 +53,8 @@ class RateLimiter:
 _upload_limiter = RateLimiter(max_calls=20, window_seconds=3600)  # 20 uploads / hour
 _vote_limiter = RateLimiter(max_calls=60, window_seconds=3600)  # 60 vote-toggles / hour
 _comment_limiter = RateLimiter(max_calls=30, window_seconds=3600)  # 30 comments / hour
+_post_limiter = RateLimiter(max_calls=20, window_seconds=3600)  # posts/replies / hour
+_report_limiter = RateLimiter(max_calls=12, window_seconds=3600)  # abuse reports / hour
 # Login attempts are pre-auth (there's no user id yet at the point a client
 # hits the OAuth callback), so this one is keyed by client IP rather than
 # user id — the only identifier available at that point. 10/hour is generous
@@ -71,6 +73,14 @@ def rate_limit_votes(user: User = Depends(get_current_user)) -> None:
 
 def rate_limit_comments(user: User = Depends(get_current_user)) -> None:
     _comment_limiter.check(str(user.id))
+
+
+def rate_limit_posts(user: User = Depends(get_current_user)) -> None:
+    _post_limiter.check(str(user.id))
+
+
+def rate_limit_reports(user: User = Depends(get_current_user)) -> None:
+    _report_limiter.check(str(user.id))
 
 
 def rate_limit_login(request: Request) -> None:

@@ -12,7 +12,7 @@ export default function TermsPage() {
 
         <h3>The service</h3>
         <p>
-          RamanHub is a platform for sharing, processing, and discovering Raman spectroscopy
+          Spectra Insight is a platform for sharing, processing, and discovering Raman spectroscopy
           data. It is provided as-is, without warranty of any kind, during its early-access
           period.
         </p>

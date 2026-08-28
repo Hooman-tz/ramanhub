@@ -31,7 +31,6 @@ router = APIRouter(tags=["trending"])
 class TrendingItem(BaseModel):
     id: UUID
     title: str | None
-    owner_id: UUID
     published_at: datetime | None
     vote_count: int
 
@@ -59,9 +58,12 @@ def get_trending(
 
     vote_count_col = func.count(Vote.id).label("vote_count")
     rows = db.execute(
-        select(Spectrum.id, Spectrum.title, Spectrum.owner_id, Spectrum.published_at, vote_count_col)
+        select(Spectrum.id, Spectrum.title, Spectrum.published_at, vote_count_col)
         .join(Vote, Vote.spectrum_id == Spectrum.id)
-        .where(Spectrum.state == SpectrumState.published)
+        .where(
+            Spectrum.state == SpectrumState.published,
+            Spectrum.moderation_status == "visible",
+        )
         .where(Vote.created_at >= window_start)
         .group_by(Spectrum.id)
         .order_by(vote_count_col.desc(), Spectrum.published_at.desc())
@@ -73,7 +75,6 @@ def get_trending(
         TrendingItem(
             id=row.id,
             title=row.title,
-            owner_id=row.owner_id,
             published_at=row.published_at,
             vote_count=row.vote_count,
         )

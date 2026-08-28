@@ -18,15 +18,15 @@ from __future__ import annotations
 import numpy as np
 
 from app.models.raw_file import RawFile
+from app.raman_contract import canonicalize_raman_arrays
 from app.storage.s3_client import download_bytes
 
 
-def load_raw_spectrum(raw_file: RawFile) -> tuple[np.ndarray, np.ndarray]:
+def parse_two_column_raman(raw_bytes: bytes) -> tuple[np.ndarray, np.ndarray]:
     """Downloads `raw_file.storage_bucket/storage_key` and parses a
     two-column (wavenumber, intensity) text body, skipping blank/header/
     non-numeric lines. Returns `(wavenumbers, intensities)`, both 1-D float
     arrays of equal length (possibly empty if nothing parsed)."""
-    raw_bytes = download_bytes(raw_file.storage_bucket, raw_file.storage_key)
     text = raw_bytes.decode("utf-8", errors="ignore")
 
     wavenumbers: list[float] = []
@@ -47,6 +47,14 @@ def load_raw_spectrum(raw_file: RawFile) -> tuple[np.ndarray, np.ndarray]:
         intensities.append(intensity)
 
     return np.asarray(wavenumbers, dtype=float), np.asarray(intensities, dtype=float)
+
+
+def load_raw_spectrum(raw_file: RawFile) -> tuple[np.ndarray, np.ndarray]:
+    """Load a raw object into the canonical Raman array representation."""
+    raw_bytes = download_bytes(raw_file.storage_bucket, raw_file.storage_key)
+    wavenumbers, intensities = parse_two_column_raman(raw_bytes)
+    canonical_x, canonical_y, _flags = canonicalize_raman_arrays(wavenumbers, intensities)
+    return canonical_x, canonical_y
 
 
 def compute_snr(intensities: np.ndarray) -> float | None:

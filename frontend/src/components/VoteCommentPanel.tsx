@@ -104,7 +104,7 @@ export default function VoteCommentPanel({ spectrumId }: { spectrumId: string })
         {comments.map((c) => (
           <li key={c.id}>
             <p>{c.body}</p>
-            <small>{new Date(c.created_at).toLocaleString()}</small>
+            <small>{c.author.display_name} · {new Date(c.created_at).toLocaleString()}</small>
           </li>
         ))}
       </ul>

@@ -105,6 +105,7 @@ a.ui-button:hover {
 
 .ui-card {
   padding: var(--sp-5);
+  border-radius: var(--r-lg);
 }
 
 .ui-card + .ui-card {
@@ -117,6 +118,10 @@ a.ui-button:hover {
   margin: 0 0 var(--sp-3);
 }
 
+.ui-card__title:first-letter {
+  text-transform: uppercase;
+}
+
 /* --- Field ------------------------------------------------------------------ */
 
 .ui-field {
@@ -124,7 +129,13 @@ a.ui-button:hover {
   flex-direction: column;
   gap: var(--sp-1);
   margin-bottom: var(--sp-4);
-  max-width: 420px;
+  max-width: 100%;
+}
+
+.ui-field input,
+.ui-field select,
+.ui-field textarea {
+  width: 100%;
 }
 
 .ui-field--full {

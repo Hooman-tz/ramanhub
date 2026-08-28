@@ -1,11 +1,11 @@
-# Operations
+# Spectra Insight operations
 
-Pre-launch hardening notes for RamanHub (Module 5: Security, Logging &
-Operations). This covers the operational setup that lives outside the
-application code itself — DB permissions, backups, error tracking, and
-dependency updates.
+Pre-launch hardening notes for Spectra Insight (the RamanHub repository
+codename; Module 5: Security, Logging & Operations). This covers the
+operational setup that lives outside the application code itself — DB
+permissions, backups, error tracking, and dependency updates.
 
-## 1. Least-privilege database user
+## 1. Least-privilege database user and access enforcement
 
 **Local dev** currently uses a single broad Postgres role (`raman`, from
 `docker-compose.yml` / `.env.example`'s `POSTGRES_USER`) that owns the
@@ -48,36 +48,37 @@ ALTER DEFAULT PRIVILEGES FOR ROLE ramanhub_migrator IN SCHEMA public
 ALTER DEFAULT PRIVILEGES FOR ROLE ramanhub_migrator IN SCHEMA public
     GRANT USAGE, SELECT ON SEQUENCES TO ramanhub_app;
 
--- Row-Level Access Control note: the app enforces Draft/embargoed-spectrum
+-- Row-Level Access Control note: the current code enforces Draft/embargoed
 -- visibility at the query layer (SQLAlchemy filters keyed off owner_id /
--- draft state), not via Postgres RLS policies, per the current codebase.
--- If/when RLS policies are added, `ramanhub_app` (not a superuser/owner
--- role, which bypasses RLS by default) must be the role they're written
--- against, or they'll silently do nothing.
+-- draft state), not via Postgres RLS policies. This is a current
+-- implementation fact, not the accepted production decision.
+--
+-- ADR-011 in docs/architecture-decisions.md requires the technical lead to
+-- choose PostgreSQL RLS or an audited central policy layer before public beta.
+-- If RLS is selected, `ramanhub_app` (not a superuser/owner role, which
+-- bypasses RLS by default) must be the role policies are written against, or
+-- they will silently do nothing.
 ```
 
 Point `DATABASE_URL` (staging/prod) at `ramanhub_app`. Run
 `alembic upgrade head` as `ramanhub_migrator` (e.g. a one-off deploy step),
 never as the app's runtime connection.
 
-Hosted Postgres providers (Railway, Render, Supabase, RDS — see "Hosting &
-deployment" below) typically hand you one owner-level role by default;
-creating the two roles above against that managed instance is still worth
-doing rather than running the app as the provider-issued owner role.
+Managed Postgres providers typically hand you one owner-level role by default.
+Creating the two roles above against that managed instance is still worth doing
+rather than running the app as the provider-issued owner role. Select the
+hosting provider through the product-owner decision recorded in
+`docs/architecture-decisions.md`.
 
 ## 2. Automated backups
 
-**Preferred path: use the hosting provider's built-in backups.** Per
-`raman-platform-architecture-v2.md`'s "HOSTING & DEPLOYMENT" section, this
-project's realistic backend/Postgres hosts are Railway or Render (fast to
-start, no sponsorship needed) or the Digital Research Alliance of Canada
-(UBC ARC) cloud once sponsored. Railway and Render's managed Postgres both
-offer automated daily backups (with point-in-time recovery on paid tiers)
-with zero setup beyond enabling the option in their dashboard — this is
-strictly preferable to a self-managed cron job: it's off the primary
-server by construction (Module 5's "stored somewhere other than the
-primary server" requirement), needs no maintenance, and survives the
-backend instance itself being redeployed or destroyed.
+**Preferred path: use the selected hosting provider's managed backups.** The
+production hosting choice remains an owner decision in the Spectra Insight
+roadmap. When selecting a managed PostgreSQL provider, require automated daily
+backups, documented retention, and tested point-in-time recovery where
+available. This is preferable to a self-managed cron job because the backup is
+off the primary server by construction, needs less maintenance, and survives
+backend instance redeployments or destruction.
 
 If the Alliance/UBC ARC path is used instead (or as an off-provider
 secondary copy), a `pg_dump`-based script is the fallback:

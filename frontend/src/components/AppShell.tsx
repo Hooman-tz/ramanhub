@@ -46,10 +46,12 @@ const icons = {
 
 const NAV_ITEMS = [
   { to: '/upload', label: 'Upload', icon: icons.upload },
-  { to: '/search', label: 'Search', icon: icons.search },
   { to: '/library', label: 'Library', icon: icons.library },
+  { to: '/search', label: 'Search', icon: icons.search },
+  { to: '/routines', label: 'Processing', icon: icons.routines },
+  { to: '/analysis', label: 'Explore', icon: icons.search },
+  { to: '/commons', label: 'Commons', icon: icons.trending },
   { to: '/trending', label: 'Trending', icon: icons.trending },
-  { to: '/routines', label: 'Routines', icon: icons.routines },
 ];
 
 function initials(name: string): string {
@@ -70,8 +72,9 @@ export default function AppShell({ children }: { children: ReactNode }) {
       <aside className="shell__sidebar">
         <Link to="/" className="shell__brand">
           <img src="/favicon.svg" alt="" className="shell__brand-mark" />
-          RamanHub
+          <span>Spectra<span className="shell__brand-accent">Insight</span></span>
         </Link>
+        <p className="shell__workspace-label">Private workspace</p>
 
         <nav className="shell__nav" aria-label="Primary">
           {NAV_ITEMS.map((item) => (
@@ -86,6 +89,18 @@ export default function AppShell({ children }: { children: ReactNode }) {
               Sign in
             </NavLink>
           )}
+          {user && !user.is_guest && (
+            <>
+              <NavLink to="/notifications" className="shell__nav-link">
+                {icons.trending}
+                Notifications
+              </NavLink>
+              <NavLink to="/account" className="shell__nav-link">
+                {icons.login}
+                Account
+              </NavLink>
+            </>
+          )}
         </nav>
 
         <div className="shell__footer">
@@ -95,15 +110,16 @@ export default function AppShell({ children }: { children: ReactNode }) {
                 <img src={user.avatar_url} alt="" className="shell__user-avatar" />
               ) : (
                 <span className="shell__user-avatar">
-                  {user.is_guest ? 'G' : initials(user.name ?? user.email)}
+                  {user.is_guest ? 'G' : initials(user.display_name ?? user.email)}
                 </span>
               )}
               <span className="shell__user-name">
-                {user.is_guest ? 'Guest session' : (user.name ?? user.email)}
+                {user.is_guest ? 'Guest session' : (user.display_name ?? user.email)}
               </span>
             </div>
           )}
           <ReportBugButton />
+          <Link to="/upload" className="shell__footer-link">Start a new analysis <span aria-hidden="true">↗</span></Link>
           <nav className="shell__legal" aria-label="Legal">
             <Link to="/terms">Terms</Link> · <Link to="/privacy">Privacy</Link>
           </nav>

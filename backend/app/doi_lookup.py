@@ -26,6 +26,19 @@ USER_AGENT = "RamanHub/0.1 (mailto:noreply@example.com)"
 REQUEST_TIMEOUT_SECONDS = 5.0
 
 
+def normalize_doi(value: str) -> str | None:
+    """Normalize a user-entered DOI into the durable stored representation."""
+    doi = value.strip()
+    for prefix in ("https://doi.org/", "http://doi.org/", "doi:"):
+        if doi.lower().startswith(prefix):
+            doi = doi[len(prefix) :]
+            break
+    doi = doi.strip().lower()
+    if not doi.startswith("10.") or "/" not in doi or any(char.isspace() for char in doi):
+        return None
+    return doi
+
+
 class DoiMetadata(BaseModel):
     """Typed, validated shape for DOI-derived paper metadata. Every field
     besides `doi` is optional — Crossref records are frequently missing
@@ -118,8 +131,8 @@ async def lookup_doi(doi: str) -> DoiMetadata | None:
     raises) on a 404/not-found, a network error, or a malformed/unexpected
     response shape — callers should treat `None` as "no metadata available"
     and respond accordingly (e.g. a 404 from the wrapping router)."""
-    doi = doi.strip()
-    if not doi:
+    doi = normalize_doi(doi)
+    if doi is None:
         return None
 
     headers = {"User-Agent": USER_AGENT}

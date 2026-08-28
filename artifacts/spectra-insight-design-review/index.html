@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Spectra Insight — Design review sandbox</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <main class="review-shell">
+    <header class="review-header">
+      <div class="brand-lockup"><span class="brand-mark">SI</span><div><strong>Spectra Insight</strong><span>Design review sandbox</span></div></div>
+      <div class="review-meta"><span class="live-dot"></span><span>Exploration only</span><span class="meta-divider"></span><span>v0.3 · 14 Jun 2024</span></div>
+    </header>
+
+    <section class="review-intro">
+      <div>
+        <p class="kicker">Three directions / one product truth</p>
+        <h1>Make the boundary<br><em>impossible to miss.</em></h1>
+        <p class="intro-copy">A visual study for a Raman-first scientific workspace where private research, the public commons, and community conversation stay connected — without being confused.</p>
+      </div>
+      <div class="review-controls" aria-label="Review controls">
+        <label>Direction <select id="directionSelect"><option value="helix">01 / Helix</option><option value="field">02 / Field Notes</option><option value="atlas">03 / Signal Atlas</option></select></label>
+        <div class="segmented" role="group" aria-label="Viewport">
+          <button class="seg active" data-viewport="desktop">Desktop</button><button class="seg" data-viewport="mobile">Mobile</button><button class="seg" data-viewport="compare">Compare</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="space-map" aria-labelledby="map-title">
+      <div class="map-title"><span class="section-index">00</span><div><p class="kicker">Persistent space map</p><h2 id="map-title">One commons, three permissions.</h2></div></div>
+      <div class="map-rail">
+        <button class="space-node private active" data-space="my-lab"><span class="node-number">01</span><strong>My Lab</strong><small>Private by default</small></button>
+        <span class="map-connector"></span>
+        <button class="space-node public" data-space="commons"><span class="node-number">02</span><strong>Commons</strong><small>Published + citable</small></button>
+        <span class="map-connector"></span>
+        <button class="space-node social" data-space="feed"><span class="node-number">03</span><strong>Feed</strong><small>Conversation layer</small></button>
+      </div>
+      <p class="map-note" id="mapNote">Private work stays yours. Publication status is a scientific decision — never a popularity signal.</p>
+    </section>
+
+    <section class="direction-stage" id="directionStage">
+      <div class="direction-heading"><div><span class="direction-code">DIRECTION 01</span><h2 id="directionName">Helix</h2><p id="directionRationale">Quiet authority for researchers who need to move from raw signal to trusted record with confidence.</p></div><div class="direction-tags" id="directionTags"><span>Precision</span><span>Layered depth</span><span>Warm signal blue</span></div></div>
+      <div class="view-label"><span id="viewLabel">Desktop treatment</span><span class="view-rule"></span><span>Representative content / same data</span></div>
+      <div class="screens" id="screens">
+        <article class="product-screen" data-screen="my-lab" aria-label="My Lab screen">
+          <div class="screen-top"><div class="screen-brand"><span class="tiny-mark">SI</span><b>Spectra<span>Insight</span></b></div><span class="screen-space private-label">MY LAB</span><button class="icon-button" aria-label="Open menu">≡</button></div>
+          <div class="screen-body lab-body">
+            <div class="screen-nav"><span class="nav-selected">Home</span><span>Library</span><span>Upload</span><span>Processing</span><span>Explore</span></div>
+            <div class="profile-banner"><div class="avatar">MC</div><div><p class="overline">Researcher home</p><h3>Dr. Maya Chen</h3><p>Materials Characterization Lab · Raman spectroscopy</p></div><button class="subtle-button">Edit profile</button></div>
+            <div class="lab-grid"><div class="private-card featured"><div class="card-head"><div><p class="overline">Needs your attention</p><h4>Hydrated silica — batch 04</h4></div><span class="status warning">Needs metadata review</span></div><SpectrumChart compact="true"></SpectrumChart><div class="metric-row"><span><b>532</b> nm excitation</span><span><b>1,024</b> points</span><span><b>38.4</b> SNR</span></div><button class="text-action">Continue review <span>→</span></button></div><div class="private-card quick-card"><p class="overline">Private workspace</p><h4>Good afternoon, Maya.</h4><p>Keep raw files, revisions, and processing ledgers together before you publish.</p><div class="quick-links"><button>Upload a spectrum <span>+</span></button><button>Open Library <span>→</span></button></div></div></div>
+          </div>
+        </article>
+        <article class="product-screen" data-screen="library" aria-label="Private Library screen">
+          <div class="screen-top"><div class="screen-title"><span class="back">←</span><div><span class="overline">My Lab / workspace</span><h3>Library</h3></div></div><button class="primary-button">Upload spectrum</button></div>
+          <div class="screen-body library-body"><div class="library-toolbar"><div><p class="screen-intro">Your spectra, processing history, and publication readiness.</p><span class="private-pill">Private workspace</span></div><div class="filter-tabs"><button class="active">All 12</button><button>Drafts 3</button><button>Published 9</button></div></div><div class="library-table"><div class="table-row table-head"><span>Title</span><span>Visibility</span><span>Acquisition</span><span>Readiness</span></div><div class="table-row selected-row"><span><b>Hydrated silica — batch 04</b><small>Raman · updated 18 min ago</small></span><span><i class="lock">▣</i> Private draft</span><span>532 nm · 1,024 pts</span><span class="status warning">Needs review</span><span class="row-arrow">→</span></div><div class="table-row"><span><b>Sol-gel series — batch 02</b><small>Raman · updated yesterday</small></span><span><i class="lock">▣</i> Private draft</span><span>785 nm · 2,048 pts</span><span class="status neutral">Processing</span><span class="row-arrow">→</span></div><div class="table-row"><span><b>Quartz reference spectrum</b><small>Raman · published 07 Jun</small></span><span><i class="globe">○</i> Public record</span><span>532 nm · 1,024 pts</span><span class="status good">Ready</span><span class="row-arrow">→</span></div></div><p class="privacy-note"><span>▣</span> Nothing in Library is public until you explicitly publish it. This is not a weaker copy of Commons.</p></div>
+        </article>
+        <article class="product-screen" data-screen="commons" aria-label="Commons screen">
+          <div class="screen-top"><div class="screen-title"><span class="back">←</span><div><span class="overline">Public scientific database</span><h3>Commons</h3></div></div><button class="outline-button">Search records</button></div>
+          <div class="screen-body commons-body"><div class="commons-hero"><div><p class="overline">Raman reference library</p><h3>Find what is <em>citable.</em></h3><p>Search by material, acquisition, provenance, and publication — not engagement.</p></div><div class="search-box"><span>⌕</span> Search spectra, materials, DOIs… <kbd>⌘ K</kbd></div></div><div class="record-layout"><div class="record-main"><div class="record-badges"><span class="status good">Verified publication</span><span class="license">CC BY 4.0</span></div><h4>Quartz reference spectrum</h4><p class="record-byline">Dr. Maya Chen · Materials Characterization Lab</p><SpectrumChart></SpectrumChart><div class="record-stats"><span><b>532</b> nm excitation</span><span><b>1,024</b> points</span><span><b>38.4</b> SNR</span></div></div><aside class="record-aside"><p class="overline">Provenance</p><strong>Raw source + 3-step ledger</strong><div class="aside-line"></div><p class="overline">Publication</p><a href="#" class="doi">10.5281/zenodo.10482031 ↗</a><div class="aside-line"></div><p class="overline">Discovery note</p><p class="aside-copy">Scientific rank comes from metadata, quality, provenance, and similarity compatibility. Social activity is not used.</p><button class="primary-button full">Download dataset</button></aside></div></div>
+        </article>
+        <article class="product-screen" data-screen="feed" aria-label="Feed screen">
+          <div class="screen-top"><div class="screen-title"><span class="back">←</span><div><span class="overline">Publication-linked conversation</span><h3>Feed</h3></div></div><button class="primary-button">Share an update</button></div>
+          <div class="screen-body feed-body"><div class="feed-intro"><div><p class="overline">Community layer</p><h3>Talk around the work.</h3><p>Conversation can announce a record and ask a question. It cannot prove one.</p></div><span class="social-boundary">Social ≠ evidence</span></div><article class="feed-post"><div class="post-author"><div class="avatar small">MC</div><div><b>Dr. Maya Chen</b><span>Materials Characterization Lab · 2h ago</span></div><button class="more">···</button></div><h4>A cleaner baseline for hydrated silica</h4><p>After three transparent processing steps, the shoulder around 465 cm⁻¹ is easier to inspect. Sharing the record for discussion, not as a substitute for the methods.</p><SpectrumChart></SpectrumChart><div class="linked-context"><div><span class="overline">Linked publication / DOI</span><a href="#" class="doi">10.5281/zenodo.10482031 ↗</a></div><div><span class="overline">Linked dataset</span><a href="#" class="dataset-link">Quartz reference spectrum ↗</a></div></div><div class="activity"><span><b>18</b> reactions</span><span><b>6</b> comments</span><span><b>240</b> views <small>outreach only</small></span><span class="future">Future slot · saves</span><span class="future">Future slot · downstream reuse</span></div><div class="post-actions"><button>React</button><button>Comment</button><button>Share</button></div></article></div>
+        </article>
+      </div>
+    </section>
+
+    <section class="comparison"><div class="comparison-head"><div><span class="section-index">04</span><p class="kicker">Recommendation</p><h2>Choose the signal,<br>not the noise.</h2></div><p class="comparison-lede">All three directions hold the same product boundary. They differ in how much warmth, density, and visual memory they bring to the work.</p></div><div class="comparison-grid"><article class="compare-card helix-card"><span class="compare-num">01</span><h3>Helix</h3><p>Best default for the core product. The clearest hierarchy between private work and published evidence, with enough warmth for daily use.</p><strong>Recommend for: product foundation</strong></article><article class="compare-card field-card"><span class="compare-num">02</span><h3>Field Notes</h3><p>Best for onboarding and researcher identity. Editorial typography gives the profile and publication story more human presence.</p><strong>Recommend for: profile + storytelling</strong></article><article class="compare-card atlas-card"><span class="compare-num">03</span><h3>Signal Atlas</h3><p>Best for discovery and large-scale browsing. A brighter instrument-panel language makes provenance and navigation highly scannable.</p><strong>Recommend for: Commons + exploration</strong></article></div></section>
+    <section class="accessibility"><div><p class="kicker">Notes for review</p><h2>Readable under pressure.</h2></div><ul><li>Charts use a solid trace, point markers, grid, axis labels, and a text summary — never color alone.</li><li>Private, public, and social states use labels, icons, and structure in addition to color.</li><li>All controls are keyboard reachable; focus states and 44px mobile targets are part of the treatment.</li><li>Unavailable analytics are explicitly labeled as future metric slots, not live claims.</li></ul></section>
+    <footer class="review-footer"><span>Spectra Insight / design review sandbox</span><span>Private by default · provenance first · conversation separate</span></footer>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>

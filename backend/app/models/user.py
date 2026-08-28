@@ -1,8 +1,8 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, String, func, text
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy import Boolean, DateTime, String, Text, func, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -18,7 +18,20 @@ class User(Base):
     email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
-    orcid_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    orcid_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    orcid_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    orcid_name: Mapped[str | None] = mapped_column(String, nullable=True)
+    profile_handle: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    bio: Mapped[str | None] = mapped_column(Text, nullable=True)
+    affiliation: Mapped[str | None] = mapped_column(String, nullable=True)
+    research_interests: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True)
+    is_profile_public: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    is_moderator: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default=text("false")
+    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
     # Guest sessions: a real User row (so every ownership/row-level-access
     # check works unchanged) minted without Google login, with synthetic

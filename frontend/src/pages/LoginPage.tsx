@@ -19,7 +19,7 @@ export default function LoginPage() {
       <div className="upload-hero">
         <h1 className="upload-hero__title">You're signed in</h1>
         <p className="upload-hero__tagline">
-          Signed in as <strong>{user.name ?? user.email}</strong>.
+          Signed in as <strong>{user.display_name ?? user.email}</strong>.
         </p>
         {/* Anchor styled as a button — a real <button> may not nest inside
             a link. */}
@@ -32,9 +32,10 @@ export default function LoginPage() {
 
   return (
     <div className="upload-hero">
-      <h1 className="upload-hero__title">Welcome to RamanHub</h1>
+      <p className="eyebrow">Spectra Insight workspace</p>
+      <h1 className="upload-hero__title">Keep your research connected</h1>
       <p className="upload-hero__tagline">
-        Sign in to upload spectra, build processing pipelines, and publish to the commons.
+        Sign in to keep a private library, build replayable processing pipelines, and publish when your data is ready.
       </p>
       {/* Full page navigation — this is a redirect-based OAuth flow, not a fetch. */}
       <a href={getGoogleLoginUrl()} className="ui-button ui-button--primary">

@@ -93,3 +93,97 @@ jobs:
       # `npm run build` runs tsc first, so this covers type-checking too.
       - name: Type-check and build
         run: npm run build
+
+      # Type-checks the test files as well, which the production tsconfig
+      # deliberately excludes so a deploy can never fail on missing dev deps.
+      - name: Type-check tests
+        run: npm run typecheck:test
+
+      - name: Unit tests
+        run: npm run test
+
+  e2e:
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+
+    # Playwright drives the real app against a real, seeded API — the only
+    # place the frontend and backend are exercised together. Deliberately
+    # NOT stubbed: a browser test against mocks re-tests the mocks.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: raman
+          POSTGRES_PASSWORD: changeme
+          POSTGRES_DB: ramanhub
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+psycopg://raman:changeme@localhost:5432/ramanhub
+      JWT_SECRET: ci-only-not-a-real-secret
+      # Object storage as plain files on disk: R2/MinIO would be a second
+      # moving part for no added coverage of what these tests check.
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_DIR: storage-data
+      FRONTEND_URL: http://localhost:4173
+      VITE_API_BASE_URL: http://localhost:8000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install backend dependencies
+        run: uv sync --locked
+        working-directory: backend
+
+      - name: Migrate and seed
+        working-directory: backend
+        run: |
+          uv run alembic upgrade head
+          uv run python -m app.seed.seed_data
+          uv run python -m app.seed.demo_data
+
+      - name: Start the API
+        working-directory: backend
+        run: |
+          uv run uvicorn app.main:app --port 8000 &
+          # Wait for readiness rather than sleeping a fixed interval, which
+          # is the usual source of flaky first-request failures.
+          for i in $(seq 1 40); do
+            curl -sf http://localhost:8000/health && break
+            sleep 1
+          done
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps chromium
+        working-directory: frontend
+
+      - name: Run end-to-end tests
+        run: npm run test:e2e
+        working-directory: frontend
+
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: frontend/playwright-report/
+          retention-days: 7

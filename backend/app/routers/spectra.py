@@ -8,17 +8,22 @@ from __future__ import annotations
 
 import logging
 import uuid as uuid_module
-from datetime import datetime
+from datetime import UTC, datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user, get_current_user, get_current_user_optional
 from app.db.session import get_db
-from app.models.enums import SpectrumState
+from app.doi_lookup import lookup_doi, normalize_doi
+from app.ingestion.sanity_check import check as run_sanity_check
+from app.models.enums import IngestionStatus, SpectrumState
+from app.models.ingestion_job import IngestionJob
+from app.models.license import License
 from app.models.processing_ledger import ProcessingLedger
+from app.models.publication import Publication, PublicationSnapshot
 from app.models.raw_file import RawFile
 from app.models.spectrum import Spectrum
 from app.models.user import User
@@ -30,8 +35,15 @@ from app.processing.state_machine import (
     release_embargo_early,
     require_owner_or_public,
 )
+from app.raman_contract import checksum_bytes
+from app.schemas.ingestion import ExtractedMetadata
 from app.schemas.ledger import Ledger, LedgerStep
 from app.spectra_io import compute_snr, load_raw_spectrum
+from app.spectrum_lifecycle import (
+    ingestion_job_for_raw,
+    publication_readiness,
+    spectrum_provenance,
+)
 from app.storage.s3_client import download_bytes, upload_bytes
 
 router = APIRouter(tags=["spectra"])
@@ -71,11 +83,13 @@ class PublishRequest(BaseModel):
 class SpectrumResponse(BaseModel):
     id: UUID
     raw_file_id: UUID
-    owner_id: UUID
     modality: str
     title: str | None
     description: str | None
     confirmed_metadata: dict | None
+    quality_flags: dict | None = None
+    canonicalization_version: str | None = None
+    parent_spectrum_id: UUID | None = None
     material_type: str | None
     current_ledger_id: UUID | None
     license_id: str | None
@@ -83,9 +97,15 @@ class SpectrumResponse(BaseModel):
     embargo_release_at: datetime | None
     published_at: datetime | None
     doi: str | None
+    publication_id: UUID | None = None
+    moderation_status: str = "visible"
+    is_owner: bool = False
     created_at: datetime
     updated_at: datetime
     ledger_steps: list | None = None
+    current_ledger: dict | None = None
+    provenance: dict | None = None
+    publish_readiness: dict | None = None
 
     model_config = {"from_attributes": True}
 
@@ -139,7 +159,9 @@ def _recompute_derived_fields(spectrum: Spectrum, db: Session) -> None:
     spectrum.snr = compute_snr(intensities)
 
 
-def _serialize(spectrum: Spectrum, db: Session) -> SpectrumResponse:
+def _serialize(
+    spectrum: Spectrum, db: Session, viewer: User | None = None
+) -> SpectrumResponse:
     ledger_steps = None
     if spectrum.current_ledger_id is not None:
         ledger_row = db.get(ProcessingLedger, spectrum.current_ledger_id)
@@ -148,6 +170,15 @@ def _serialize(spectrum: Spectrum, db: Session) -> SpectrumResponse:
     payload = SpectrumResponse.model_validate(spectrum)
     payload.state = effective_state(spectrum)
     payload.ledger_steps = ledger_steps
+    payload.current_ledger = (
+        {"id": str(ledger_row.id), "steps": ledger_row.steps}
+        if spectrum.current_ledger_id is not None
+        and (ledger_row := db.get(ProcessingLedger, spectrum.current_ledger_id)) is not None
+        else None
+    )
+    payload.provenance = spectrum_provenance(spectrum, db)
+    payload.publish_readiness = publication_readiness(spectrum, db)
+    payload.is_owner = viewer is not None and spectrum.owner_id == viewer.id
     return payload
 
 
@@ -161,12 +192,29 @@ def _get_owned_spectrum_or_404(spectrum_id: UUID, user: User, db: Session) -> Sp
 @router.post("/spectra", response_model=SpectrumResponse, status_code=status.HTTP_201_CREATED)
 def create_spectrum(
     body: SpectrumCreate,
+    response: Response,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
 ) -> SpectrumResponse:
     raw_file = db.get(RawFile, body.raw_file_id)
     if raw_file is None or raw_file.owner_id != user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Raw file not found")
+
+    job = ingestion_job_for_raw(raw_file.id, db)
+    if (
+        job is None
+        or job.status != IngestionStatus.succeeded
+        or job.extracted_metadata_confirmed is None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Create a draft by confirming a completed ingestion job first.",
+        )
+
+    existing = db.query(Spectrum).filter(Spectrum.raw_file_id == raw_file.id).one_or_none()
+    if existing is not None:
+        response.status_code = status.HTTP_200_OK
+        return _serialize(existing, db, user)
 
     if body.current_ledger_id is not None:
         ledger_row = db.get(ProcessingLedger, body.current_ledger_id)
@@ -182,16 +230,21 @@ def create_spectrum(
         modality=raw_file.modality,
         title=body.title,
         description=body.description,
-        confirmed_metadata=body.confirmed_metadata,
+        confirmed_metadata=job.extracted_metadata_confirmed,
+        quality_flags=job.sanity_check_flags,
+        canonicalization_version=job.canonicalization_version,
         material_type=body.material_type,
         current_ledger_id=body.current_ledger_id,
         state=SpectrumState.draft,
     )
     _recompute_derived_fields(spectrum, db)
     db.add(spectrum)
+    db.flush()
+    job.draft_spectrum_id = spectrum.id
+    db.add(job)
     db.commit()
     db.refresh(spectrum)
-    return _serialize(spectrum, db)
+    return _serialize(spectrum, db, user)
 
 
 @router.get("/spectra/{spectrum_id}", response_model=SpectrumResponse)
@@ -204,7 +257,7 @@ def get_spectrum(
     if spectrum is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     require_owner_or_public(spectrum, user)
-    return _serialize(spectrum, db)
+    return _serialize(spectrum, db, user)
 
 
 @router.patch("/spectra/{spectrum_id}", response_model=SpectrumResponse)
@@ -231,7 +284,27 @@ def update_spectrum(
     if body.description is not None:
         spectrum.description = body.description
     if body.confirmed_metadata is not None:
-        spectrum.confirmed_metadata = body.confirmed_metadata
+        try:
+            confirmed = ExtractedMetadata.model_validate(body.confirmed_metadata)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Confirmed metadata does not satisfy the Raman profile: {exc}",
+            ) from exc
+        confirmed_metadata = confirmed.model_dump(mode="json")
+        job = ingestion_job_for_raw(spectrum.raw_file_id, db)
+        array_flags = {
+            key: value
+            for key, value in ((job.sanity_check_flags if job else spectrum.quality_flags) or {}).items()
+            if key == "array" or key.startswith("array.")
+        }
+        array_flags.update(run_sanity_check(confirmed, confirmed.modality, db))
+        spectrum.confirmed_metadata = confirmed_metadata
+        spectrum.quality_flags = array_flags
+        if job is not None:
+            job.extracted_metadata_confirmed = confirmed_metadata
+            job.sanity_check_flags = array_flags
+            db.add(job)
     if body.material_type is not None:
         spectrum.material_type = body.material_type
 
@@ -240,7 +313,67 @@ def update_spectrum(
     db.add(spectrum)
     db.commit()
     db.refresh(spectrum)
-    return _serialize(spectrum, db)
+    return _serialize(spectrum, db, user)
+
+
+@router.post("/spectra/{spectrum_id}/doi/verify", response_model=SpectrumResponse)
+async def verify_spectrum_doi(
+    spectrum_id: UUID,
+    doi: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_full_user),
+) -> SpectrumResponse:
+    """Persist resolver-backed DOI evidence before a verified label is shown."""
+    spectrum = _get_owned_spectrum_or_404(spectrum_id, user, db)
+    if spectrum.state != SpectrumState.draft:
+        raise HTTPException(status_code=400, detail="Only draft spectra can be updated")
+    normalized = normalize_doi(doi)
+    if normalized is None:
+        raise HTTPException(status_code=422, detail="Enter a valid DOI.")
+    metadata = await lookup_doi(normalized)
+    if metadata is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="The DOI could not be resolved through Crossref.",
+        )
+    snapshot = db.query(PublicationSnapshot).filter_by(spectrum_id=spectrum.id).one_or_none()
+    if snapshot is None:
+        snapshot = PublicationSnapshot(
+            spectrum_id=spectrum.id,
+            doi=normalized,
+            provider="crossref",
+            verification_status="verified",
+            snapshot=metadata.model_dump(mode="json"),
+            verified_at=datetime.now(UTC),
+        )
+    else:
+        snapshot.doi = normalized
+        snapshot.provider = "crossref"
+        snapshot.verification_status = "verified"
+        snapshot.snapshot = metadata.model_dump(mode="json")
+        snapshot.verified_at = datetime.now(UTC)
+    publication = db.query(Publication).filter(Publication.doi == normalized).one_or_none()
+    if publication is None:
+        publication = Publication(
+            doi=normalized,
+            provider="crossref",
+            verification_status="verified",
+            snapshot=metadata.model_dump(mode="json"),
+            verified_at=datetime.now(UTC),
+        )
+        db.add(publication)
+        db.flush()
+    else:
+        publication.provider = "crossref"
+        publication.verification_status = "verified"
+        publication.snapshot = metadata.model_dump(mode="json")
+        publication.verified_at = datetime.now(UTC)
+    spectrum.doi = normalized
+    spectrum.publication_id = publication.id
+    db.add_all([spectrum, snapshot, publication])
+    db.commit()
+    db.refresh(spectrum)
+    return _serialize(spectrum, db, user)
 
 
 @router.post("/spectra/{spectrum_id}/publish", response_model=SpectrumResponse)
@@ -254,11 +387,30 @@ def publish_spectrum(
 ) -> SpectrumResponse:
     spectrum = _get_owned_spectrum_or_404(spectrum_id, user, db)
     _recompute_derived_fields(spectrum, db)
+    if db.get(License, body.license_id) is None:
+        raise HTTPException(status_code=422, detail="Choose a valid publication license.")
+    if body.doi:
+        normalized = normalize_doi(body.doi)
+        if normalized is None or normalized != spectrum.doi:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="Verify this DOI on the draft before publishing.",
+            )
+    readiness = publication_readiness(spectrum, db)
+    if not readiness["ready"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "message": "Publication requirements are incomplete.",
+                "blockers": readiness["blockers"],
+                "warnings": readiness["warnings"],
+            },
+        )
     if body.embargo_release_at is not None:
-        spectrum = embargo(spectrum, body.license_id, body.embargo_release_at, db, doi=body.doi)
+        spectrum = embargo(spectrum, body.license_id, body.embargo_release_at, db, doi=spectrum.doi)
     else:
-        spectrum = publish(spectrum, body.license_id, db, doi=body.doi)
-    return _serialize(spectrum, db)
+        spectrum = publish(spectrum, body.license_id, db, doi=spectrum.doi)
+    return _serialize(spectrum, db, user)
 
 
 @router.post(
@@ -300,8 +452,20 @@ def fork_spectrum(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Raw file not found")
 
     raw_bytes = download_bytes(source_raw.storage_bucket, source_raw.storage_key)
+    if checksum_bytes(raw_bytes) != source_raw.content_hash:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Source raw-object checksum does not match its immutable record.",
+        )
     fork_key = f"{user.id}/{source_raw.content_hash}/fork-{uuid_module.uuid4().hex[:8]}-{source_raw.original_filename}"
     upload_bytes(source_raw.storage_bucket, fork_key, raw_bytes)
+    stored_fork_bytes = download_bytes(source_raw.storage_bucket, fork_key)
+    fork_checksum = checksum_bytes(stored_fork_bytes)
+    if fork_checksum != checksum_bytes(raw_bytes):
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Forked raw object could not be checksum-verified after storage.",
+        )
 
     forked_raw = RawFile(
         owner_id=user.id,
@@ -309,13 +473,34 @@ def fork_spectrum(
         storage_bucket=source_raw.storage_bucket,
         storage_key=fork_key,
         original_filename=source_raw.original_filename,
-        content_hash=source_raw.content_hash,
+        content_hash=fork_checksum,
+        storage_version=f"sha256:{fork_checksum}",
+        checksum_verified_at=datetime.now(UTC),
         file_size_bytes=source_raw.file_size_bytes,
         vendor_format=source_raw.vendor_format,
         upload_status=source_raw.upload_status,
     )
     db.add(forked_raw)
     db.flush()
+
+    source_job = ingestion_job_for_raw(source.raw_file_id, db)
+    fork_job = None
+    if source_job is not None:
+        fork_job = IngestionJob(
+            raw_file_id=forked_raw.id,
+            status=source_job.status,
+            parser_used=source_job.parser_used,
+            parser_version=source_job.parser_version,
+            parser_confidence=source_job.parser_confidence,
+            canonicalization_version=source_job.canonicalization_version,
+            header_hash=source_job.header_hash,
+            extracted_metadata_raw=source_job.extracted_metadata_raw,
+            extracted_metadata_confirmed=source_job.extracted_metadata_confirmed,
+            sanity_check_flags=source_job.sanity_check_flags,
+            confirmed_at=source_job.confirmed_at,
+            finished_at=datetime.now(UTC),
+        )
+        db.add(fork_job)
 
     fork = Spectrum(
         raw_file_id=forked_raw.id,
@@ -324,11 +509,17 @@ def fork_spectrum(
         title=f"{source.title} (fork)" if source.title else "Fork",
         description=source.description,
         confirmed_metadata=source.confirmed_metadata,
+        quality_flags=source.quality_flags,
+        canonicalization_version=source.canonicalization_version,
+        parent_spectrum_id=source.id,
         material_type=source.material_type,
         state=SpectrumState.draft,
     )
     db.add(fork)
     db.flush()
+    if fork_job is not None:
+        fork_job.draft_spectrum_id = fork.id
+        db.add(fork_job)
 
     # Replay the source's current ledger onto the fork so it opens looking
     # identical. Imported here (not at module top) to keep the router
@@ -352,7 +543,7 @@ def fork_spectrum(
     db.commit()
     db.refresh(fork)
 
-    return _serialize(fork, db)
+    return _serialize(fork, db, user)
 
 
 @router.post("/spectra/{spectrum_id}/release-embargo", response_model=SpectrumResponse)
@@ -363,4 +554,4 @@ def release_embargo(
 ) -> SpectrumResponse:
     spectrum = _get_owned_spectrum_or_404(spectrum_id, user, db)
     spectrum = release_embargo_early(spectrum, db)
-    return _serialize(spectrum, db)
+    return _serialize(spectrum, db, user)

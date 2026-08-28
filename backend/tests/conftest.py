@@ -8,6 +8,8 @@ failed) when it isn't reachable, mirroring the pattern already used in
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
+from hashlib import sha256
 
 import pytest
 from sqlalchemy import create_engine, text
@@ -113,6 +115,7 @@ def fake_s3(monkeypatch):
     monkeypatch.setattr("app.processing.cache.upload_bytes", upload_bytes)
     monkeypatch.setattr("app.processing.cache.download_bytes", download_bytes)
     monkeypatch.setattr("app.spectra_io.download_bytes", download_bytes)
+    monkeypatch.setattr("app.analysis.engine.download_bytes", download_bytes)
     # The fork endpoint copies raw bytes through its own imported names.
     monkeypatch.setattr("app.routers.spectra.upload_bytes", upload_bytes)
     monkeypatch.setattr("app.routers.spectra.download_bytes", download_bytes)
@@ -121,7 +124,8 @@ def fake_s3(monkeypatch):
 
 @pytest.fixture()
 def make_raw_file(db_session, fake_s3):
-    from app.models.enums import Modality, UploadStatus
+    from app.models.enums import IngestionStatus, Modality, UploadStatus
+    from app.models.ingestion_job import IngestionJob
     from app.models.raw_file import RawFile
 
     def _make(owner, content: bytes = b"100 1.0\n200 2.0\n300 5.0\n400 2.0\n500 1.0\n600 3.0\n"):
@@ -133,13 +137,42 @@ def make_raw_file(db_session, fake_s3):
             storage_bucket=settings.S3_BUCKET_RAW,
             storage_key=key,
             original_filename="spectrum.txt",
-            content_hash=str(uuid.uuid4()),
+            content_hash=sha256(content).hexdigest(),
+            storage_version=f"sha256:{sha256(content).hexdigest()}",
             file_size_bytes=len(content),
-            upload_status=UploadStatus.uploaded,
+            upload_status=UploadStatus.parsed,
+            checksum_verified_at=datetime.now(UTC),
         )
         db_session.add(raw_file)
         db_session.commit()
         db_session.refresh(raw_file)
+        job = IngestionJob(
+            raw_file_id=raw_file.id,
+            status=IngestionStatus.succeeded,
+            parser_used="test",
+            parser_version="test-1",
+            parser_confidence=1.0,
+            canonicalization_version="raman-1",
+            extracted_metadata_raw={
+                "modality": "raman",
+                "instrument_vendor": "Test Vendor",
+                "laser_wavelength_nm": 785.0,
+                "spectral_range_cm1": "100-2000",
+                "sample_description": "Test sample",
+            },
+            extracted_metadata_confirmed={
+                "modality": "raman",
+                "instrument_vendor": "Test Vendor",
+                "laser_wavelength_nm": 785.0,
+                "spectral_range_cm1": "100-2000",
+                "sample_description": "Test sample",
+            },
+            sanity_check_flags={},
+            confirmed_at=datetime.now(UTC),
+            finished_at=datetime.now(UTC),
+        )
+        db_session.add(job)
+        db_session.commit()
         return raw_file
 
     return _make

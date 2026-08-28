@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { getLicenses, publishSpectrum, updateSpectrum, type License, type Spectrum } from '../api/client';
-import { lookupDoi, type DoiMetadata } from '../api/visualization';
+import {
+  getLicenses,
+  publishSpectrum,
+  updateSpectrum,
+  verifySpectrumDoi,
+  type License,
+  type Spectrum,
+} from '../api/client';
+import { type DoiMetadata } from '../api/visualization';
 import { useAuth } from '../auth/useAuth';
 import { Button, Card, InputField, SelectField } from './ui';
 
@@ -21,13 +28,7 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
   const [publishing, setPublishing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // --- DOI lookup (auto-populate paper metadata instead of manual entry) ---
-  // Looked-up metadata is shown as a read-only preview for the user to
-  // review (never auto-submitted). "Use this metadata" persists
-  // title/description onto the draft via PATCH /spectra/{id}. The raw DOI
-  // string itself (once looked up, regardless of whether its metadata was
-  // "applied") is sent along with the publish request below — that's what
-  // marks the spectrum DOI-verified for Module 4's trust-tier search filter.
+  // --- DOI verification (persisted resolver evidence, never a bare string) ---
   const [doiInput, setDoiInput] = useState('');
   const [doiLookupLoading, setDoiLookupLoading] = useState(false);
   const [doiMetadata, setDoiMetadata] = useState<DoiMetadata | null>(null);
@@ -52,14 +53,14 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
     setDoiMetadata(null);
     try {
       setDoiLookupLoading(true);
-      const result = await lookupDoi(doiInput.trim());
-      if (result === null) {
-        setDoiNotFound(true);
-      } else {
-        setDoiMetadata(result);
-      }
+      const updated = await verifySpectrumDoi(spectrum.id, doiInput.trim());
+      const snapshot = updated.provenance?.publication?.snapshot;
+      setDoiMetadata((snapshot as DoiMetadata | undefined) ?? null);
+      onPublished(updated);
     } catch (err) {
-      setDoiError(err instanceof Error ? err.message : String(err));
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.startsWith('API error 404')) setDoiNotFound(true);
+      else setDoiError(message);
     } finally {
       setDoiLookupLoading(false);
     }
@@ -97,10 +98,6 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
       const updated = await publishSpectrum(spectrum.id, {
         license_id: licenseId,
         embargo_release_at: embargoDate ? new Date(embargoDate).toISOString() : null,
-        // Only send a DOI that actually resolved via lookup (doiMetadata is
-        // set) — an unverified/typo'd DOI string shouldn't be able to mark
-        // a spectrum "DOI-verified" for the trust-tier search filter.
-        doi: doiMetadata ? doiInput.trim() : null,
       });
       onPublished(updated);
     } catch (err) {
@@ -111,6 +108,7 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
   }
 
   if (spectrum.state !== 'draft') return null;
+  const readiness = spectrum.publish_readiness;
 
   // Guests keep drafts + the full processing toolbox, but publishing grants
   // a license to the commons — that needs a real identity. Their work
@@ -136,9 +134,31 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
         This spectrum is a private draft — process and explore freely. Publishing is an
         explicit, separate action.
       </p>
+      {readiness && (
+        <div className={`readiness readiness--${readiness.qc_state}`}>
+          <strong>{readiness.ready ? 'Ready for publication' : 'Publication checklist'}</strong>
+          {readiness.blockers.length > 0 && (
+            <ul>
+              {readiness.blockers.map((blocker) => (
+                <li key={blocker}>{blocker}</li>
+              ))}
+            </ul>
+          )}
+          {readiness.warnings.length > 0 && (
+            <details>
+              <summary>{readiness.warnings.length} quality/provenance note(s)</summary>
+              <ul>
+                {readiness.warnings.map((warning) => (
+                  <li key={warning}>{warning}</li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </div>
+      )}
 
       <InputField
-        label="Paper DOI (optional)"
+        label="Paper DOI (optional, resolver verified)"
         placeholder="10.1021/acs.analchem.xxxxxxx"
         value={doiInput}
         onChange={(e) => {
@@ -146,7 +166,7 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
           setDoiMetadata(null);
           setDoiNotFound(false);
         }}
-        hint="A resolved DOI marks this spectrum DOI-verified in search."
+        hint="Verification saves a Crossref metadata snapshot before a DOI trust label is shown."
       />
       <Button onClick={handleDoiLookup} loading={doiLookupLoading}>
         Look up
@@ -171,8 +191,8 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
             </p>
           )}
           <p className="hint">
-            This is a preview only — review it, then apply it to this draft's title/description
-            if it's correct.
+            This resolver snapshot is saved with the draft. Review it, then apply its title and
+            description to your draft if it is correct.
           </p>
           <Button onClick={handleApplyDoiMetadata} loading={applyingDoiMetadata}>
             Use this metadata
@@ -201,7 +221,12 @@ export default function DraftPublishToggle({ spectrum, onPublished }: Props) {
         hint="Private until this date, then automatically public — for pre-publication data."
       />
 
-      <Button variant="primary" onClick={handlePublish} loading={publishing}>
+      <Button
+        variant="primary"
+        onClick={handlePublish}
+        loading={publishing}
+        disabled={!licenseId || Boolean(readiness && !readiness.ready)}
+      >
         Publish
       </Button>
 
