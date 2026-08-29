@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy import text
 
 from app.activity import compute_activity
 from app.auth.deps import get_current_user, get_current_user_optional
@@ -210,3 +211,40 @@ def test_old_events_fall_outside_the_window(pin_client, handled, make_raw_file, 
     db_session.commit()
 
     assert compute_activity(owner.id, db_session, days=30).total == 0
+
+
+@pytest.mark.parametrize("session_tz", ["Pacific/Kiritimati", "Pacific/Niue"])
+def test_activity_buckets_in_utc_whatever_the_session_timezone(
+    pin_client, handled, make_raw_file, db_session, session_tz
+):
+    """The contribution chart must not move when the DB session's clock does.
+
+    This is a regression test for a bug that only showed itself after 17:00
+    local in America/Vancouver: the calendar was built from
+    `datetime.now(UTC).date()`, but the SQL used a bare `date(published_at)`,
+    which Postgres resolves in the SESSION timezone. Today's upload was then
+    filed under yesterday and today's square rendered empty.
+
+    Asserting against a fixed real timezone would only fail for part of the
+    day, so instead the session clock is forced to the two extremes either
+    side of the date line: UTC+14 and UTC-11. One of them is guaranteed to
+    be on a different calendar day from UTC at every instant, so the old
+    code fails this at any hour.
+    """
+    owner = handled()
+    pin_client.set_current_user(owner)
+    _make_spectrum(pin_client, make_raw_file(owner), db_session)
+
+    db_session.execute(text(f"SET TIME ZONE '{session_tz}'"))
+    try:
+        summary = compute_activity(owner.id, db_session, days=30)
+    finally:
+        db_session.execute(text("SET TIME ZONE 'UTC'"))
+
+    today_utc = datetime.now(UTC).date()
+    assert summary.total == 1
+    assert summary.days[-1].date == today_utc
+    assert summary.days[-1].spectra == 1, (
+        f"published now landed outside today's UTC bucket with session "
+        f"timezone {session_tz}: {[(str(d.date), d.spectra) for d in summary.days if d.spectra]}"
+    )

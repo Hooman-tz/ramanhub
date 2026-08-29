@@ -99,13 +99,38 @@ class Settings(BaseSettings):
     # LLM_HEADER_MAX_CHARS), and results are cached by header hash, so
     # frontier-model headroom buys very little here.
     #
-    # These two ids were CHECKED against OpenRouter's live /models catalogue,
-    # not guessed — an earlier version of this file shipped three plausible-
-    # looking slugs (qwen/qwen3-flash, qwen/qwen-turbo,
-    # mistralai/mistral-small-3.2-24b-instruct) and not one of them existed.
-    # Verify with `make check-llm ARGS='--list'` before changing them.
-    # qwen3.7-flash: tool calling, 1M context, ~$0.03 per Mtok in.
-    OPENROUTER_MODEL: str = "qwen/qwen3.7-flash"
+    # Every id here was checked with a REAL forced tool call, not read off
+    # the catalogue. Two separate lessons are baked into that sentence:
+    #
+    #   1. The slug must exist. An earlier version shipped three plausible-
+    #      looking names (qwen/qwen3-flash, qwen/qwen-turbo,
+    #      mistralai/mistral-small-3.2-24b-instruct) and not one was real.
+    #   2. Existing is not enough. /models advertises `tools` support for
+    #      the whole Qwen *flash* tier, but NOT ONE of qwen3.5-flash,
+    #      qwen3.6-flash, qwen3.7-flash or qwen3.8-flash will accept a
+    #      forced `tool_choice` — every one returns HTTP 404 "No endpoints
+    #      found that support the provided 'tool_choice' value". The flag in
+    #      the catalogue means "can be given tools", not "can be forced to
+    #      call one", and header extraction depends on forcing.
+    #
+    # So: `make check-llm ARGS='--list'` tells you what exists; only
+    # `make check-llm ARGS='--model <slug>'` tells you what works.
+    #
+    # Chosen on PASS RATE over 5 identical runs against the real Horiba
+    # header, not on one lucky call. Cheap small models are erratic here,
+    # and a single green run says almost nothing:
+    #
+    #     qwen/qwen3.5-27b     5/5   $0.00126/call
+    #     qwen/qwen3.8-27b     3/5   $0.00206/call
+    #     qwen/qwen3.5-9b      2/5   $0.00012/call
+    #     z-ai/glm-5.3-flash   0/5   $0.00020/call
+    #
+    # glm-5.3-flash passed the first time it was tried and then failed five
+    # straight; 9b did the reverse. Re-measure with several runs before
+    # swapping this, and treat one success as noise.
+    #
+    # Note 5 runs is a small sample — 5/5 is good evidence, not a guarantee.
+    OPENROUTER_MODEL: str = "qwen/qwen3.5-27b"
     # Comma-separated. Passed to OpenRouter's own `models` routing array, so
     # a provider outage, a model that refuses the tool call, OR A SLUG THAT
     # NO LONGER EXISTS falls through rather than failing the upload. That
@@ -113,6 +138,20 @@ class Settings(BaseSettings):
     # renamed and retired, and a hardcoded one fails inside a background
     # ingestion job where nobody sees it. `make check-llm` asks OpenRouter
     # what it actually serves today.
+    #
+    # Worth being precise about what this chain can and cannot save you
+    # from. OpenRouter falls through on HARD failures — an outage, a
+    # retired slug, an endpoint that refuses forced tool_choice. It does
+    # NOT fall through when a model returns confident nonsense, because a
+    # schema-valid wrong answer is a success as far as HTTP is concerned.
+    # So the chain buys availability, not accuracy; accuracy comes from the
+    # primary being reliable, which is why it is picked on pass rate above.
+    #
+    # Kept to one entry, from the same family but a different size. Models
+    # that measured below 5/5 are deliberately absent: promoting a 0/5 or
+    # 2/5 model on an outage would turn "upload failed, enter metadata by
+    # hand" into "upload silently recorded wrong instrument settings",
+    # which is far worse for a spectral database.
     OPENROUTER_FALLBACK_MODELS: str = "qwen/qwen3.8-27b"
 
     # Hard ceiling on the header text handed to the model. The extractor

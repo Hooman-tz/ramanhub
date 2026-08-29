@@ -54,7 +54,15 @@ class ActivitySummary(BaseModel):
 
 
 def _daily_counts(db: Session, column, filters) -> dict[date, int]:
-    day = func.date(column)
+    # Bucket in UTC, explicitly. A bare `date(col)` on a timestamptz makes
+    # Postgres resolve the date in the SESSION timezone, while the calendar
+    # below is built from `datetime.now(UTC).date()`. Those two disagree for
+    # any session not running on UTC: at 20:32 in America/Vancouver it is
+    # already the 29th in UTC, so today's uploads were being filed under the
+    # 28th and today's square rendered empty — which also broke the current
+    # streak. `timezone('UTC', col)` pins the bucket to the same clock the
+    # calendar uses.
+    day = func.date(func.timezone("UTC", column))
     rows = db.execute(select(day, func.count()).where(*filters).group_by(day)).all()
     out: dict[date, int] = {}
     for value, count in rows:
