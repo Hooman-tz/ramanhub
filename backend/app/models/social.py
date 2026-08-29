@@ -11,6 +11,7 @@ from sqlalchemy import (
     CheckConstraint,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
@@ -23,24 +24,47 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
 
+# Exactly one of (spectrum_id, finding_id) is set. Load-bearing, not
+# decorative: a row with both set would be counted twice (once per tally)
+# and a row with neither would be an orphan no delete path reaches.
+_ONE_OF_SPECTRUM_FINDING = (
+    "(spectrum_id IS NOT NULL)::int + (finding_id IS NOT NULL)::int = 1"
+)
+
 
 class Vote(Base):
     """One upvote from one user on one spectrum or one finding. Presence of a
     row IS the vote (no direction/value column) — voting again removes it
     (toggle), handled at the router layer.
-
-    `finding_id` was added in M1 (nullable) so the feed and findings router
-    can count finding votes; the router side that *creates* finding votes,
-    making `spectrum_id` nullable, and the partial-unique-index hardening all
-    land in M3. Until then only spectrum votes are written, so `spectrum_id`
-    stays NOT NULL and the existing `uq_vote_spectrum_user` still holds.
     """
 
     __tablename__ = "votes"
-    __table_args__ = (UniqueConstraint("spectrum_id", "user_id", name="uq_vote_spectrum_user"),)
+    __table_args__ = (
+        CheckConstraint(_ONE_OF_SPECTRUM_FINDING, name="ck_vote_one_target"),
+        # PARTIAL unique indexes, and the "partial" is the whole point.
+        # Postgres treats NULLs as distinct, so a plain
+        # UNIQUE(spectrum_id, user_id) would not constrain finding-votes at
+        # all — every one of them has spectrum_id NULL. Restricting each
+        # index to rows where its own target is NOT NULL makes each enforce
+        # exactly the pair it is about.
+        Index(
+            "uq_vote_spectrum_user",
+            "spectrum_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("spectrum_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_vote_finding_user",
+            "finding_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("finding_id IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    spectrum_id = mapped_column(UUID(as_uuid=True), ForeignKey("spectra.id"), nullable=False, index=True)
+    spectrum_id = mapped_column(UUID(as_uuid=True), ForeignKey("spectra.id"), nullable=True, index=True)
     finding_id = mapped_column(
         UUID(as_uuid=True), ForeignKey("findings.id", ondelete="CASCADE"), nullable=True, index=True
     )
@@ -50,15 +74,12 @@ class Vote(Base):
 
 class Comment(Base):
     __tablename__ = "comments"
-    # M1 keeps the original 2-way check (spectrum XOR post) untouched.
-    # `finding_id` is added as an unconstrained nullable column so the
-    # feed/findings router can count finding comments; M3 tightens this to a
-    # 3-way check and adds threading (`parent_id`), when finding comments are
-    # first written.
+    # Exactly one of spectrum / community-post / finding is the target.
     __table_args__ = (
         CheckConstraint(
-            "(spectrum_id IS NOT NULL) <> (post_id IS NOT NULL)",
-            name="ck_comment_has_one_target",
+            "(spectrum_id IS NOT NULL)::int + (post_id IS NOT NULL)::int "
+            "+ (finding_id IS NOT NULL)::int = 1",
+            name="ck_comment_one_target",
         ),
     )
 
@@ -68,6 +89,12 @@ class Comment(Base):
     finding_id = mapped_column(
         UUID(as_uuid=True), ForeignKey("findings.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    # Threaded replies. One level is enforced at the router, not here: deep
+    # nesting turns a scientific discussion into an unreadable tree, and a
+    # self-referencing FK can't express a depth limit anyway.
+    parent_id = mapped_column(
+        Integer, ForeignKey("comments.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     user_id = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     moderation_status: Mapped[str] = mapped_column(
@@ -75,6 +102,55 @@ class Comment(Base):
     )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+
+class Share(Base):
+    """One user re-broadcasting one spectrum or Finding into their followers'
+    feeds.
+
+    Same dual-target shape as `Vote`, and the same partial-unique-index
+    reasoning applies verbatim — see the comment on `Vote.__table_args__`.
+    A plain UNIQUE(spectrum_id, user_id) would leave finding-shares
+    completely unconstrained, because every one of them has a NULL
+    spectrum_id and Postgres treats NULLs as distinct.
+
+    Why a table rather than a counter column: a share has to name *who*
+    shared, or `filter=following` cannot surface "someone you follow shared
+    this". `comment` lets a sharer add their own framing — the quote-post
+    shape. Optional, because most shares are a bare signal boost.
+    """
+
+    __tablename__ = "shares"
+    __table_args__ = (
+        CheckConstraint(_ONE_OF_SPECTRUM_FINDING, name="ck_share_one_target"),
+        Index(
+            "uq_share_spectrum_user",
+            "spectrum_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("spectrum_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_share_finding_user",
+            "finding_id",
+            "user_id",
+            unique=True,
+            postgresql_where=text("finding_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    spectrum_id = mapped_column(
+        UUID(as_uuid=True), ForeignKey("spectra.id"), nullable=True, index=True
+    )
+    finding_id = mapped_column(
+        UUID(as_uuid=True), ForeignKey("findings.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    user_id = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
+    comment: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), index=True
+    )
 
 
 class CommunityPost(Base):

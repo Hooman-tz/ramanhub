@@ -72,11 +72,22 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str = ""
     GOOGLE_CLIENT_SECRET: str = ""
     GOOGLE_REDIRECT_URI: str = "http://localhost:8000/auth/callback"
-    # ORCID is only an optional proof-of-control link for a researcher
-    # profile. It is deliberately not an application login provider.
+
+    # GitHub OAuth (beta sign-in provider)
+    GITHUB_CLIENT_ID: str = ""
+    GITHUB_CLIENT_SECRET: str = ""
+    GITHUB_REDIRECT_URI: str = "http://localhost:8000/auth/github/callback"
+
+    # ORCID serves two flows:
+    #   - proof-of-control *linking* for an existing account
+    #     (ORCID_REDIRECT_URI, handled by routers/orcid.py), and
+    #   - application *sign-in* (ORCID_LOGIN_REDIRECT_URI, handled by
+    #     routers/auth.py). Two redirect URIs so the callbacks stay on
+    #     distinct paths.
     ORCID_CLIENT_ID: str = ""
     ORCID_CLIENT_SECRET: str = ""
     ORCID_REDIRECT_URI: str = "http://localhost:8000/users/me/orcid/callback"
+    ORCID_LOGIN_REDIRECT_URI: str = "http://localhost:8000/auth/orcid/callback"
 
     # JWT / auth
     JWT_SECRET: str = DEFAULT_JWT_SECRET

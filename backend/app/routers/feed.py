@@ -25,8 +25,9 @@ paging can repeat or skip an item when scores change mid-scroll — but the
 tiebreak on a unique key keeps that rare, and cursors are a real complexity
 cost to add before there's evidence of the problem (Scaling Posture).
 
-Note: `share_count` is not part of the M1 blend — the `shares` table lands
-in M2. Until then `relevance_score` runs without its `share_count` arg.
+Both `vote_count` and `share_count` feed `relevance_score`: a share is the
+more expensive signal to fake (it costs the sharer reputation), so it is
+weighted above a vote per `app.ranking`.
 """
 from __future__ import annotations
 
@@ -44,7 +45,7 @@ from app.db.session import get_db
 from app.models.enums import FindingState, SpectrumState
 from app.models.finding import Finding, FindingSpectrum
 from app.models.graph import Follow
-from app.models.social import Comment, Vote
+from app.models.social import Comment, Share, Vote
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.ranking import relevance_score, vote_count_subquery
@@ -160,10 +161,16 @@ def get_feed(
             .where(FindingSpectrum.finding_id == Finding.id)
             .scalar_subquery()
         )
+        shares = (
+            select(func.count(Share.id))
+            .where(Share.finding_id == Finding.id)
+            .scalar_subquery()
+        )
         score = relevance_score(
             votes,
             func.coalesce(Finding.published_at, Finding.created_at),
             Finding.doi,
+            share_count=shares,
         )
 
         query = (
@@ -216,10 +223,16 @@ def get_feed(
             .where(Comment.spectrum_id == Spectrum.id)
             .scalar_subquery()
         )
+        shares = (
+            select(func.count(Share.id))
+            .where(Share.spectrum_id == Spectrum.id)
+            .scalar_subquery()
+        )
         score = relevance_score(
             votes,
             func.coalesce(Spectrum.published_at, Spectrum.created_at),
             Spectrum.doi,
+            share_count=shares,
         )
 
         query = (

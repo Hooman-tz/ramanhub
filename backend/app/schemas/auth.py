@@ -14,7 +14,9 @@ class UserOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: uuid.UUID
-    email: str
+    # Nullable since M3: ORCID sign-in (and GitHub accounts that hide their
+    # email) create users with no email address.
+    email: str | None = None
     display_name: str | None = None
     avatar_url: str | None = None
     orcid_id: str | None = None

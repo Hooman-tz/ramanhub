@@ -12,7 +12,11 @@ def social_client(db_session):
     return build_social_client(db_session)
 
 
-def _create_spectrum(client, raw_file, title="Test spectrum"):
+def _create_spectrum(client, make_raw_file, owner, title="Test spectrum"):
+    # A fresh raw file per spectrum: `POST /spectra` is idempotent per
+    # raw_file_id (it returns the existing draft with 200 on a repeat), so
+    # every spectrum this test needs must originate from its own upload.
+    raw_file = make_raw_file(owner)
     resp = client.post("/spectra", json={"raw_file_id": str(raw_file.id), "title": title})
     assert resp.status_code == 201, resp.text
     return resp.json()
@@ -40,10 +44,9 @@ def test_trending_ranks_by_recent_vote_count(social_client, make_user, make_raw_
     voter2 = make_user()
     voter3 = make_user()
     social_client.set_current_user(owner)
-    raw_file = make_raw_file(owner)
 
-    low = _publish(social_client, _create_spectrum(social_client, raw_file, "low")["id"])
-    high = _publish(social_client, _create_spectrum(social_client, raw_file, "high")["id"])
+    low = _publish(social_client, _create_spectrum(social_client, make_raw_file, owner, "low")["id"])
+    high = _publish(social_client, _create_spectrum(social_client, make_raw_file, owner, "high")["id"])
 
     # "high" gets 3 votes, "low" gets 1 vote -> "high" should rank first
     # regardless of creation/publish order (this is NOT search relevance
@@ -74,11 +77,14 @@ def test_trending_excludes_drafts_and_embargoed(social_client, make_user, make_r
     owner = make_user()
     voter = make_user()
     social_client.set_current_user(owner)
-    raw_file = make_raw_file(owner)
 
-    draft = _create_spectrum(social_client, raw_file, "draft-spectrum")
-    embargoed = _embargo(social_client, _create_spectrum(social_client, raw_file, "embargoed-spectrum")["id"])
-    published = _publish(social_client, _create_spectrum(social_client, raw_file, "published-spectrum")["id"])
+    draft = _create_spectrum(social_client, make_raw_file, owner, "draft-spectrum")
+    embargoed = _embargo(
+        social_client, _create_spectrum(social_client, make_raw_file, owner, "embargoed-spectrum")["id"]
+    )
+    published = _publish(
+        social_client, _create_spectrum(social_client, make_raw_file, owner, "published-spectrum")["id"]
+    )
 
     social_client.set_current_user(voter)
     # Note: draft can't even be voted on (404), so it stays at 0 votes.
@@ -96,10 +102,9 @@ def test_trending_excludes_zero_vote_spectra(social_client, make_user, make_raw_
     owner = make_user()
     voter = make_user()
     social_client.set_current_user(owner)
-    raw_file = make_raw_file(owner)
 
-    voted = _publish(social_client, _create_spectrum(social_client, raw_file, "voted")["id"])
-    unvoted = _publish(social_client, _create_spectrum(social_client, raw_file, "unvoted")["id"])
+    voted = _publish(social_client, _create_spectrum(social_client, make_raw_file, owner, "voted")["id"])
+    unvoted = _publish(social_client, _create_spectrum(social_client, make_raw_file, owner, "unvoted")["id"])
 
     social_client.set_current_user(voter)
     social_client.post(f"/spectra/{voted['id']}/votes")

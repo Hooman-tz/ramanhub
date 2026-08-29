@@ -1,27 +1,36 @@
-"""Google OAuth login/callback/logout. Mounted at prefix `/auth`."""
+"""OAuth sign-in (Google, GitHub, ORCID), guest sessions, logout.
+Mounted at prefix `/auth`.
+
+All three OAuth providers funnel through `app.auth.identities.resolve_or_create_user`
+so "sign in with a different provider" lands on the same account, and through
+`app.auth.guest_migration.migrate_guest_data` so a guest's work follows them
+into whatever account they sign into.
+"""
 from __future__ import annotations
 
 import hmac
 import logging
 import uuid
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
-from app.auth import google_oauth
+from app.auth import github_oauth, google_oauth, orcid_oauth
 from app.auth.deps import SESSION_COOKIE_NAME, get_current_user_optional
+from app.auth.guest_migration import migrate_guest_data
+from app.auth.identities import resolve_or_create_user
 from app.auth.jwt import encode_session_token
 from app.config import settings
 from app.db.session import get_db
 from app.logging_config import log_event
-from app.models.processing_ledger import ProcessingLedger
-from app.models.processing_routine import ProcessingRoutine
-from app.models.raw_file import RawFile
-from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.ratelimit import rate_limit_login
 from app.schemas.auth import UserOut
+
+# Re-exported for callers/tests that historically imported it from here.
+__all__ = ["migrate_guest_data", "router"]
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
@@ -33,26 +42,35 @@ def _cookie_secure() -> bool:
     return settings.ENVIRONMENT != "development"
 
 
-def migrate_guest_data(guest: User, target: User, db: Session) -> int:
-    """Reassign everything a guest session created to `target`, so "sign in
-    to keep your work" is literal. Returns the number of rows moved. The
-    guest row itself is deactivated (not deleted) so its id stays valid in
-    any logs/history. Commit is left to the caller."""
-    moved = 0
-    for model, column in (
-        (RawFile, RawFile.owner_id),
-        (Spectrum, Spectrum.owner_id),
-        (ProcessingRoutine, ProcessingRoutine.owner_id),
-        (ProcessingLedger, ProcessingLedger.created_by),
-    ):
-        moved += (
-            db.query(model)
-            .filter(column == guest.id)
-            .update({column: target.id}, synchronize_session=False)
+def _constant_time_eq(a: str, b: str) -> bool:
+    return hmac.compare_digest(a, b)
+
+
+def _issue_session(user: User) -> RedirectResponse:
+    """Redirect to the frontend with the `session` cookie set for `user`."""
+    response = RedirectResponse(url=settings.FRONTEND_URL, status_code=status.HTTP_302_FOUND)
+    response.set_cookie(
+        SESSION_COOKIE_NAME,
+        encode_session_token(user),
+        httponly=True,
+        secure=_cookie_secure(),
+        samesite="lax",
+        max_age=settings.JWT_EXPIRES_HOURS * 3600,
+    )
+    return response
+
+
+def _maybe_migrate_guest(prior_session: User | None, user: User, db: Session) -> None:
+    if prior_session is not None and prior_session.is_guest and prior_session.id != user.id:
+        moved = migrate_guest_data(prior_session, user, db)
+        db.commit()
+        log_event(
+            logger,
+            "auth.guest.migrated",
+            guest_id=str(prior_session.id),
+            user_id=str(user.id),
+            rows_moved=moved,
         )
-    guest.is_active = False
-    db.add(guest)
-    return moved
 
 
 @router.post("/guest", response_model=UserOut)
@@ -64,13 +82,13 @@ async def start_guest_session(
     cookie the OAuth flow issues, so every downstream ownership check works
     unchanged. Guests can upload and use the processing tools; publishing,
     votes, comments, and profile linking are gated to full accounts
-    (app.auth.deps.get_current_full_user). Signing in with Google later
-    migrates the guest's work to the real account (see `callback`)."""
+    (app.auth.deps.get_current_full_user). Signing in later migrates the
+    guest's work to the real account."""
     token = uuid.uuid4().hex
     guest = User(
         google_sub=f"guest:{token}",
-        # email is NOT NULL + unique; .invalid is the RFC 2606 reserved TLD,
-        # so this can never collide with a real address.
+        # email is unique; .invalid is the RFC 2606 reserved TLD, so this
+        # can never collide with a real address.
         email=f"guest-{token}@guest.invalid",
         display_name="Guest",
         is_guest=True,
@@ -100,6 +118,9 @@ def get_session_user(user: User | None = Depends(get_current_user_optional)) -> 
     return user
 
 
+# --- Google ---------------------------------------------------------------
+
+
 @router.get("/login")
 async def login() -> RedirectResponse:
     """Redirect the browser to Google's consent screen, carrying CSRF
@@ -127,12 +148,10 @@ async def callback(
     error: str | None = None,
     db: Session = Depends(get_db),
     _: None = Depends(rate_limit_login),
-    # A pre-existing session at callback time is how we notice "this browser
-    # was a guest" and migrate that guest's work to the real account.
     prior_session: User | None = Depends(get_current_user_optional),
 ) -> RedirectResponse:
-    """Exchange the authorization code, verify the ID token, upsert the User,
-    issue an app session JWT cookie, and redirect back to the frontend."""
+    """Exchange the authorization code, verify the ID token, resolve/create
+    the User, issue an app session JWT cookie, and redirect to the frontend."""
     if error:
         log_event(logger, "auth.login.failure", reason="oauth_error", detail=error)
         raise HTTPException(
@@ -187,54 +206,201 @@ async def callback(
             detail="Google must verify the email address before it can be used to sign in",
         )
 
-    user = db.query(User).filter(User.google_sub == google_sub).first()
-    if user is None:
-        # Google verifies the email claim. Reuse an account that already owns
-        # this email rather than failing the unique constraint or duplicating
-        # its scientific records under a second account.
-        user = db.query(User).filter(User.email == email).first()
-        if user is None:
-            user = User(google_sub=google_sub, email=email, display_name=name, avatar_url=picture)
-            db.add(user)
-            db.flush()
-            user.profile_handle = f"researcher-{user.id.hex[:12]}"
-        else:
-            user.google_sub = google_sub
-    else:
-        if email and user.email != email:
-            user.email = email
-        if name and user.display_name != name:
-            user.display_name = name
-        if picture and user.avatar_url != picture:
-            user.avatar_url = picture
+    user = resolve_or_create_user(
+        db,
+        provider="google",
+        subject=google_sub,
+        email=email,
+        display_name=name,
+        avatar_url=picture,
+    )
     db.commit()
     db.refresh(user)
 
-    if prior_session is not None and prior_session.is_guest and prior_session.id != user.id:
-        moved = migrate_guest_data(prior_session, user, db)
-        db.commit()
-        log_event(
-            logger,
-            "auth.guest.migrated",
-            guest_id=str(prior_session.id),
-            user_id=str(user.id),
-            rows_moved=moved,
-        )
+    _maybe_migrate_guest(prior_session, user, db)
 
-    log_event(logger, "auth.login.success", user_id=str(user.id))
+    log_event(logger, "auth.login.success", user_id=str(user.id), provider="google")
 
-    session_token = encode_session_token(user)
-
-    response = RedirectResponse(url=settings.FRONTEND_URL, status_code=status.HTTP_302_FOUND)
+    response = _issue_session(user)
     response.delete_cookie(google_oauth.OAUTH_STATE_COOKIE)
+    return response
+
+
+# --- GitHub -------------------------------------------------------------
+
+
+@router.get("/github/login")
+async def github_login() -> RedirectResponse:
+    if not github_oauth.configured():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="GitHub sign-in is not configured.",
+        )
+    state = github_oauth.generate_state()
+    response = RedirectResponse(
+        url=github_oauth.build_authorization_url(state), status_code=status.HTTP_302_FOUND
+    )
     response.set_cookie(
-        SESSION_COOKIE_NAME,
-        session_token,
+        github_oauth.STATE_COOKIE,
+        github_oauth.encode_state_cookie(state),
         httponly=True,
         secure=_cookie_secure(),
         samesite="lax",
-        max_age=settings.JWT_EXPIRES_HOURS * 3600,
+        max_age=600,
     )
+    return response
+
+
+@router.get("/github/callback")
+async def github_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    db: Session = Depends(get_db),
+    _: None = Depends(rate_limit_login),
+    prior_session: User | None = Depends(get_current_user_optional),
+) -> RedirectResponse:
+    if error:
+        log_event(logger, "auth.login.failure", provider="github", reason="oauth_error", detail=error)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"GitHub OAuth error: {error}"
+        )
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing code or state parameter"
+        )
+
+    stored = github_oauth.decode_state_cookie(request.cookies.get(github_oauth.STATE_COOKIE))
+    if stored is None or not _constant_time_eq(stored["state"], state):
+        log_event(logger, "auth.login.failure", provider="github", reason="invalid_or_expired_state")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state"
+        )
+
+    try:
+        token = await github_oauth.exchange_code(code)
+        gh = await github_oauth.fetch_user(token)
+        primary_email = await github_oauth.fetch_primary_email(token)
+    except (httpx.HTTPError, ValueError) as exc:
+        log_event(logger, "auth.login.failure", provider="github", reason="exchange_failed")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub sign-in failed"
+        ) from exc
+
+    if not gh.get("id"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="GitHub did not return an account id"
+        )
+
+    user = resolve_or_create_user(
+        db,
+        provider="github",
+        subject=str(gh["id"]),
+        email=primary_email,
+        display_name=gh.get("name") or gh.get("login"),
+        avatar_url=gh.get("avatar_url"),
+    )
+    db.commit()
+    db.refresh(user)
+
+    _maybe_migrate_guest(prior_session, user, db)
+
+    log_event(logger, "auth.login.success", user_id=str(user.id), provider="github")
+
+    response = _issue_session(user)
+    response.delete_cookie(github_oauth.STATE_COOKIE)
+    return response
+
+
+# --- ORCID sign-in (distinct from the linking flow in routers/orcid.py) ---
+
+
+@router.get("/orcid/login")
+async def orcid_login() -> RedirectResponse:
+    if not orcid_oauth.configured():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="ORCID sign-in is not configured.",
+        )
+    state = orcid_oauth.generate_state()
+    response = RedirectResponse(
+        url=orcid_oauth.build_login_authorization_url(state), status_code=status.HTTP_302_FOUND
+    )
+    response.set_cookie(
+        orcid_oauth.LOGIN_STATE_COOKIE,
+        orcid_oauth.encode_login_state_cookie(state),
+        httponly=True,
+        secure=_cookie_secure(),
+        samesite="lax",
+        max_age=600,
+    )
+    return response
+
+
+@router.get("/orcid/callback")
+async def orcid_callback(
+    request: Request,
+    code: str | None = None,
+    state: str | None = None,
+    error: str | None = None,
+    db: Session = Depends(get_db),
+    _: None = Depends(rate_limit_login),
+    prior_session: User | None = Depends(get_current_user_optional),
+) -> RedirectResponse:
+    if error:
+        log_event(logger, "auth.login.failure", provider="orcid", reason="oauth_error", detail=error)
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail=f"ORCID OAuth error: {error}"
+        )
+    if not code or not state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Missing code or state parameter"
+        )
+
+    stored = orcid_oauth.decode_login_state_cookie(
+        request.cookies.get(orcid_oauth.LOGIN_STATE_COOKIE)
+    )
+    if stored is None or not _constant_time_eq(stored["state"], state):
+        log_event(logger, "auth.login.failure", provider="orcid", reason="invalid_or_expired_state")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid or expired OAuth state"
+        )
+
+    try:
+        token = await orcid_oauth.exchange_code(
+            code, redirect_uri=settings.ORCID_LOGIN_REDIRECT_URI
+        )
+    except httpx.HTTPError as exc:
+        log_event(logger, "auth.login.failure", provider="orcid", reason="exchange_failed")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="ORCID sign-in failed"
+        ) from exc
+
+    identity = orcid_oauth.extract_identity(token)
+    orcid_id = identity.get("orcid")
+    if not orcid_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="ORCID did not return an iD"
+        )
+
+    user = resolve_or_create_user(
+        db,
+        provider="orcid",
+        subject=orcid_id,
+        email=None,
+        display_name=identity.get("name"),
+        orcid_id=orcid_id,
+    )
+    db.commit()
+    db.refresh(user)
+
+    _maybe_migrate_guest(prior_session, user, db)
+
+    log_event(logger, "auth.login.success", user_id=str(user.id), provider="orcid")
+
+    response = _issue_session(user)
+    response.delete_cookie(orcid_oauth.LOGIN_STATE_COOKIE)
     return response
 
 
@@ -244,7 +410,3 @@ async def logout() -> JSONResponse:
     response = JSONResponse({"status": "ok"})
     response.delete_cookie(SESSION_COOKIE_NAME)
     return response
-
-
-def _constant_time_eq(a: str, b: str) -> bool:
-    return hmac.compare_digest(a, b)

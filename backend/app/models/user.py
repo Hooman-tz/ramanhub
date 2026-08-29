@@ -3,7 +3,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, String, Text, func, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.base import Base
 
@@ -14,8 +14,13 @@ class User(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
-    google_sub: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    email: Mapped[str] = mapped_column(String, unique=True, nullable=False)
+    # Nullable since M3b: identity now lives in `auth_identities` (one row
+    # per linked OAuth provider). `google_sub` is kept for guest sessions
+    # (`guest:<token>`), the anonymize-on-delete tombstone, and existing
+    # rows; new OAuth sign-ups leave it NULL and get an `AuthIdentity`
+    # instead. `email` is nullable because ORCID sign-in yields no email.
+    google_sub: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
+    email: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
     display_name: Mapped[str | None] = mapped_column(String, nullable=True)
     avatar_url: Mapped[str | None] = mapped_column(String, nullable=True)
     orcid_id: Mapped[str | None] = mapped_column(String, unique=True, nullable=True)
@@ -48,4 +53,11 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    identities: Mapped[list["AuthIdentity"]] = relationship(  # noqa: F821
+        "AuthIdentity",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        passive_deletes=True,
     )

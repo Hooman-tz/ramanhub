@@ -19,9 +19,11 @@ ALGORITHM = "HS256"
 def encode_session_token(user: User) -> str:
     """Issue a signed app session JWT for `user`."""
     now = datetime.now(UTC)
+    # Only `sub` (the local user id) — the provider subject now lives in
+    # `auth_identities`, and a user can have several, so it has no place in
+    # the session token.
     payload = {
         "sub": str(user.id),
-        "google_sub": user.google_sub,
         "iat": now,
         "exp": now + timedelta(hours=settings.JWT_EXPIRES_HOURS),
     }

@@ -38,10 +38,12 @@ from app.routers import (
     doi,
     feed,
     findings,
+    follows,
     ingestion_jobs,
     ledgers,
     library,
     licenses,
+    onboarding,
     orcid,
     processing,
     profiles,
@@ -49,6 +51,7 @@ from app.routers import (
     raw_files,
     routines,
     search,
+    shares,
     spectra,
     spectrum_data,
     trending,
@@ -76,6 +79,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(analysis.router)
 app.include_router(users.router)
+app.include_router(onboarding.router)
 app.include_router(orcid.router)
 app.include_router(licenses.router)
 app.include_router(raw_files.router)
@@ -96,6 +100,8 @@ app.include_router(trending.router)
 app.include_router(community.router)
 app.include_router(findings.router)
 app.include_router(feed.router)
+app.include_router(follows.router)
+app.include_router(shares.router)
 
 
 @app.get("/health")

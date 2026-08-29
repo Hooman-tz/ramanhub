@@ -2,12 +2,12 @@
 therefore Alembic autogenerate, and `Base.metadata.create_all()`) sees all
 tables regardless of which module the caller imports directly.
 """
-from app.models.analysis import AnalysisDataset, AnalysisDatasetSpectrum, AnalysisRun
-
 # Imported for its side effect: binds spectrum_accession_seq /
 # finding_accession_seq to Base.metadata so create_all (the test harness)
 # emits them.
-from app.models import accession as accession  # noqa: F401
+from app.models import accession as accession
+from app.models.analysis import AnalysisDataset, AnalysisDatasetSpectrum, AnalysisRun
+from app.models.auth_identity import AuthIdentity
 from app.models.enums import (
     FieldDataType,
     FindingEntryKind,
@@ -37,6 +37,7 @@ from app.models.social import (
     NotificationPreference,
     PostReaction,
     Report,
+    Share,
     Vote,
 )
 from app.models.spectrum import Spectrum
@@ -47,6 +48,7 @@ __all__ = [
     "AnalysisDataset",
     "AnalysisDatasetSpectrum",
     "AnalysisRun",
+    "AuthIdentity",
     "Comment",
     "CommunityPost",
     "CommunityPostSpectrum",
@@ -75,6 +77,7 @@ __all__ = [
     "PublicationSnapshot",
     "RawFile",
     "Report",
+    "Share",
     "SimilarityFeature",
     "Spectrum",
     "SpectrumState",

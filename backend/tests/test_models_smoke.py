@@ -21,6 +21,7 @@ from app.db.base import Base
 
 ALL_MODEL_CLASSES = [
     models.User,
+    models.AuthIdentity,
     models.License,
     models.RawFile,
     models.IngestionJob,

@@ -17,8 +17,20 @@ from app.models.user import User
 SESSION_COOKIE_NAME = "session"
 
 
+def _token_from_request(request: Request) -> str | None:
+    """Prefer an `Authorization: Bearer <jwt>` header (mobile / API clients),
+    fall back to the `session` cookie (the web app). Both carry the same
+    app session JWT decoded the same way."""
+    header = request.headers.get("Authorization") or request.headers.get("authorization")
+    if header:
+        scheme, _, value = header.partition(" ")
+        if scheme.lower() == "bearer" and value.strip():
+            return value.strip()
+    return request.cookies.get(SESSION_COOKIE_NAME)
+
+
 def _user_from_request(request: Request, db: Session) -> User | None:
-    token = request.cookies.get(SESSION_COOKIE_NAME)
+    token = _token_from_request(request)
     if not token:
         return None
 

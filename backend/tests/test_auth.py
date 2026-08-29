@@ -36,6 +36,7 @@ from app.auth.jwt import decode_session_token, encode_session_token
 from app.config import settings
 from app.db.base import Base
 from app.db.session import get_db
+from app.models.auth_identity import AuthIdentity
 from app.models.license import License
 from app.models.user import User
 from app.routers import auth as auth_router
@@ -65,8 +66,13 @@ def run_async(coro):
 
 
 class DummyRequest:
-    def __init__(self, cookies: dict[str, str] | None = None):
+    def __init__(
+        self,
+        cookies: dict[str, str] | None = None,
+        headers: dict[str, str] | None = None,
+    ):
         self.cookies = cookies or {}
+        self.headers = headers or {}
 
 
 class FakeUser:
@@ -112,7 +118,9 @@ def test_encode_decode_session_token_round_trip():
     payload = decode_session_token(token)
     assert payload is not None
     assert payload["sub"] == str(user.id)
-    assert payload["google_sub"] == "sub-123"
+    # The session token carries only `sub` since M3b — provider identity
+    # lives in `auth_identities`, and a user can have several.
+    assert "google_sub" not in payload
 
 
 def test_decode_session_token_rejects_garbage():
@@ -378,10 +386,14 @@ def test_callback_creates_new_user_and_sets_session_cookie(test_app, db_session)
 
     run_async(_run())
 
-    user = db_session.query(User).filter(User.google_sub == "google-sub-new").one()
-    assert user.email == "new@example.com"
+    # New OAuth sign-ups leave `google_sub` NULL and get an `AuthIdentity`
+    # row instead — look the user up by email.
+    user = db_session.query(User).filter(User.email == "new@example.com").one()
+    assert user.google_sub is None
     assert user.display_name == "New User"
     assert user.avatar_url == "https://img/pic.png"
+    identity = db_session.query(AuthIdentity).filter(AuthIdentity.user_id == user.id).one()
+    assert (identity.provider, identity.provider_subject) == ("google", "google-sub-new")
 
 
 @requires_db

@@ -1,6 +1,6 @@
 # Spectra Insight — Product Status
 
-_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-29 (M2 shipped)._
+_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-29 (M3 shipped)._
 
 Full plan: `/Users/hooman/.claude/plans/how-is-our-social-gentle-alpaca.md`
 
@@ -63,9 +63,29 @@ Posting from a browser needs a signed-in full account (Google OAuth not
 configured locally; email/password lands in M3) — the composer shows the
 sign-in CTA otherwise.
 
-**Next action:** M3 — backend: follow graph router + `shares`, votes/comments
-retarget to findings (Migrations 2–3), `auth_identities` + GitHub/ORCID/email
-signup + onboarding endpoints (Migration 4).
+**M3 shipped (same branch):** the social backend is complete for the beta.
+_Social primitives cherry-picked from Track A:_ `Share` model + `shares` table;
+`Vote`/`Comment` retargeted to "spectrum XOR finding" (`Comment` keeps a 3-way
+target so Track B's `community_posts` still work) with `parent_id` one-level
+threading; routers `follows.py` + `shares.py` (new) and finding branches added to
+`votes.py` / `comments.py`; the feed's `share_count` ranking input restored.
+_OAuth signup breadth (Google + GitHub + ORCID — email/password deferred):_
+`auth_identities` table + `resolve_or_create_user` upsert, `users.google_sub` /
+`users.email` now nullable, `migrate_guest_data` extracted to a shared module so
+every provider reuses it, new `auth/github_oauth.py`, ORCID promoted from
+link-only to a sign-in provider, `/auth/{github,orcid}/{login,callback}` routes,
+`google_sub` dropped from the JWT, `Authorization: Bearer` accepted alongside the
+cookie. _Onboarding:_ `GET /v1/users/handle-available`, `GET /v1/users/suggested`,
+`POST /v1/users/me/onboarding` (sets handle, display name, `research_interests`,
+`is_profile_public`, `onboarded_at`). Alembic Migrations `d4a7c1e93b25` →
+`e5b8d2fa4c36` → `a7f3c1d9e2b4`, single head, verified from scratch. Backend
+tests: **379 pass**; **`test_trending ×3` fixed** (idempotent-spectrum test bug);
+the remaining 8 failures (`test_search ×2`, `test_processing_api ×1`,
+`test_ingestion_api ×5`) are unchanged and deferred to M5. `ruff` clean.
+
+**Next action:** M4 — web: follow / share / vote / comment UI, onboarding wizard,
+3-provider `/login`, `<RequireOnboarding>` guard, enriched profile; then delete
+`frontend/` and point Vercel at `apps/web`.
 
 ---
 
