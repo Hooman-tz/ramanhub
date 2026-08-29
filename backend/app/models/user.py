@@ -41,6 +41,10 @@ class User(Base):
     # Signing in with Google migrates a guest's work to the real account
     # (see app.routers.auth).
     is_guest: Mapped[bool] = mapped_column(Boolean, default=False, server_default=text("false"))
+    # Set once the user finishes the first-run flow (pick a handle, follow a
+    # few people). NULL = never onboarded; the web app routes such users to
+    # /onboarding. Wired up fully in M3/M4.
+    onboarded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()

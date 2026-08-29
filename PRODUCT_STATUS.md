@@ -1,6 +1,6 @@
 # Spectra Insight — Product Status
 
-_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-28 (M0 shipped)._
+_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-28 (M1 shipped)._
 
 Full plan: `/Users/hooman/.claude/plans/how-is-our-social-gentle-alpaca.md`
 
@@ -31,8 +31,27 @@ rewrites `/api/*`→`$API_URL`. `pnpm typecheck` 10/10 green; `pnpm --filter
 @ramanhub/web build` succeeds. Not yet run: live `pnpm dev:web` + backend
 end-to-end (needs local Postgres) — user hands-on check.
 
-**Next action:** M1 — cherry-pick `findings` + `feed` + accessions from Track A
-onto Track B (`backend/`).
+**M1 shipped (same branch):** cherry-picked from Track A onto Track B —
+`findings`/`finding_entries`/`finding_spectra` tables + router at
+`/v1/findings`, the `follows`/`handle_history` tables, `spectra.accession` +
+`RH-S-`/`RH-F-` accession sequences, `users.onboarded_at`, and the
+engagement-ranked `/v1/feed` (Following/Discover tabs, `app.ranking` — used
+only by feed + trending, never search, ADR-004 intact). Note-only findings
+publish with no spectrum gate (the low-friction "post"). Alembic Migration 1
+(`f2b1e9c4d7a3`) applies clean from scratch; single head. Backend tests:
+**355 pass** (350 prior + 4 new `test_findings_feed_m1` + the `onboarded_at`
+column-list fix); the 11 pre-existing failures (trending ×3, search ×2,
+processing ×1, ingestion ×5) are unchanged — none regressed.
+
+**Local DB note:** the dev `ramanhub` database is stamped at Track A's alembic
+head (`1e817525ab60`) and can't run the Track B chain. M1 was verified on a
+fresh `ramanhub_m1test` DB. Before running the app locally against `backend/`,
+recreate the dev DB (`dropdb ramanhub && createdb ramanhub && cd backend &&
+uv run alembic upgrade head && make -C .. seed`).
+
+**Next action:** M2 — build the web feed (`apps/web`): Feed page
+(Following/Discover), inline composer, Finding detail, Profile; wire
+`@ramanhub/api-client` to `/v1/feed` + `/v1/findings`; port OKLCH tokens.
 
 ---
 
@@ -41,7 +60,7 @@ onto Track B (`backend/`).
 | Milestone | Goal | Demo | Status | PR | Blocking tests |
 |---|---|---|---|---|---|
 | **M0** | One monorepo: fold in `social-app/`, strip tRPC/Drizzle/Better-Auth, `apps/web` + `apps/mobile` + `packages/{ui,validators,api-client}`, backend unchanged | `pnpm typecheck` green; web page reads FastAPI `/health` through the `/api/*` proxy | **Shipped** (branch `integration/social-forward`; typecheck 10/10, web build ok; live proxy check pending) | — | none |
-| **M1** | Backend: cherry-pick `findings` + `feed` + accessions from Track A onto Track B; Alembic Migration 1; note-only findings can publish; Bearer-token auth | `POST /findings` (note) → `GET /feed?filter=all` returns it | Not started | — | none |
+| **M1** | Backend: cherry-pick `findings` + `feed` + accessions from Track A onto Track B; Alembic Migration 1; note-only findings can publish | `POST /v1/findings` (note) → publish → `GET /v1/feed?filter=all` returns it | **Shipped** (migration `f2b1e9c4d7a3`; 355 tests pass; Bearer-token auth deferred to M3) | — | none |
 | **M2** | Web: feed is the app — Following/Discover tabs, inline composer, finding detail, profile; port OKLCH tokens | Open web app → land on feed → post a note → see it → open a profile | Not started | — | none |
 | **M3** | Backend: follow graph + `shares` + votes/comments on findings (Migrations 2–3); `auth_identities` + GitHub/ORCID/email signup + onboarding endpoints (Migration 4) | Email signup → verify → onboarding (follow 3) → Following feed fills; GitHub + ORCID sign-in work | Not started | — | fixes `test_trending ×3` |
 | **M4** | Web: follow buttons, onboarding wizard, 4-provider signup UI; **delete `frontend/`**; point Vercel at `apps/web` | Full new-user journey on web end to end; old frontend gone; CI green | Not started | — | none |
@@ -89,3 +108,7 @@ onto Track B (`backend/`).
   consolidated; `social-app/` removed; tRPC/Drizzle/Better-Auth stripped;
   `@ramanhub/api-client` added; `/api/*` proxy wired. `pnpm typecheck` 10/10,
   `pnpm --filter @ramanhub/web build` green.
+- **2026-08-28** — **M1 shipped**. Findings threads + `/v1/feed` + follow-graph
+  tables + accessions cherry-picked onto `backend/`. Migration `f2b1e9c4d7a3`
+  applies clean; 355 backend tests pass, 11 pre-existing failures unchanged.
+  `app.ranking` reworded — engagement ranks feed/trending only, never search.

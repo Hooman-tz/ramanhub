@@ -24,6 +24,13 @@ class Spectrum(Base):
     owner_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )
+    # Human-quotable public identifier (RH-S-000042). Assigned from
+    # spectrum_accession_seq at publish time; see app.models.accession. The
+    # spectra.py router wires this in fully in a follow-up — for now new
+    # spectra may carry a NULL accession, which the feed renders as absent.
+    accession: Mapped[str | None] = mapped_column(
+        String, unique=True, nullable=True, index=True
+    )
     modality: Mapped[Modality] = mapped_column(modality_enum)
     title: Mapped[str | None] = mapped_column(String, nullable=True)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)

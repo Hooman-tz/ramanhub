@@ -36,6 +36,8 @@ from app.routers import (
     comments,
     community,
     doi,
+    feed,
+    findings,
     ingestion_jobs,
     ledgers,
     library,
@@ -92,6 +94,8 @@ app.include_router(votes.router)
 app.include_router(comments.router)
 app.include_router(trending.router)
 app.include_router(community.router)
+app.include_router(findings.router)
+app.include_router(feed.router)
 
 
 @app.get("/health")

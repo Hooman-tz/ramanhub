@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.enums import SpectrumState
+from app.models.enums import FindingState, SpectrumState
 from app.models.spectrum import Spectrum
 from app.models.user import User
 
@@ -71,6 +71,24 @@ def require_owner_or_public(resource, user: User | None) -> None:
     if is_owner:
         return
     if _is_private(resource):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
+def require_finding_readable(finding, user: User | None) -> None:
+    """Row-level read gate for a Finding, mirroring `require_owner_or_public`.
+
+    A draft Finding is visible only to its owner; a published one is visible
+    to everyone. Denial raises 404 (never 403) so a non-owner cannot tell a
+    private draft from a nonexistent id. `finding` is expected to be
+    non-None — the caller 404s on a missing row first, same pattern as the
+    spectrum gate.
+    """
+    if finding is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    is_owner = user is not None and finding.owner_id == user.id
+    if is_owner:
+        return
+    if finding.state != FindingState.published:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 

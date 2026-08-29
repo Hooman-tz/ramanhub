@@ -28,6 +28,7 @@ class UserOut(BaseModel):
     deleted_at: datetime | None = None
     is_active: bool
     is_guest: bool = False
+    onboarded_at: datetime | None = None
     created_at: datetime
 
 

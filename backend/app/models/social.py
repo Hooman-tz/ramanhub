@@ -25,21 +25,36 @@ from app.db.base import Base
 
 
 class Vote(Base):
-    """One upvote from one user on one spectrum. Presence of a row IS the
-    vote (no direction/value column) — voting again removes it (toggle),
-    handled at the router layer."""
+    """One upvote from one user on one spectrum or one finding. Presence of a
+    row IS the vote (no direction/value column) — voting again removes it
+    (toggle), handled at the router layer.
+
+    `finding_id` was added in M1 (nullable) so the feed and findings router
+    can count finding votes; the router side that *creates* finding votes,
+    making `spectrum_id` nullable, and the partial-unique-index hardening all
+    land in M3. Until then only spectrum votes are written, so `spectrum_id`
+    stays NOT NULL and the existing `uq_vote_spectrum_user` still holds.
+    """
 
     __tablename__ = "votes"
     __table_args__ = (UniqueConstraint("spectrum_id", "user_id", name="uq_vote_spectrum_user"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     spectrum_id = mapped_column(UUID(as_uuid=True), ForeignKey("spectra.id"), nullable=False, index=True)
+    finding_id = mapped_column(
+        UUID(as_uuid=True), ForeignKey("findings.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     user_id = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class Comment(Base):
     __tablename__ = "comments"
+    # M1 keeps the original 2-way check (spectrum XOR post) untouched.
+    # `finding_id` is added as an unconstrained nullable column so the
+    # feed/findings router can count finding comments; M3 tightens this to a
+    # 3-way check and adds threading (`parent_id`), when finding comments are
+    # first written.
     __table_args__ = (
         CheckConstraint(
             "(spectrum_id IS NOT NULL) <> (post_id IS NOT NULL)",
@@ -50,6 +65,9 @@ class Comment(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     spectrum_id = mapped_column(UUID(as_uuid=True), ForeignKey("spectra.id"), nullable=True, index=True)
     post_id = mapped_column(UUID(as_uuid=True), ForeignKey("community_posts.id"), nullable=True, index=True)
+    finding_id = mapped_column(
+        UUID(as_uuid=True), ForeignKey("findings.id", ondelete="CASCADE"), nullable=True, index=True
+    )
     user_id = mapped_column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=False)
     body: Mapped[str] = mapped_column(Text, nullable=False)
     moderation_status: Mapped[str] = mapped_column(

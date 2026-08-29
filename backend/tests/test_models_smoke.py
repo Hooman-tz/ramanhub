@@ -79,6 +79,7 @@ def test_user_expected_columns():
         "deleted_at",
         "is_active",
         "is_guest",
+        "onboarded_at",
         "created_at",
         "updated_at",
     }
