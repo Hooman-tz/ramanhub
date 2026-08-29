@@ -1,7 +1,7 @@
 # Render blueprint: the RamanHub API + managed Postgres.
-# Frontend lives on Vercel (see frontend/vercel.json); object storage on
-# Cloudflare R2. Full topology + every env var documented in README.md's
-# Deployment section.
+# The web app (apps/web) lives on Vercel with Root Directory = apps/web;
+# object storage on Cloudflare R2. Full topology + every env var documented
+# in README.md's Deployment section.
 #
 # Use: Render dashboard -> New -> Blueprint -> point at this repo. Values
 # marked `sync: false` are secrets you paste in the dashboard on first

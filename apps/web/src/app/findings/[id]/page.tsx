@@ -1,7 +1,20 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getFinding, isApiError } from "@ramanhub/api-client";
+import {
+  getFinding,
+  getFindingShares,
+  getFindingVotes,
+  isApiError,
+  listFindingComments,
+} from "@ramanhub/api-client";
+import type {
+  FindingComment,
+  FindingShares,
+  FindingVotes,
+} from "@ramanhub/api-client";
 
+import { FindingActions } from "~/components/finding-actions";
+import { FindingComments } from "~/components/finding-comments";
 import { serverApiOpts } from "~/lib/server-api";
 
 export const dynamic = "force-dynamic";
@@ -12,12 +25,27 @@ export default async function FindingPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
+  const opts = await serverApiOpts();
   let finding;
   try {
-    finding = await getFinding(id, await serverApiOpts());
+    finding = await getFinding(id, opts);
   } catch (e) {
     if (isApiError(e) && e.status === 404) notFound();
     throw e;
+  }
+
+  // Seed the client islands so they render without a flash. Never fatal.
+  let initialVotes: FindingVotes | undefined;
+  let initialShares: FindingShares | undefined;
+  let initialComments: FindingComment[] | undefined;
+  try {
+    [initialVotes, initialShares, initialComments] = await Promise.all([
+      getFindingVotes(id, opts),
+      getFindingShares(id, opts),
+      listFindingComments(id, opts),
+    ]);
+  } catch {
+    /* islands will fetch client-side */
   }
 
   return (
@@ -70,18 +98,27 @@ export default async function FindingPage({
         </div>
       )}
 
-      <div className="text-muted-foreground mt-4 flex gap-4 text-xs">
-        <span>▲ {finding.vote_count}</span>
-        <span>💬 {finding.comment_count}</span>
-        {finding.doi && (
+      {finding.doi && (
+        <div className="mt-4 text-xs">
           <a
             href={`https://doi.org/${finding.doi}`}
             className="text-primary hover:underline"
           >
             {finding.doi}
           </a>
-        )}
-      </div>
+        </div>
+      )}
+
+      <FindingActions
+        id={finding.id}
+        initialVotes={
+          initialVotes ?? {
+            count: finding.vote_count,
+            voted_by_me: false,
+          }
+        }
+        initialShares={initialShares}
+      />
 
       {finding.spectra.length > 0 && (
         <section className="mt-6">
@@ -114,6 +151,8 @@ export default async function FindingPage({
           ))}
         </section>
       )}
+
+      <FindingComments id={finding.id} initial={initialComments} />
     </main>
   );
 }

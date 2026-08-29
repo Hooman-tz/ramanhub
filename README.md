@@ -13,7 +13,9 @@ mechanism.
 The backend is Python/FastAPI (for direct access to SciPy/NumPy/scikit-learn),
 backed by PostgreSQL for metadata and an S3-compatible object store
 (MinIO locally, Cloudflare R2 in production) for raw and processed spectra.
-The frontend is a React PWA. Raman spectroscopy is the initial modality, with
+The frontend is a Next.js app in a pnpm + Turborepo monorepo (`apps/web`,
+with `apps/mobile` for a later Expo build) that talks to the backend over
+REST only — see `CLAUDE.md`. Raman spectroscopy is the initial modality, with
 the schema namespaced from the start to support mass spectrometry and NMR later
 without a rewrite. The product architecture and staged delivery plan live in
 [`raman-platform-architecture-v2.md`](raman-platform-architecture-v2.md), with
@@ -72,10 +74,12 @@ unresolved decisions in
    cd backend && uv run uvicorn app.main:app --reload
    ```
 
-6. Run the frontend:
+6. Run the web app (a pnpm + Turborepo workspace at the repo root; it
+   proxies `/api/*` to the backend, so start the backend first):
 
    ```bash
-   cd frontend && npm install && npm run dev
+   pnpm install
+   pnpm dev:web
    ```
 
 7. Run the backend test suite:
@@ -142,11 +146,11 @@ schema restated in two places.
 > configuration, OAuth redirects, CORS, canonical URLs, and redirects together
 > before launch; do not mix old and new domains.
 
-Target topology: a static frontend host serves the public/product applications;
-a FastAPI service plus managed PostgreSQL runs the API; Cloudflare R2 (or
-another private S3-compatible store) holds raw and processed spectra.
-`render.yaml` at the repository root and `frontend/vercel.json` are legacy
-deployment starting points, not the completed Spectra Insight launch setup.
+Target topology: a Vercel-hosted Next.js app (`apps/web`) serves the
+public/product applications; a FastAPI service plus managed PostgreSQL runs
+the API; Cloudflare R2 (or another private S3-compatible store) holds raw and
+processed spectra. `render.yaml` at the repository root is the API deployment
+starting point, not the completed Spectra Insight launch setup.
 
 One-time setup:
 
@@ -158,12 +162,14 @@ One-time setup:
    `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`),
    `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, the R2
     values, optional `SENTRY_DSN`. Add the target custom API domain.
-3. **Frontend host** — import the repo, root directory `frontend`, env vars
-    `VITE_API_BASE_URL=https://api.spectra-in.site` and
-    `VITE_GITHUB_REPO=Hooman-tz/ramanhub`. Add
-    `spectra-in.site` and `raman.spectra-in.site`.
+3. **Web host (Vercel)** — import the repo, set **Root Directory =
+    `apps/web`** (Vercel auto-detects Next.js and runs the monorepo install
+    from the repo root). Set `API_URL=https://api.spectra-in.site`. Add
+    `spectra-in.site` and `raman.spectra-in.site`. GitHub + ORCID OAuth
+    redirect URIs and the matching backend env vars are registered in M5 —
+    see `docs/OPERATIONS.md`.
 4. **DNS (Cloudflare)** — route `api.spectra-in.site` to the API host and
-    `spectra-in.site` / `raman.spectra-in.site` to the frontend host, per the
+    `spectra-in.site` / `raman.spectra-in.site` to the web host, per the
     hosting dashboards' instructions.
 5. **Google Cloud Console** — add
     `https://api.spectra-in.site/auth/callback` to the OAuth client's

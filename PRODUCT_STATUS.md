@@ -1,6 +1,6 @@
 # Spectra Insight — Product Status
 
-_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-29 (M3 shipped)._
+_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-29 (M4 shipped)._
 
 Full plan: `/Users/hooman/.claude/plans/how-is-our-social-gentle-alpaca.md`
 
@@ -83,9 +83,25 @@ tests: **379 pass**; **`test_trending ×3` fixed** (idempotent-spectrum test bug
 the remaining 8 failures (`test_search ×2`, `test_processing_api ×1`,
 `test_ingestion_api ×5`) are unchanged and deferred to M5. `ruff` clean.
 
-**Next action:** M4 — web: follow / share / vote / comment UI, onboarding wizard,
-3-provider `/login`, `<RequireOnboarding>` guard, enriched profile; then delete
-`frontend/` and point Vercel at `apps/web`.
+**M4 shipped (same branch):** the web app is a full social client and the
+legacy frontend is gone. `apps/web` gained `follow-button`, `finding-actions`
+(vote + share), `finding-comments`, a 3-provider `/login` (Google / GitHub /
+ORCID + guest), a 3-step `/onboarding` wizard (live handle check, interests,
+follow-3), a `<RequireOnboarding>` guard, and an enriched `/u/[handle]` profile
+(follower counts, verified-ORCID badge, interests, follow button).
+`@ramanhub/api-client` gained 14 typed methods (follow status/toggle,
+followers/following lists, finding votes/shares/comments, `checkHandle`,
+`getSuggestedUsers`, `submitOnboarding`, `getUserByHandle`, GitHub/ORCID login
+URLs). **`frontend/` deleted** (59 files); CI's `frontend` + `e2e` jobs replaced
+with a `web` job (`pnpm install` + `pnpm typecheck` + `pnpm --filter
+@ramanhub/web build`); `README.md`, `replit.md`, `render.yaml` updated to the
+monorepo + "Vercel Root Directory = `apps/web`" topology. `pnpm typecheck`
+10/10; `pnpm --filter @ramanhub/web build` green (`/`, `/login`, `/onboarding`
+static; `/findings/[id]`, `/u/[handle]` dynamic).
+
+**Next action:** M5 — fix the remaining 8 backend test failures, add the
+single-Alembic-head CI assertion, real `/terms` + `/privacy`, and
+`docs/OPERATIONS.md` for GitHub/ORCID OAuth app registration.
 
 ---
 
@@ -96,9 +112,9 @@ the remaining 8 failures (`test_search ×2`, `test_processing_api ×1`,
 | **M0** | One monorepo: fold in `social-app/`, strip tRPC/Drizzle/Better-Auth, `apps/web` + `apps/mobile` + `packages/{ui,validators,api-client}`, backend unchanged | `pnpm typecheck` green; web page reads FastAPI `/health` through the `/api/*` proxy | **Shipped** (branch `integration/social-forward`; typecheck 10/10, web build ok; live proxy check pending) | — | none |
 | **M1** | Backend: cherry-pick `findings` + `feed` + accessions from Track A onto Track B; Alembic Migration 1; note-only findings can publish | `POST /v1/findings` (note) → publish → `GET /v1/feed?filter=all` returns it | **Shipped** (migration `f2b1e9c4d7a3`; 355 tests pass; Bearer-token auth deferred to M3) | — | none |
 | **M2** | Web: feed is the app — Following/Discover tabs, inline composer, finding detail, profile; port OKLCH tokens | Open web app → land on feed → post a note → see it → open a profile | **Shipped** (typecheck 10/10, web build green, feed proxies live; browser posting needs M3 auth) | — | none |
-| **M3** | Backend: follow graph + `shares` + votes/comments on findings (Migrations 2–3); `auth_identities` + GitHub/ORCID/email signup + onboarding endpoints (Migration 4) | Email signup → verify → onboarding (follow 3) → Following feed fills; GitHub + ORCID sign-in work | Not started | — | fixes `test_trending ×3` |
-| **M4** | Web: follow buttons, onboarding wizard, 4-provider signup UI; **delete `frontend/`**; point Vercel at `apps/web` | Full new-user journey on web end to end; old frontend gone; CI green | Not started | — | none |
-| **M5** | Mobile (Expo) feed + compose + Bearer auth; fix remaining backend failures; single-alembic-head CI check; real legal pages; OAuth redirect URIs registered | Expo Go shows feed + lets you post; `pnpm test` + `pytest` fully green; a stranger signs up unaided | Not started | — | fixes `test_search ×2`, `test_processing_api ×1`, `test_ingestion_api ×5` |
+| **M3** | Backend: follow graph + `shares` + votes/comments on findings; `auth_identities` + Google/GitHub/ORCID signup (email/pw deferred) + onboarding endpoints | GitHub + ORCID sign-in work; onboarding (follow 3) → Following feed fills | **Shipped** (`9fb9c1e`; migrations `d4a7c1e93b25`→`e5b8d2fa4c36`→`a7f3c1d9e2b4`; 379 tests pass) | — | fixed `test_trending ×3` |
+| **M4** | Web: follow / vote / share / comment UI, onboarding wizard, 3-provider `/login`, `<RequireOnboarding>`; **delete `frontend/`**; point Vercel at `apps/web` | Full new-user journey on web; old frontend gone; CI green | **Shipped** (typecheck 10/10, web build green; `frontend/` deleted; CI `web` job) | — | none |
+| **M5** | Fix remaining backend failures; single-alembic-head CI check; real legal pages; `docs/OPERATIONS.md` OAuth-app registration. _(Expo mobile is a separate post-beta push.)_ | `pnpm typecheck` + web build + `uv run pytest` all green; a stranger signs up unaided | Not started | — | fixes `test_search ×2`, `test_processing_api ×1`, `test_ingestion_api ×5` |
 | _M6 (later)_ | Extract `processing/` + `ingestion/` behind an internal API as a standalone Python worker | FastAPI calls the worker as a client; no behavior change | Not started | — | — |
 | _M7 (later)_ | Go API service for auth/feed/follows/findings/CRUD/DOI against the same Postgres + `/v1` contract; keep the Python worker | `api-client` base URL cut over to Go; parity | Not started | — | — |
 
@@ -127,7 +143,7 @@ the remaining 8 failures (`test_search ×2`, `test_processing_api ×1`,
 
 | Test | Count | Root cause (suspected) | Target milestone | Status |
 |---|---|---|---|---|
-| `test_trending` | 3 | trending feed assertions | M3 (votes retarget touches this) | Failing |
+| `test_trending` | 3 | idempotent-spectrum test bug (reused one raw file for N spectra) | M3 | **Fixed (M3)** |
 | `test_search` | 2 | search assertions | M5 | Failing |
 | `test_processing_api` | 1 | processing endpoint | M5 | Failing |
 | `test_ingestion_api` | 5 | FK-violation / ingestion setup | M5 | Failing |
@@ -150,3 +166,16 @@ the remaining 8 failures (`test_search ×2`, `test_processing_api ×1`,
   (Discover/Following) + inline composer, `/findings/[id]`, `/u/[handle]`.
   api-client feed/findings methods + React Query. Brand tokens → blue.
   typecheck 10/10, web build green, feed verified live through the proxy.
+- **2026-08-29** — **M3 shipped** (`9fb9c1e`). Social primitives cherry-picked
+  (`Share`, Vote/Comment retarget + `parent_id`, `follows`/`shares` routers,
+  feed `share_count`); OAuth breadth (`auth_identities`, `resolve_or_create_user`,
+  GitHub OAuth, ORCID promoted to sign-in, guest-migration shared module,
+  `google_sub` out of the JWT, Bearer auth); onboarding endpoints. Alembic
+  `d4a7c1e93b25`→`e5b8d2fa4c36`→`a7f3c1d9e2b4`, single head. 379 tests pass;
+  `test_trending ×3` fixed. Email/password signup deferred post-beta.
+- **2026-08-29** — **M4 shipped**. `apps/web` is a full social client:
+  follow/vote/share/comment components, 3-provider `/login`, `/onboarding`
+  wizard, `<RequireOnboarding>` guard, enriched profile; 14 new api-client
+  methods. Legacy `frontend/` deleted (59 files); CI `frontend`+`e2e` jobs
+  replaced with a pnpm `web` job; README/replit.md/render.yaml updated to the
+  monorepo + Vercel-`apps/web` topology. typecheck 10/10, web build green.

@@ -128,6 +128,7 @@ export interface SessionUser {
   orcid_id: string | null;
   is_guest: boolean;
   onboarded_at: string | null;
+  is_profile_public?: boolean;
 }
 
 /** Current user, or `null` when not signed in (never throws on 401). */
@@ -149,6 +150,14 @@ export function startGuestSession(opts?: ApiClientOptions): Promise<SessionUser>
 
 export function googleLoginUrl(base = "/api"): string {
   return `${base.replace(/\/$/, "")}/auth/login`;
+}
+
+export function githubLoginUrl(base = "/api"): string {
+  return `${base.replace(/\/$/, "")}/auth/github/login`;
+}
+
+export function orcidLoginUrl(base = "/api"): string {
+  return `${base.replace(/\/$/, "")}/auth/orcid/login`;
 }
 
 /* --- feed ---------------------------------------------------------------- */
@@ -278,4 +287,265 @@ export async function postNote(
 ): Promise<Finding> {
   const draft = await createFinding(body, opts);
   return publishFinding(draft.id, "CC-BY-4.0", opts);
+}
+
+/* --- social: follow graph ------------------------------------------------- */
+
+export interface FollowUser {
+  id: string;
+  handle: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  affiliation: string | null;
+}
+
+export interface FollowStatus {
+  following: boolean;
+  follower_count: number;
+}
+
+export interface ListParams {
+  limit?: number;
+  offset?: number;
+}
+
+/** `GET /users/{handle}/follow` — auth optional. */
+export function getFollowStatus(
+  handle: string,
+  opts?: ApiClientOptions,
+): Promise<FollowStatus> {
+  return apiRequest<FollowStatus>(
+    `/users/${encodeURIComponent(handle)}/follow`,
+    opts,
+  );
+}
+
+/** `POST /users/{handle}/follow` — toggle. Guests get 403. */
+export function toggleFollow(
+  handle: string,
+  opts?: ApiClientOptions,
+): Promise<FollowStatus> {
+  return apiRequest<FollowStatus>(
+    `/users/${encodeURIComponent(handle)}/follow`,
+    { ...opts, method: "POST" },
+  );
+}
+
+/** `GET /users/{handle}/followers`. */
+export function listFollowers(
+  handle: string,
+  params: ListParams = {},
+  opts?: ApiClientOptions,
+): Promise<FollowUser[]> {
+  return apiRequest<FollowUser[]>(
+    `/users/${encodeURIComponent(handle)}/followers`,
+    { ...opts, query: { ...params } },
+  );
+}
+
+/** `GET /users/{handle}/following`. */
+export function listFollowing(
+  handle: string,
+  params: ListParams = {},
+  opts?: ApiClientOptions,
+): Promise<FollowUser[]> {
+  return apiRequest<FollowUser[]>(
+    `/users/${encodeURIComponent(handle)}/following`,
+    { ...opts, query: { ...params } },
+  );
+}
+
+/* --- social: finding votes / shares ------------------------------------- */
+
+export interface FindingVotes {
+  count: number;
+  voted_by_me: boolean;
+}
+
+export interface ToggleVoteResult {
+  voted: boolean;
+  count: number;
+}
+
+export interface FindingShares {
+  count: number;
+  shared_by_me: boolean;
+}
+
+export interface ToggleShareResult {
+  shared: boolean;
+  count: number;
+}
+
+/** `GET /findings/{id}/votes`. */
+export function getFindingVotes(
+  id: string,
+  opts?: ApiClientOptions,
+): Promise<FindingVotes> {
+  return apiRequest<FindingVotes>(
+    `/findings/${encodeURIComponent(id)}/votes`,
+    opts,
+  );
+}
+
+/** `POST /findings/{id}/votes` — toggle. */
+export function toggleFindingVote(
+  id: string,
+  opts?: ApiClientOptions,
+): Promise<ToggleVoteResult> {
+  return apiRequest<ToggleVoteResult>(
+    `/findings/${encodeURIComponent(id)}/votes`,
+    { ...opts, method: "POST" },
+  );
+}
+
+/** `GET /findings/{id}/shares`. */
+export function getFindingShares(
+  id: string,
+  opts?: ApiClientOptions,
+): Promise<FindingShares> {
+  return apiRequest<FindingShares>(
+    `/findings/${encodeURIComponent(id)}/shares`,
+    opts,
+  );
+}
+
+/** `POST /findings/{id}/shares` — toggle. */
+export function toggleFindingShare(
+  id: string,
+  opts?: ApiClientOptions,
+): Promise<ToggleShareResult> {
+  return apiRequest<ToggleShareResult>(
+    `/findings/${encodeURIComponent(id)}/shares`,
+    { ...opts, method: "POST" },
+  );
+}
+
+/* --- social: finding comments ----------------------------------------- */
+
+export interface FindingComment {
+  id: number;
+  spectrum_id: string | null;
+  finding_id: string | null;
+  parent_id: number | null;
+  user_id: string;
+  body: string;
+  created_at: string;
+  author_handle: string | null;
+  author_display_name: string | null;
+}
+
+/** `GET /findings/{id}/comments` — oldest → newest. */
+export function listFindingComments(
+  id: string,
+  opts?: ApiClientOptions,
+): Promise<FindingComment[]> {
+  return apiRequest<FindingComment[]>(
+    `/findings/${encodeURIComponent(id)}/comments`,
+    opts,
+  );
+}
+
+/** `POST /findings/{id}/comments`. */
+export function postFindingComment(
+  id: string,
+  body: { body: string; parent_id?: number },
+  opts?: ApiClientOptions,
+): Promise<FindingComment> {
+  return apiRequest<FindingComment>(
+    `/findings/${encodeURIComponent(id)}/comments`,
+    { ...opts, method: "POST", body },
+  );
+}
+
+/* --- onboarding ------------------------------------------------------- */
+
+export interface HandleAvailability {
+  available: boolean;
+  normalized: string;
+  reason: string | null;
+}
+
+export interface SuggestedUser {
+  id: string;
+  profile_handle: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  affiliation: string | null;
+  follower_count: number;
+}
+
+export interface OnboardingBody {
+  handle: string;
+  display_name: string;
+  interests: string[];
+  is_profile_public: boolean;
+}
+
+/** `GET /v1/users/handle-available?handle=` — no auth. */
+export function checkHandle(
+  handle: string,
+  opts?: ApiClientOptions,
+): Promise<HandleAvailability> {
+  return apiRequest<HandleAvailability>("/v1/users/handle-available", {
+    ...opts,
+    query: { handle },
+  });
+}
+
+/** `GET /v1/users/suggested?limit=` — auth optional. */
+export function getSuggestedUsers(
+  limit = 10,
+  opts?: ApiClientOptions,
+): Promise<SuggestedUser[]> {
+  return apiRequest<SuggestedUser[]>("/v1/users/suggested", {
+    ...opts,
+    query: { limit },
+  });
+}
+
+/** `POST /v1/users/me/onboarding` — full account only. */
+export function submitOnboarding(
+  body: OnboardingBody,
+  opts?: ApiClientOptions,
+): Promise<SessionUser> {
+  return apiRequest<SessionUser>("/v1/users/me/onboarding", {
+    ...opts,
+    method: "POST",
+    body,
+  });
+}
+
+/* --- public profile ------------------------------------------------- */
+
+export interface PublicProfile {
+  id: string;
+  display_name: string | null;
+  avatar_url: string | null;
+  orcid_id: string | null;
+  orcid_verified: boolean;
+  profile_handle: string | null;
+  bio: string | null;
+  affiliation: string | null;
+  research_interests: string[] | null;
+  followers: number;
+  following: number;
+  doi_linked: number;
+  votes_received: number;
+  shares_received: number;
+  comments_written: number;
+  reuse_findings: number;
+  reuse_groups: number;
+  created_at: string;
+}
+
+/** `GET /users/by-handle/{handle}` — 404 if missing / guest / inactive. */
+export function getUserByHandle(
+  handle: string,
+  opts?: ApiClientOptions,
+): Promise<PublicProfile> {
+  return apiRequest<PublicProfile>(
+    `/users/by-handle/${encodeURIComponent(handle)}`,
+    opts,
+  );
 }

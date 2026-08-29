@@ -2,7 +2,8 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { isApiError, postNote, type SessionUser } from "@ramanhub/api-client";
+import { isApiError, postNote } from "@ramanhub/api-client";
+import type { SessionUser } from "@ramanhub/api-client";
 
 import { Button } from "@ramanhub/ui/button";
 
@@ -42,8 +43,8 @@ export function Composer({ session }: { session: SessionUser | null }) {
         <p className="text-muted-foreground">
           Sign in to post a note to the feed.
         </p>
-        <a href="/api/auth/login" className="mt-2 inline-block">
-          <Button size="sm">Sign in with Google</Button>
+        <a href="/login" className="mt-2 inline-block">
+          <Button size="sm">Sign in</Button>
         </a>
       </div>
     );

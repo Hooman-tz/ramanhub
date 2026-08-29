@@ -1,9 +1,9 @@
 # RamanHub on Replit
 
-The **Start application** workflow launches the React/Vite preview on port
-5000, and **Backend API** launches FastAPI on port 8000. The Vite server
-proxies browser requests from `/api/*` to the local FastAPI service, so the
-frontend can use `VITE_API_BASE_URL=/api`.
+The **Backend API** workflow launches FastAPI on port 8000. The web app is a
+Next.js workspace at the repo root — run it with `pnpm dev:web` (it rewrites
+`/api/*` to the local FastAPI service, so no API base URL config is needed in
+the browser). The old React/Vite `frontend/` was removed in M4.
 
 The app uses Replit's managed PostgreSQL connection. Database migrations and
 the required reference seed data have been applied. Development file uploads
