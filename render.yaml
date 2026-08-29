@@ -35,6 +35,17 @@ services:
         value: https://api.serds.ca
       - key: GOOGLE_REDIRECT_URI
         value: https://api.serds.ca/auth/callback
+      # GitHub + ORCID sign-in (M3). Keep the host in lock-step with
+      # BACKEND_URL / GOOGLE_REDIRECT_URI above — change all four together
+      # when the domain is finalised. docs/OPERATIONS.md section 5.
+      - key: GITHUB_REDIRECT_URI
+        value: https://api.serds.ca/auth/github/callback
+      - key: ORCID_REDIRECT_URI
+        value: https://api.serds.ca/auth/orcid/callback
+      - key: ORCID_LOGIN_REDIRECT_URI
+        value: https://api.serds.ca/auth/orcid/callback
+      - key: ORCID_ENV
+        value: production
       - key: STORAGE_BACKEND
         value: s3
       - key: S3_REGION
@@ -53,6 +64,14 @@ services:
       - key: GOOGLE_CLIENT_ID
         sync: false
       - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GITHUB_CLIENT_ID
+        sync: false
+      - key: GITHUB_CLIENT_SECRET
+        sync: false
+      - key: ORCID_CLIENT_ID
+        sync: false
+      - key: ORCID_CLIENT_SECRET
         sync: false
       - key: ANTHROPIC_API_KEY
         sync: false
