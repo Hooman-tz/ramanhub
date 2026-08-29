@@ -32,6 +32,7 @@ from app.models.enums import FieldDataType, IngestionStatus, Modality
 from app.models.field_registry import MetadataFieldDefinition
 from app.models.ingestion_job import IngestionJob
 from app.models.raw_file import RawFile
+from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.models.vendor_parse_cache import VendorParseCache
 from app.routers import ingestion_jobs as ingestion_jobs_router
@@ -79,6 +80,10 @@ def db_session(engine):
     finally:
         session.rollback()
         session.query(IngestionJob).delete()
+        # The confirm endpoint now creates a private draft Spectrum that
+        # references raw_files.id; clear it before raw_files or the DELETE
+        # trips spectra_raw_file_id_fkey and poisons every later test.
+        session.query(Spectrum).delete()
         session.query(RawFile).delete()
         session.query(VendorParseCache).delete()
         session.query(MetadataFieldDefinition).delete()

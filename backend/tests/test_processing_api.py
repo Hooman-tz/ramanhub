@@ -99,15 +99,26 @@ def test_metadata_edit_recomputes_quality_flags_before_publication(
 ):
     owner = make_user()
     app_client.set_current_user(owner)
-    db_session.add(
-        MetadataFieldDefinition(
+    # `laser_wavelength_nm` is part of the seeded Raman registry, so pin a
+    # numeric band on the existing row (rolled back with the test's
+    # transaction) rather than inserting a duplicate that trips
+    # uq_metadata_field_modality_key.
+    field = (
+        db_session.query(MetadataFieldDefinition)
+        .filter_by(modality=Modality.raman, field_key="laser_wavelength_nm")
+        .one_or_none()
+    )
+    if field is None:
+        field = MetadataFieldDefinition(
             modality=Modality.raman,
             field_key="laser_wavelength_nm",
             data_type=FieldDataType.number,
-            min_value=100,
-            max_value=800,
         )
-    )
+        db_session.add(field)
+    field.data_type = FieldDataType.number
+    field.allowed_values = None
+    field.min_value = 100
+    field.max_value = 800
     db_session.commit()
     spectrum = _create_spectrum(app_client, make_raw_file(owner))
 
@@ -118,6 +129,7 @@ def test_metadata_edit_recomputes_quality_flags_before_publication(
                 "modality": "raman",
                 "instrument_vendor": "Test Vendor",
                 "laser_wavelength_nm": 1064,
+                "integration_time_ms": 100,
                 "spectral_range_cm1": "100-2000",
                 "sample_description": "Edited test sample",
             }

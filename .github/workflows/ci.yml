@@ -68,6 +68,11 @@ jobs:
       - name: Run migrations from scratch
         run: uv run alembic upgrade head
 
+      - name: Assert a single Alembic head
+        run: |
+          n=$(uv run alembic heads | grep -c '(head)')
+          test "$n" -eq 1 || { echo "expected 1 alembic head, found $n"; uv run alembic heads; exit 1; }
+
       - name: Check for model/migration drift
         run: uv run alembic check
 

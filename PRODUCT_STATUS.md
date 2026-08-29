@@ -1,6 +1,6 @@
 # Spectra Insight — Product Status
 
-_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-29 (M4 shipped)._
+_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-29 (M5 shipped — web beta feature-complete)._
 
 Full plan: `/Users/hooman/.claude/plans/how-is-our-social-gentle-alpaca.md`
 
@@ -99,9 +99,30 @@ monorepo + "Vercel Root Directory = `apps/web`" topology. `pnpm typecheck`
 10/10; `pnpm --filter @ramanhub/web build` green (`/`, `/login`, `/onboarding`
 static; `/findings/[id]`, `/u/[handle]` dynamic).
 
-**Next action:** M5 — fix the remaining 8 backend test failures, add the
-single-Alembic-head CI assertion, real `/terms` + `/privacy`, and
-`docs/OPERATIONS.md` for GitHub/ORCID OAuth app registration.
+**M5 shipped (same branch):** the web beta is feature-complete and the test
+suite is fully green. All 8 remaining backend failures fixed — every one was a
+stale test/fixture (not product code): `test_search ×2` (helpers must inject
+`laser_wavelength_nm` through the ingestion job, and use one raw file per draft
+now that `spectra.raw_file_id` is unique), `test_processing_api ×1` (upsert the
+now-seeded field def; PATCH must include the now-required `integration_time_ms`),
+`test_ingestion_api ×5` (module teardown must delete `Spectrum` before `RawFile`
+now that `PATCH /ingestion-jobs/{id}` creates a draft spectrum — one bad teardown
+was poisoning the rest of the module). **`uv run pytest` → 382 passed, 0 failed,
+0 errors**, stable across randomized runs. CI's `backend` job gained an "assert a
+single Alembic head" step. `apps/web` gained real `/terms` + `/privacy` pages
+(shared `LegalDoc` shell, consent links on `/login`). `docs/OPERATIONS.md` §5
+documents Google/GitHub/ORCID OAuth-app registration (redirect URIs per env, env
+vars, the per-instance in-memory rate-limiter caveat). ADR-004 amended
+("engagement ranks `/feed` + `/trending`, never `/search`"); ADR-007 moved to
+**Accepted** (3 OAuth providers via `auth_identities`). `dependabot.yml`
+repointed off the deleted `frontend/`.
+
+**Next action:** the web beta (M0–M5) is done on `integration/social-forward`
+and unpushed. Owner steps to go live: review the branch, merge to `main`,
+register the three OAuth apps + set their secrets (see `docs/OPERATIONS.md` §5),
+deploy the API (Render) and `apps/web` (Vercel, Root Directory `apps/web`), then
+smoke-test a real signup. Deferred to later pushes: the Expo mobile app (M-mobile),
+extracting the Python processing worker (M6), the Go API service (M7).
 
 ---
 
@@ -114,7 +135,7 @@ single-Alembic-head CI assertion, real `/terms` + `/privacy`, and
 | **M2** | Web: feed is the app — Following/Discover tabs, inline composer, finding detail, profile; port OKLCH tokens | Open web app → land on feed → post a note → see it → open a profile | **Shipped** (typecheck 10/10, web build green, feed proxies live; browser posting needs M3 auth) | — | none |
 | **M3** | Backend: follow graph + `shares` + votes/comments on findings; `auth_identities` + Google/GitHub/ORCID signup (email/pw deferred) + onboarding endpoints | GitHub + ORCID sign-in work; onboarding (follow 3) → Following feed fills | **Shipped** (`9fb9c1e`; migrations `d4a7c1e93b25`→`e5b8d2fa4c36`→`a7f3c1d9e2b4`; 379 tests pass) | — | fixed `test_trending ×3` |
 | **M4** | Web: follow / vote / share / comment UI, onboarding wizard, 3-provider `/login`, `<RequireOnboarding>`; **delete `frontend/`**; point Vercel at `apps/web` | Full new-user journey on web; old frontend gone; CI green | **Shipped** (typecheck 10/10, web build green; `frontend/` deleted; CI `web` job) | — | none |
-| **M5** | Fix remaining backend failures; single-alembic-head CI check; real legal pages; `docs/OPERATIONS.md` OAuth-app registration. _(Expo mobile is a separate post-beta push.)_ | `pnpm typecheck` + web build + `uv run pytest` all green; a stranger signs up unaided | Not started | — | fixes `test_search ×2`, `test_processing_api ×1`, `test_ingestion_api ×5` |
+| **M5** | Fix remaining backend failures; single-alembic-head CI check; real legal pages; `docs/OPERATIONS.md` OAuth-app registration. _(Expo mobile is a separate post-beta push.)_ | `pnpm typecheck` + web build + `uv run pytest` all green; a stranger signs up unaided | **Shipped** (382 tests pass, 0 fail; `/terms` + `/privacy` live; CI single-head step) | — | fixed `test_search ×2`, `test_processing_api ×1`, `test_ingestion_api ×5` |
 | _M6 (later)_ | Extract `processing/` + `ingestion/` behind an internal API as a standalone Python worker | FastAPI calls the worker as a client; no behavior change | Not started | — | — |
 | _M7 (later)_ | Go API service for auth/feed/follows/findings/CRUD/DOI against the same Postgres + `/v1` contract; keep the Python worker | `api-client` base URL cut over to Go; parity | Not started | — | — |
 
@@ -144,9 +165,11 @@ single-Alembic-head CI assertion, real `/terms` + `/privacy`, and
 | Test | Count | Root cause (suspected) | Target milestone | Status |
 |---|---|---|---|---|
 | `test_trending` | 3 | idempotent-spectrum test bug (reused one raw file for N spectra) | M3 | **Fixed (M3)** |
-| `test_search` | 2 | search assertions | M5 | Failing |
-| `test_processing_api` | 1 | processing endpoint | M5 | Failing |
-| `test_ingestion_api` | 5 | FK-violation / ingestion setup | M5 | Failing |
+| `test_search` | 2 | helpers didn't route `laser_wavelength_nm` through the ingestion job; shared raw file after `raw_file_id` went unique | M5 | **Fixed (M5)** |
+| `test_processing_api` | 1 | test inserted a now-seeded field def; PATCH omitted the now-required `integration_time_ms` | M5 | **Fixed (M5)** |
+| `test_ingestion_api` | 5 | module teardown deleted `RawFile` before the draft `Spectrum` that `PATCH /ingestion-jobs` now creates | M5 | **Fixed (M5)** |
+
+**Backend suite: 382 passed, 0 failed, 0 errors.**
 
 ---
 
@@ -179,3 +202,10 @@ single-Alembic-head CI assertion, real `/terms` + `/privacy`, and
   methods. Legacy `frontend/` deleted (59 files); CI `frontend`+`e2e` jobs
   replaced with a pnpm `web` job; README/replit.md/render.yaml updated to the
   monorepo + Vercel-`apps/web` topology. typecheck 10/10, web build green.
+- **2026-08-29** — **M5 shipped** — web beta feature-complete. All 8 remaining
+  backend test failures fixed (all stale-test, no product change): `uv run
+  pytest` → **382 passed, 0 failed, 0 errors**. CI `backend` job asserts a
+  single Alembic head. Real `/terms` + `/privacy` pages; `docs/OPERATIONS.md`
+  §5 = Google/GitHub/ORCID OAuth-app registration. ADR-004 amended, ADR-007
+  → Accepted. `dependabot.yml` off the deleted `frontend/`.
+  **M0–M5 complete on `integration/social-forward` (unpushed).**

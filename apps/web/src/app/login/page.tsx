@@ -65,6 +65,18 @@ function LoginCard() {
         {busy ? "One moment…" : "Continue as guest"}
       </Button>
       {error && <p className="text-destructive mt-2 text-xs">{error}</p>}
+
+      <p className="text-muted-foreground mt-5 text-center text-xs">
+        By continuing you agree to our{" "}
+        <a href="/terms" className="hover:underline">
+          Terms
+        </a>{" "}
+        and{" "}
+        <a href="/privacy" className="hover:underline">
+          Privacy Policy
+        </a>
+        .
+      </p>
     </div>
   );
 }

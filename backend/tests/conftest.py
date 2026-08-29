@@ -128,7 +128,11 @@ def make_raw_file(db_session, fake_s3):
     from app.models.ingestion_job import IngestionJob
     from app.models.raw_file import RawFile
 
-    def _make(owner, content: bytes = b"100 1.0\n200 2.0\n300 5.0\n400 2.0\n500 1.0\n600 3.0\n"):
+    def _make(
+        owner,
+        content: bytes = b"100 1.0\n200 2.0\n300 5.0\n400 2.0\n500 1.0\n600 3.0\n",
+        laser_wavelength_nm: float = 785.0,
+    ):
         key = f"{uuid.uuid4()}.txt"
         fake_s3[(settings.S3_BUCKET_RAW, key)] = content
         raw_file = RawFile(
@@ -156,14 +160,14 @@ def make_raw_file(db_session, fake_s3):
             extracted_metadata_raw={
                 "modality": "raman",
                 "instrument_vendor": "Test Vendor",
-                "laser_wavelength_nm": 785.0,
+                "laser_wavelength_nm": laser_wavelength_nm,
                 "spectral_range_cm1": "100-2000",
                 "sample_description": "Test sample",
             },
             extracted_metadata_confirmed={
                 "modality": "raman",
                 "instrument_vendor": "Test Vendor",
-                "laser_wavelength_nm": 785.0,
+                "laser_wavelength_nm": laser_wavelength_nm,
                 "spectral_range_cm1": "100-2000",
                 "sample_description": "Test sample",
             },

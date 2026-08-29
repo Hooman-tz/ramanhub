@@ -140,12 +140,42 @@ No code changes are needed beyond what's already wired — this section is
 purely the account/credential setup step referenced as a PREREQUISITE in
 the architecture doc.
 
+## 5. OAuth applications (Google, GitHub, ORCID)
+
+The beta has three sign-in providers. Each needs an OAuth app registered with
+the provider and its client id/secret set as backend secrets (never committed;
+`.env.example` keeps the placeholders empty). The callback/redirect URI must
+match `<BACKEND_URL>` exactly, per environment.
+
+| Provider | Register at | Redirect URI (prod) | Redirect URI (local) | Backend env vars |
+| --- | --- | --- | --- | --- |
+| Google | <https://console.cloud.google.com/apis/credentials> → OAuth client ID (Web) | `https://api.spectra-in.site/auth/callback` | `http://localhost:8000/auth/callback` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` |
+| GitHub | <https://github.com/settings/developers> → New OAuth App (scopes: `read:user`, `user:email`) | `https://api.spectra-in.site/auth/github/callback` | `http://localhost:8000/auth/github/callback` | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_REDIRECT_URI` |
+| ORCID | <https://orcid.org/developer-tools> (use the **sandbox** — <https://sandbox.orcid.org> — until production is approved) | `https://api.spectra-in.site/auth/orcid/callback` | `http://localhost:8000/auth/orcid/callback` | `ORCID_CLIENT_ID`, `ORCID_CLIENT_SECRET`, `ORCID_REDIRECT_URI`, `ORCID_LOGIN_REDIRECT_URI`, `ORCID_ENV` |
+
+Notes:
+
+- `ORCID_REDIRECT_URI` is the existing **link-an-ORCID-to-a-signed-in-account**
+  flow; `ORCID_LOGIN_REDIRECT_URI` is the **sign-in** flow added in M3. Both
+  must be listed as allowed redirect URIs in the ORCID app.
+- After sign-in the backend 302s to `FRONTEND_URL`. Set `FRONTEND_URL` to the
+  web origin (`https://spectra-in.site`), not the API origin.
+- A provider that isn't configured (`configured()` returns false) makes its
+  `/auth/<provider>/login` endpoint return 400 — the other providers still work.
+- The JWT session secret is `JWT_SECRET` (min 32 bytes). Rotating it logs
+  everyone out.
+- **Rate limiting is in-process and per-instance.** `app/ratelimit.py` keeps
+  counters in a module-level dict, so with more than one API instance the
+  effective limits multiply by the instance count and reset on deploy. Fine for
+  the single-instance beta; needs Redis (or the platform's edge rate limiter)
+  before scaling out.
+
 ## 4. Dependabot
 
 Enabled via `.github/dependabot.yml` at the repo root: weekly update PRs for
 the backend's Python dependencies (`pip` ecosystem, `/backend`) and the
-frontend's npm dependencies (`npm` ecosystem, `/frontend`), plus GitHub
-Actions workflow versions if any are added later. This needs no further
+frontend's pnpm workspace (`npm` ecosystem, `/` — `apps/*` + `packages/*`),
+plus GitHub Actions workflow versions. This needs no further
 setup once the repo (with this file) is pushed to GitHub — Dependabot is
 free and enabled automatically for any public repo, and for private repos
 under an org/plan that includes it.

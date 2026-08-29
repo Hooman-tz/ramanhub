@@ -64,13 +64,19 @@ def _create_and_publish(
     doi: str | None = None,
 ):
     client.set_current_user(owner)
-    raw_file = make_raw_file(owner, content=content) if content is not None else make_raw_file(owner)
+    # `laser_wavelength_nm` has to land in the ingestion job's confirmed
+    # metadata (which `make_raw_file` builds); `POST /spectra` derives a
+    # draft's `confirmed_metadata` from that job, not from the request body.
+    raw_kwargs: dict = {}
+    if content is not None:
+        raw_kwargs["content"] = content
+    if laser_wavelength_nm is not None:
+        raw_kwargs["laser_wavelength_nm"] = laser_wavelength_nm
+    raw_file = make_raw_file(owner, **raw_kwargs)
 
     body: dict = {"raw_file_id": str(raw_file.id)}
     if material_type is not None:
         body["material_type"] = material_type
-    if laser_wavelength_nm is not None:
-        body["confirmed_metadata"] = {"laser_wavelength_nm": laser_wavelength_nm}
 
     resp = client.post("/spectra", json=body)
     assert resp.status_code == 201, resp.text
@@ -321,15 +327,16 @@ def test_library_mine_shows_all_states_and_isolates_other_users(client, make_use
 def test_library_mine_filters_like_search(client, make_user, make_raw_file):
     owner = make_user()
     client.set_current_user(owner)
-    raw_file = make_raw_file(owner)
+    # One spectrum per raw file (unique raw_file_id + idempotent POST
+    # /spectra), so each draft needs its own raw file.
     resp = client.post(
         "/spectra",
-        json={"raw_file_id": str(raw_file.id), "material_type": "graphene"},
+        json={"raw_file_id": str(make_raw_file(owner).id), "material_type": "graphene"},
     )
     graphene_draft = resp.json()
     resp = client.post(
         "/spectra",
-        json={"raw_file_id": str(raw_file.id), "material_type": "polymer"},
+        json={"raw_file_id": str(make_raw_file(owner).id), "material_type": "polymer"},
     )
     polymer_draft = resp.json()
 
