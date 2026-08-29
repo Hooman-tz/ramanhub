@@ -1,6 +1,6 @@
 # Spectra Insight — Product Status
 
-_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-28 (M1 shipped)._
+_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-29 (M2 shipped)._
 
 Full plan: `/Users/hooman/.claude/plans/how-is-our-social-gentle-alpaca.md`
 
@@ -49,9 +49,23 @@ fresh `ramanhub_m1test` DB. Before running the app locally against `backend/`,
 recreate the dev DB (`dropdb ramanhub && createdb ramanhub && cd backend &&
 uv run alembic upgrade head && make -C .. seed`).
 
-**Next action:** M2 — build the web feed (`apps/web`): Feed page
-(Following/Discover), inline composer, Finding detail, Profile; wire
-`@ramanhub/api-client` to `/v1/feed` + `/v1/findings`; port OKLCH tokens.
+**M2 shipped (same branch):** `apps/web` now leads with the feed. `/` is the
+Feed (Discover / Following tabs) with an inline note composer; `/findings/[id]`
+detail; `/u/[handle]` profile (thin — follow button + bio come in M4).
+`@ramanhub/api-client` gained `getFeed` / `getFinding` / `createFinding` /
+`publishFinding` / `postNote` / `getSession` and the `FeedItem` / `Finding`
+types. React Query wired in `providers.tsx`; server components forward the
+session cookie via `lib/server-api.ts`. Brand tokens swapped pink→RamanHub
+blue (hue 258) in `tooling/tailwind/theme.css`. `pnpm typecheck` 10/10,
+`pnpm --filter @ramanhub/web build` green; live: `GET /api/v1/feed` proxies
+through the web server and returns findings; `/` renders the feed shell.
+Posting from a browser needs a signed-in full account (Google OAuth not
+configured locally; email/password lands in M3) — the composer shows the
+sign-in CTA otherwise.
+
+**Next action:** M3 — backend: follow graph router + `shares`, votes/comments
+retarget to findings (Migrations 2–3), `auth_identities` + GitHub/ORCID/email
+signup + onboarding endpoints (Migration 4).
 
 ---
 
@@ -61,7 +75,7 @@ uv run alembic upgrade head && make -C .. seed`).
 |---|---|---|---|---|---|
 | **M0** | One monorepo: fold in `social-app/`, strip tRPC/Drizzle/Better-Auth, `apps/web` + `apps/mobile` + `packages/{ui,validators,api-client}`, backend unchanged | `pnpm typecheck` green; web page reads FastAPI `/health` through the `/api/*` proxy | **Shipped** (branch `integration/social-forward`; typecheck 10/10, web build ok; live proxy check pending) | — | none |
 | **M1** | Backend: cherry-pick `findings` + `feed` + accessions from Track A onto Track B; Alembic Migration 1; note-only findings can publish | `POST /v1/findings` (note) → publish → `GET /v1/feed?filter=all` returns it | **Shipped** (migration `f2b1e9c4d7a3`; 355 tests pass; Bearer-token auth deferred to M3) | — | none |
-| **M2** | Web: feed is the app — Following/Discover tabs, inline composer, finding detail, profile; port OKLCH tokens | Open web app → land on feed → post a note → see it → open a profile | Not started | — | none |
+| **M2** | Web: feed is the app — Following/Discover tabs, inline composer, finding detail, profile; port OKLCH tokens | Open web app → land on feed → post a note → see it → open a profile | **Shipped** (typecheck 10/10, web build green, feed proxies live; browser posting needs M3 auth) | — | none |
 | **M3** | Backend: follow graph + `shares` + votes/comments on findings (Migrations 2–3); `auth_identities` + GitHub/ORCID/email signup + onboarding endpoints (Migration 4) | Email signup → verify → onboarding (follow 3) → Following feed fills; GitHub + ORCID sign-in work | Not started | — | fixes `test_trending ×3` |
 | **M4** | Web: follow buttons, onboarding wizard, 4-provider signup UI; **delete `frontend/`**; point Vercel at `apps/web` | Full new-user journey on web end to end; old frontend gone; CI green | Not started | — | none |
 | **M5** | Mobile (Expo) feed + compose + Bearer auth; fix remaining backend failures; single-alembic-head CI check; real legal pages; OAuth redirect URIs registered | Expo Go shows feed + lets you post; `pnpm test` + `pytest` fully green; a stranger signs up unaided | Not started | — | fixes `test_search ×2`, `test_processing_api ×1`, `test_ingestion_api ×5` |
@@ -112,3 +126,7 @@ uv run alembic upgrade head && make -C .. seed`).
   tables + accessions cherry-picked onto `backend/`. Migration `f2b1e9c4d7a3`
   applies clean; 355 backend tests pass, 11 pre-existing failures unchanged.
   `app.ranking` reworded — engagement ranks feed/trending only, never search.
+- **2026-08-29** — **M2 shipped**. `apps/web` feed-first: `/` Feed
+  (Discover/Following) + inline composer, `/findings/[id]`, `/u/[handle]`.
+  api-client feed/findings methods + React Query. Brand tokens → blue.
+  typecheck 10/10, web build green, feed verified live through the proxy.

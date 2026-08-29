@@ -5,6 +5,8 @@ import { cn } from "@ramanhub/ui";
 import { ThemeProvider, ThemeToggle } from "@ramanhub/ui/theme";
 import { Toaster } from "@ramanhub/ui/toast";
 
+import { Providers } from "~/app/providers";
+
 import "~/app/styles.css";
 
 export const metadata: Metadata = {
@@ -47,7 +49,7 @@ export default function RootLayout(props: { children: React.ReactNode }) {
         )}
       >
         <ThemeProvider>
-          {props.children}
+          <Providers>{props.children}</Providers>
           <div className="absolute right-4 bottom-4">
             <ThemeToggle />
           </div>

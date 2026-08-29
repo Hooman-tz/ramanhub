@@ -116,3 +116,166 @@ export interface HealthResponse {
 export function getHealth(opts?: ApiClientOptions): Promise<HealthResponse> {
   return apiRequest<HealthResponse>("/health", opts);
 }
+
+/* --- auth / session -------------------------------------------------------- */
+
+export interface SessionUser {
+  id: string;
+  email: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  profile_handle: string | null;
+  orcid_id: string | null;
+  is_guest: boolean;
+  onboarded_at: string | null;
+}
+
+/** Current user, or `null` when not signed in (never throws on 401). */
+export async function getSession(
+  opts?: ApiClientOptions,
+): Promise<SessionUser | null> {
+  try {
+    return await apiRequest<SessionUser | null>("/auth/session", opts);
+  } catch (e) {
+    if (isApiError(e) && e.status === 401) return null;
+    throw e;
+  }
+}
+
+/** Mint an anonymous guest session (cookie set by the response). */
+export function startGuestSession(opts?: ApiClientOptions): Promise<SessionUser> {
+  return apiRequest<SessionUser>("/auth/guest", { ...opts, method: "POST" });
+}
+
+export function googleLoginUrl(base = "/api"): string {
+  return `${base.replace(/\/$/, "")}/auth/login`;
+}
+
+/* --- feed ---------------------------------------------------------------- */
+
+export interface FeedAuthor {
+  id: string;
+  handle: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  orcid_id: string | null;
+}
+
+export interface FeedItem {
+  kind: "finding" | "spectrum";
+  id: string;
+  accession: string | null;
+  title: string | null;
+  summary: string | null;
+  author: FeedAuthor | null;
+  published_at: string | null;
+  vote_count: number;
+  comment_count: number;
+  doi: string | null;
+  tags: string[] | null;
+  spectrum_count: number | null;
+  material_type: string | null;
+  snr: number | null;
+  score: number;
+}
+
+export interface FeedParams {
+  kind?: "all" | "findings" | "spectra";
+  filter?: "all" | "following";
+  tag?: string;
+  author?: string;
+  trust_tier?: "doi_verified" | "community";
+  limit?: number;
+  offset?: number;
+}
+
+export function getFeed(
+  params: FeedParams = {},
+  opts?: ApiClientOptions,
+): Promise<FeedItem[]> {
+  return apiRequest<FeedItem[]>("/v1/feed", { ...opts, query: { ...params } });
+}
+
+/* --- findings ---------------------------------------------------------------- */
+
+export interface FindingEntry {
+  id: string;
+  author_id: string;
+  position: number;
+  kind: string;
+  body_md: string | null;
+  config: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface MemberSpectrum {
+  spectrum_id: string;
+  accession: string | null;
+  title: string | null;
+  label: string | null;
+  position: number;
+  state: string;
+}
+
+export interface Finding {
+  id: string;
+  accession: string | null;
+  owner_id: string;
+  owner_handle: string | null;
+  owner_display_name: string | null;
+  owner_orcid: string | null;
+  title: string;
+  abstract_md: string | null;
+  state: "draft" | "published";
+  license_id: string | null;
+  doi: string | null;
+  publication_metadata: Record<string, unknown> | null;
+  tags: string[] | null;
+  published_at: string | null;
+  created_at: string;
+  updated_at: string;
+  entries: FindingEntry[];
+  spectra: MemberSpectrum[];
+  vote_count: number;
+  comment_count: number;
+}
+
+export function getFinding(
+  id: string,
+  opts?: ApiClientOptions,
+): Promise<Finding> {
+  return apiRequest<Finding>(`/v1/findings/${id}`, opts);
+}
+
+export function listMyFindings(opts?: ApiClientOptions): Promise<Finding[]> {
+  return apiRequest<Finding[]>("/v1/findings", opts);
+}
+
+export function createFinding(
+  body: { title: string; abstract_md?: string; tags?: string[] },
+  opts?: ApiClientOptions,
+): Promise<Finding> {
+  return apiRequest<Finding>("/v1/findings", { ...opts, method: "POST", body });
+}
+
+export function publishFinding(
+  id: string,
+  license_id = "CC-BY-4.0",
+  opts?: ApiClientOptions,
+): Promise<Finding> {
+  return apiRequest<Finding>(`/v1/findings/${id}/publish`, {
+    ...opts,
+    method: "POST",
+    body: { license_id },
+  });
+}
+
+/** Create a draft note and immediately publish it — the one-tap "post". */
+export async function postNote(
+  body: { title: string; abstract_md?: string; tags?: string[] },
+  opts?: ApiClientOptions,
+): Promise<Finding> {
+  const draft = await createFinding(body, opts);
+  return publishFinding(draft.id, "CC-BY-4.0", opts);
+}
