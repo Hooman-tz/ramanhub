@@ -42,6 +42,7 @@ from app.routers import auth as auth_router
 from app.routers import licenses as licenses_router
 from app.routers import users as users_router
 from app.schemas.auth import UserUpdate
+from app.seed.seed_data import seed_licenses
 from tests._db_url import get_test_database_url
 
 # ---------------------------------------------------------------------------
@@ -284,7 +285,18 @@ def db_session(engine):
     finally:
         session.rollback()
         session.query(User).delete()
+        # Licenses are NOT this module's to destroy. `conftest._seed_registry`
+        # commits the canonical rows once per session, and every DB-backed
+        # test file relies on them still being there — publishing a spectrum
+        # 422s with "Choose a valid publication license." without them.
+        # Emptying the table here left it empty for whichever files pytest
+        # happens to collect after this one (test_comments, test_search,
+        # test_votes, test_trending, test_spectrum_data, test_public_
+        # community — 38 failures), while every one of those files passed
+        # when run on its own. Delete for this module's own isolation, then
+        # put the shared seed back.
         session.query(License).delete()
+        seed_licenses(session)
         session.commit()
         session.close()
 
@@ -524,12 +536,15 @@ def test_patch_users_me_invalid_orcid_rejected_422(test_app, db_session):
 
 @requires_db
 def test_get_licenses_is_public_and_lists_seeded_licenses(test_app, db_session):
-    db_session.add_all(
-        [
-            License(id="CC-BY-4.0", name="Creative Commons Attribution 4.0", url="https://x", is_default=True),
-            License(id="CC0-1.0", name="CC0 1.0", url="https://y", is_default=False),
-        ]
-    )
+    # merge(), not add_all(): these ids are the same ones the session-scoped
+    # seed already commits, so a plain insert is a primary-key collision the
+    # moment the table is not empty. It only worked before because the
+    # teardown above used to leave the table empty for everyone.
+    for row in (
+        License(id="CC-BY-4.0", name="Creative Commons Attribution 4.0", url="https://x", is_default=True),
+        License(id="CC0-1.0", name="CC0 1.0", url="https://y", is_default=False),
+    ):
+        db_session.merge(row)
     db_session.commit()
 
     async def _run():
