@@ -1,0 +1,33 @@
+{
+  "name": "ramanhub",
+  "private": true,
+  "engines": {
+    "node": ">=22.21.0",
+    "pnpm": ">=10.19.0"
+  },
+  "packageManager": "pnpm@11.24.0",
+  "scripts": {
+    "build": "turbo run build",
+    "clean": "git clean -xdf node_modules",
+    "clean:workspaces": "turbo run clean",
+    "dev": "turbo watch dev --continue",
+    "dev:web": "turbo watch dev -F @ramanhub/web...",
+    "dev:mobile": "turbo watch dev -F @ramanhub/mobile...",
+    "format": "turbo run format --continue -- --cache --cache-location .cache/.prettiercache",
+    "format:fix": "turbo run format --continue -- --write --cache --cache-location .cache/.prettiercache",
+    "lint": "turbo run lint --continue -- --cache --cache-location .cache/.eslintcache",
+    "lint:fix": "turbo run lint --continue -- --fix --cache --cache-location .cache/.eslintcache",
+    "lint:ws": "pnpm dlx sherif@latest",
+    "typecheck": "turbo run typecheck",
+    "ui-add": "turbo run ui-add"
+  },
+  "devDependencies": {
+    "@ramanhub/prettier-config": "workspace:*",
+    "@turbo/gen": "^2.5.8",
+    "dotenv-cli": "^10.0.0",
+    "prettier": "catalog:",
+    "turbo": "^2.5.8",
+    "typescript": "catalog:"
+  },
+  "prettier": "@ramanhub/prettier-config"
+}

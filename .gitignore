@@ -1,4 +1,4 @@
-# Python
+# Python (backend/)
 __pycache__/
 *.py[cod]
 *.egg-info/
@@ -11,14 +11,32 @@ venv/
 htmlcov/
 .coverage
 
-# Node / frontend
+# Node / JS (apps/, packages/, tooling/)
 node_modules/
 dist/
 .vite/
+.next/
+out/
+next-env.d.ts
+.turbo/
+.cache/
+.output/
+.nitro/
+.tanstack/
+
+# Expo (apps/mobile/)
+.expo/
+expo-env.d.ts
+apps/mobile/ios
+apps/mobile/android
 
 # Env
 .env
 .env.local
+.env*.local
+
+# Deploy
+.vercel
 
 # OS
 .DS_Store

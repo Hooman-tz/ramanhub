@@ -1,0 +1,7 @@
+{
+  "name": "@ramanhub/tsconfig",
+  "private": true,
+  "files": [
+    "*.json"
+  ]
+}
