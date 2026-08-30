@@ -118,6 +118,29 @@ def get_session_user(user: User | None = Depends(get_current_user_optional)) -> 
     return user
 
 
+@router.get("/dev-login")
+async def dev_login(
+    email: str = "demo@ramanhub.example",
+    db: Session = Depends(get_db),
+    prior_session: User | None = Depends(get_current_user_optional),
+) -> RedirectResponse:
+    """LOCAL DEV ONLY. Signs you in as a full (non-guest) account without an
+    OAuth round trip, so the social write paths can be exercised before real
+    provider secrets are configured. Returns 404 unless
+    `ENVIRONMENT=development`; never reachable in staging/production."""
+    if settings.ENVIRONMENT != "development":
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not Found")
+    user = db.query(User).filter(User.email == email, User.is_guest.is_(False)).one_or_none()
+    if user is None:
+        user = User(email=email, display_name=email.split("@")[0], is_guest=False)
+        db.add(user)
+        db.flush()
+    _maybe_migrate_guest(prior_session, user, db)
+    db.commit()
+    log_event(logger, "auth.dev_login", user_id=str(user.id))
+    return _issue_session(user)
+
+
 # --- Google ---------------------------------------------------------------
 
 

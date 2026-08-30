@@ -467,6 +467,40 @@ def test_callback_missing_code_returns_400(test_app):
 
 
 @requires_db
+@requires_db
+def test_dev_login_is_404_outside_development(test_app, db_session, monkeypatch):
+    async def _run():
+        monkeypatch.setattr(settings, "ENVIRONMENT", "production")
+        async with _client(test_app) as client:
+            resp = await client.get("/auth/dev-login", follow_redirects=False)
+            assert resp.status_code == 404
+
+    run_async(_run())
+
+
+@requires_db
+def test_dev_login_issues_a_full_account_session_in_development(test_app, db_session, monkeypatch):
+    async def _run():
+        monkeypatch.setattr(settings, "ENVIRONMENT", "development")
+        async with _client(test_app) as client:
+            resp = await client.get(
+                "/auth/dev-login",
+                params={"email": "devtester@example.com"},
+                follow_redirects=False,
+            )
+            assert resp.status_code == 302
+            assert "session=" in "".join(resp.headers.get_list("set-cookie"))
+        user = (
+            db_session.query(User)
+            .filter(User.email == "devtester@example.com")
+            .one()
+        )
+        assert user.is_guest is False
+
+    run_async(_run())
+
+
+@requires_db
 def test_logout_clears_session_cookie(test_app):
     async def _run():
         async with _client(test_app) as client:
