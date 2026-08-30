@@ -83,9 +83,9 @@ def get_current_full_user(user: User = Depends(get_current_user)) -> User:
     if user.is_guest:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Sign in with Google to do this — guest sessions can upload and "
-            "process spectra, but publishing, voting, commenting, and profile "
-            "linking need a full account.",
+            detail="Sign in to do this — guest sessions can upload and process "
+            "spectra, but publishing, voting, commenting, and profile linking "
+            "need a full account (Google, GitHub, or ORCID).",
         )
     return user
 
