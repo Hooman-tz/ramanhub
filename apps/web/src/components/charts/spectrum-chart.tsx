@@ -69,6 +69,11 @@ function resolveColors() {
     band: token("--chart-band", "rgba(42,120,214,0.18)"),
     grid: token("--chart-grid", "#e1e0d9"),
     axis: token("--chart-axis", "#898781"),
+    // Theme-aware tooltip surface (was hardcoded white/near-black — unreadable
+    // and jarring in dark mode).
+    surface: token("--popover", "#ffffff"),
+    ink: token("--popover-foreground", "#0b0b0b"),
+    border: token("--border", "#e1e0d9"),
   };
 }
 
@@ -112,14 +117,26 @@ export function SpectrumChart(props: SpectrumChartProps) {
 
   // init once / dispose on unmount
   useEffect(() => {
-    if (!containerRef.current) return;
-    const chart = echarts.init(containerRef.current);
+    const el = containerRef.current;
+    if (!el) return;
+    // React 19 StrictMode double-invokes this effect in dev; make sure a
+    // prior instance on this node is gone before re-initialising.
+    echarts.getInstanceByDom(el)?.dispose();
+    const chart = echarts.init(el);
     chartRef.current = chart;
 
-    const ro = new ResizeObserver(() => chart.resize());
-    ro.observe(containerRef.current);
+    // The container often has 0 width on the very first paint (inside a card
+    // that's still laying out). One deferred resize catches that case.
+    const raf = requestAnimationFrame(() => {
+      if (!chart.isDisposed()) chart.resize();
+    });
+    const ro = new ResizeObserver(() => {
+      if (!chart.isDisposed()) chart.resize();
+    });
+    ro.observe(el);
 
     return () => {
+      cancelAnimationFrame(raf);
       ro.disconnect();
       chart.dispose();
       chartRef.current = null;
@@ -144,14 +161,20 @@ export function SpectrumChart(props: SpectrumChartProps) {
       axisLine: { lineStyle: { color: c.grid } },
       splitLine: { lineStyle: { color: c.grid } },
     };
+    const compact = height <= 200;
     const baseTooltip = {
-      backgroundColor: "rgba(255,255,255,0.92)",
-      borderColor: c.grid,
+      // `confine` keeps the tooltip inside the chart box — without it, a
+      // small chart in a feed card throws the tooltip outside/over the card
+      // ("funny on hover").
+      confine: true,
+      appendToBody: false,
+      backgroundColor: c.surface,
+      borderColor: c.border,
       borderWidth: 1,
       borderRadius: 8,
       padding: [6, 10],
-      textStyle: { color: "#0b0b0b", fontSize: 12 },
-      extraCssText: "backdrop-filter: blur(6px);",
+      textStyle: { color: c.ink, fontSize: 12 },
+      extraCssText: "box-shadow: 0 4px 12px rgba(0,0,0,0.12);",
     };
     const baseTextStyle = {
       fontFamily: 'system-ui, -apple-system, "Segoe UI", sans-serif',
@@ -294,12 +317,14 @@ export function SpectrumChart(props: SpectrumChartProps) {
           tooltip: {
             ...baseTooltip,
             trigger: "axis",
-            axisPointer: {
-              type: "cross",
-              label: { backgroundColor: c.axis },
-              lineStyle: { color: c.axis },
-              crossStyle: { color: c.axis },
-            },
+            axisPointer: compact
+              ? { type: "line", lineStyle: { color: c.axis } }
+              : {
+                  type: "cross",
+                  label: { backgroundColor: c.axis },
+                  lineStyle: { color: c.axis },
+                  crossStyle: { color: c.axis },
+                },
             valueFormatter: (v: unknown) =>
               typeof v === "number" ? fmt(v) : String(v),
           },
