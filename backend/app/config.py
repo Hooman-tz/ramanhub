@@ -97,8 +97,16 @@ class Settings(BaseSettings):
     JWT_SECRET: str = DEFAULT_JWT_SECRET
     JWT_EXPIRES_HOURS: int = 24
 
-    # LLM (ingestion parsing fallback)
-    ANTHROPIC_API_KEY: str = ""
+    # LLM (ingestion header parsing + abstract enrichment) — routed through
+    # OpenRouter so the operator can pick a smaller/cheaper model. An empty
+    # OPENROUTER_API_KEY means LLM features are skipped, not an error.
+    OPENROUTER_API_KEY: str = ""
+    OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    # Default model — cheap, reliable JSON. Operator overrides via env.
+    OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
+    # Optional per-call-site overrides; empty => fall back to OPENROUTER_MODEL.
+    OPENROUTER_INGESTION_MODEL: str = ""
+    OPENROUTER_ENRICHMENT_MODEL: str = ""
 
     # URLs
     FRONTEND_URL: str = "http://localhost:5173"

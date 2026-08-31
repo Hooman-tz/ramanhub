@@ -9,7 +9,7 @@ The app uses Replit's managed PostgreSQL connection. Database migrations and
 the required reference seed data have been applied. Development file uploads
 use local filesystem storage (`STORAGE_BACKEND=local`) rather than MinIO.
 
-Google sign-in and Anthropic-powered header parsing are optional and are not
+Google sign-in and LLM-powered header parsing are optional and are not
 configured. Add their credentials only when testing those features. The
 backend uses the existing Replit `SESSION_SECRET` as its JWT signing secret at
 runtime.

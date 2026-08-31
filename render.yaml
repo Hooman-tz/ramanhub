@@ -56,6 +56,10 @@ services:
         value: processed-spectra
       - key: S3_BUCKET_FIGURES
         value: figures
+      # LLM routing (OpenRouter). Operator can override the model to a
+      # cheaper/smaller one; the API key is a dashboard secret below.
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-4o-mini
       - key: DATABASE_URL
         fromDatabase:
           name: ramanhub-db
@@ -75,7 +79,7 @@ services:
         sync: false
       - key: ORCID_CLIENT_SECRET
         sync: false
-      - key: ANTHROPIC_API_KEY
+      - key: OPENROUTER_API_KEY
         sync: false
       # Cloudflare R2: https://<account-id>.r2.cloudflarestorage.com + an
       # R2 API token's key id/secret.

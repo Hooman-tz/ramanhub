@@ -127,7 +127,7 @@ repointed off the deleted `frontend/`.
   SJR → quartile/SJR by ISSN); Crossref parse extended (ISSN, citation count,
   abstract); `link-doi` persists a rich `publication_metadata`; `app/enrichment.py`
   + `POST /v1/findings/{id}/enrich` (LLM abstract summary + keywords, no-op
-  without `ANTHROPIC_API_KEY`).
+  without `OPENROUTER_API_KEY`).
 - **M6.2** — `FindingImage` model + object storage under
   `figures/{owner_id}/{finding_id}/` (bucket `S3_BUCKET_FIGURES`); upload / patch
   / delete / reorder + a `require_finding_readable`-gated streaming `/file` route;
@@ -157,7 +157,7 @@ routines/library endpoints all 200 through the proxy.
 **Next action:** M0–M6 are done on `integration/social-forward` and unpushed.
 Owner steps to go live: review the branch, merge to `main`, run `make
 import-journals FILE=<scimagojr.csv>` (download the free SCImago CSV) so journal
-cards show quartiles, set `ANTHROPIC_API_KEY` for AI abstract summaries, register
+cards show quartiles, set `OPENROUTER_API_KEY` for AI abstract summaries, register
 the three OAuth apps + secrets (`docs/OPERATIONS.md` §5), deploy the API (Render,
 now also needs an object store for `S3_BUCKET_FIGURES`) and `apps/web` (Vercel,
 Root Directory `apps/web`). Deferred: direct messages (M-DM), user-supplied

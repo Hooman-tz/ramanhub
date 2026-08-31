@@ -9,7 +9,7 @@ DATABASE_URL points at a reachable Postgres and are skipped otherwise.
 Storage (`upload_bytes` / `download_bytes`) is mocked with an in-memory dict
 — no real S3/MinIO is required. Uploaded content is a real Ocean Insight
 fixture, so the deterministic parser handles it end-to-end without needing
-to mock the Anthropic client.
+to mock the LLM client.
 """
 from __future__ import annotations
 

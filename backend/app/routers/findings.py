@@ -35,6 +35,7 @@ from app.db.session import get_db
 from app.doi_lookup import lookup_doi
 from app.enrichment import EnrichmentError, summarize_abstract
 from app.journals import match_journal
+from app.llm import llm_configured
 from app.models.accession import next_finding_accession
 from app.models.enums import FindingEntryKind, FindingState, SpectrumState
 from app.models.finding import Finding, FindingEntry, FindingSpectrum
@@ -513,7 +514,7 @@ async def link_doi(
             # Enrich inline only when there's an abstract AND a configured key
             # (empty locally / in tests). A failed enrichment is non-fatal —
             # the DOI link still succeeds.
-            if metadata.abstract and settings.ANTHROPIC_API_KEY:
+            if metadata.abstract and llm_configured():
                 try:
                     summary = await summarize_abstract(metadata.abstract)
                     pub["ai_summary"] = summary.model_dump()
@@ -577,9 +578,9 @@ async def enrich_finding(
 ) -> EnrichResponse:
     """Owner-only. Summarize the linked paper's abstract into
     `publication_metadata.ai_summary`. A no-op (200, `enriched=false`) when
-    no Anthropic key is configured, so the frontend can always call it."""
+    no LLM key is configured, so the frontend can always call it."""
     finding = _get_finding_for_owner(finding_id, user, db)
-    if not settings.ANTHROPIC_API_KEY:
+    if not llm_configured():
         return EnrichResponse(enriched=False, reason="llm_not_configured")
 
     pub = dict(finding.publication_metadata or {})

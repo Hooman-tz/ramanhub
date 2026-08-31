@@ -1,30 +1,28 @@
 """LLM-based metadata extraction fallback, used when no deterministic vendor
 parser recognizes a raw file's header.
 
-Security boundary: the Anthropic response is coerced into a tool call
-(structured output via tool-use forcing, not free-text parsing) and then
-*always* passed through `ExtractedMetadata.model_validate(...)`. LLM output
-never touches a file path, SQL string, or shell command — it only ever
-populates typed pydantic fields on `ExtractedMetadata`. A schema-violating
-response raises `LLMExtractionError` and nothing is written to the
-database.
+Security boundary: the model returns a bare JSON object matching a JSON
+Schema (structured output, not free-text parsing) and then *always* passes
+through `ExtractedMetadata.model_validate(...)`. LLM output never touches a
+file path, SQL string, or shell command — it only ever populates typed
+pydantic fields on `ExtractedMetadata`. A schema-violating response raises
+`LLMExtractionError` and nothing is written to the database.
 """
 from __future__ import annotations
 
-import json
-from typing import Any
-
-import anthropic
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.config import settings
 from app.ingestion.header_hash import compute_header_hash
+from app.llm import LLMError, complete_json
 from app.models.enums import Modality, ParseSource
 from app.models.vendor_parse_cache import VendorParseCache
 from app.schemas.ingestion import ExtractedMetadata
 
-MODEL_ID = "claude-sonnet-5"
+# Recorded on the cache row's `parser_version`; the concrete model slug is
+# an operator env choice (OPENROUTER_INGESTION_MODEL / OPENROUTER_MODEL).
+MODEL_ID = "openrouter-llm"
 
 _TOOL_NAME = "extract_raman_metadata"
 
@@ -63,11 +61,11 @@ _TOOL_INPUT_SCHEMA = {
 _SYSTEM_PROMPT = (
     "You extract structured instrument metadata from raw Raman spectroscopy "
     "file headers. You will be given the raw header text of a spectral data "
-    "file from an unrecognized vendor format. Call the "
-    f"`{_TOOL_NAME}` tool exactly once with every field you can confidently "
-    "determine from the header. Leave a field null if it is not present or "
-    "you are not confident about it — never guess. Put any other useful "
-    "facts you find in `raw_extra_fields` as flat string/number values only."
+    "file from an unrecognized vendor format. Return a JSON object with "
+    "every field you can confidently determine from the header. Leave a "
+    "field null if it is not present or you are not confident about it — "
+    "never guess. Put any other useful facts you find in `raw_extra_fields` "
+    "as flat string/number values only."
 )
 
 
@@ -77,17 +75,10 @@ class LLMExtractionError(Exception):
     write partial/invalid metadata to the database."""
 
 
-def _extract_tool_input(message: Any) -> dict:
-    for block in message.content:
-        if getattr(block, "type", None) == "tool_use" and block.name == _TOOL_NAME:
-            return block.input
-    raise LLMExtractionError("Model did not return the expected tool call")
-
-
 async def extract_metadata_via_llm(
     header_text: str, db: Session
 ) -> tuple[ExtractedMetadata, str]:
-    """Extract metadata from `header_text` via the Anthropic API, with a
+    """Extract metadata from `header_text` via the shared LLM client, with a
     `VendorParseCache` lookup/write keyed by the header's template hash.
 
     Returns `(metadata, source)` where `source` is "cache" on a cache hit or
@@ -112,39 +103,20 @@ async def extract_metadata_via_llm(
         db.commit()
         return metadata, "cache"
 
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     try:
-        message = await client.messages.create(
-            model=MODEL_ID,
-            max_tokens=1024,
+        tool_input = await complete_json(
             system=_SYSTEM_PROMPT,
-            tools=[
-                {
-                    "name": _TOOL_NAME,
-                    "description": "Record extracted Raman instrument metadata.",
-                    "input_schema": _TOOL_INPUT_SCHEMA,
-                }
-            ],
-            tool_choice={"type": "tool", "name": _TOOL_NAME},
-            messages=[
-                {
-                    "role": "user",
-                    "content": f"Raw header text:\n\n{header_text}",
-                }
-            ],
+            user=f"Raw header text:\n\n{header_text}",
+            schema=_TOOL_INPUT_SCHEMA,
+            model=settings.OPENROUTER_INGESTION_MODEL or None,
+            max_tokens=1024,
         )
-    except anthropic.APIError as exc:
-        raise LLMExtractionError(f"Anthropic API call failed: {exc}") from exc
-
-    tool_input = _extract_tool_input(message)
+    except LLMError as exc:
+        raise LLMExtractionError(f"LLM API call failed: {exc}") from exc
 
     try:
-        # tool_input may arrive as a dict already; guard against a stray
-        # JSON-string edge case from some SDK/response shapes.
-        if isinstance(tool_input, str):
-            tool_input = json.loads(tool_input)
         metadata = ExtractedMetadata.model_validate(tool_input)
-    except (ValidationError, json.JSONDecodeError, TypeError) as exc:
+    except (ValidationError, TypeError) as exc:
         raise LLMExtractionError(f"LLM tool output failed schema validation: {exc}") from exc
 
     try:

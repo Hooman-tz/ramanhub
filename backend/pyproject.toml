@@ -15,7 +15,7 @@ dependencies = [
     "pydantic>=2.0",
     "pydantic-settings",
     "boto3",
-    "anthropic",
+    "openai",
     "authlib",
     "httpx",
     "pyjwt",

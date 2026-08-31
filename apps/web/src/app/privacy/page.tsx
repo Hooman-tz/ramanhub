@@ -36,9 +36,9 @@ export default function PrivacyPage() {
           Account metadata lives in our PostgreSQL database; uploaded spectral
           files live in S3-compatible object storage (Cloudflare R2 in
           production). Error diagnostics may be processed by Sentry. Uploaded file
-          headers that no built-in parser recognizes are sent to Anthropic&apos;s
-          API for metadata extraction — header content only, not tied to your
-          identity.
+          headers that no built-in parser recognizes are sent to our LLM
+          provider (OpenRouter) for metadata extraction — header content only,
+          not tied to your identity.
         </p>
       </section>
 

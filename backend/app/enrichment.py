@@ -1,26 +1,19 @@
-"""Abstract summary + keyword extraction via the Anthropic API.
+"""Abstract summary + keyword extraction via the shared LLM client.
 
-Same security posture as `app.ingestion.llm_fallback`: the model reply is
-*forced* into a single tool call and always validated through a pydantic
-model before use. A schema violation or API error raises `EnrichmentError`
-and nothing is persisted.
+Same security posture as `app.ingestion.llm_fallback`: the model returns a
+bare JSON object matching a JSON Schema and it is always validated through a
+pydantic model before use. A schema violation or API error raises
+`EnrichmentError` and nothing is persisted.
 
-Callers MUST check `settings.ANTHROPIC_API_KEY` and skip this module when it
-is empty (the key is empty in local dev and the test env).
+Callers MUST check `app.llm.llm_configured()` and skip this module when it
+is False (no OpenRouter key in local dev and the test env).
 """
 from __future__ import annotations
 
-import json
-from typing import Any
-
-import anthropic
 from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
-
-MODEL_ID = "claude-sonnet-5"
-
-_TOOL_NAME = "emit_summary"
+from app.llm import LLMError, complete_json, llm_configured
 
 _TOOL_INPUT_SCHEMA = {
     "type": "object",
@@ -40,9 +33,8 @@ _TOOL_INPUT_SCHEMA = {
 
 _SYSTEM_PROMPT = (
     "You summarize scientific paper abstracts for a Raman-spectroscopy "
-    "research audience. Call the `emit_summary` tool exactly once. The "
-    "summary must be plain language, 2-3 sentences, and at most 600 "
-    "characters. Provide at most 8 lowercased keywords."
+    "research audience. The summary must be plain language, 2-3 sentences, "
+    "and at most 600 characters. Provide at most 8 lowercased keywords."
 )
 
 
@@ -57,43 +49,25 @@ class EnrichmentError(Exception):
     non-fatal skip — never persist partial enrichment."""
 
 
-def _extract_tool_input(message: Any) -> dict:
-    for block in message.content:
-        if getattr(block, "type", None) == "tool_use" and block.name == _TOOL_NAME:
-            return block.input
-    raise EnrichmentError("Model did not return the expected tool call")
-
-
 async def summarize_abstract(text: str) -> AbstractSummary:
-    if not settings.ANTHROPIC_API_KEY:
-        raise EnrichmentError("ANTHROPIC_API_KEY is not configured")
+    if not llm_configured():
+        raise EnrichmentError("OPENROUTER_API_KEY is not configured")
 
-    client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
     try:
-        message = await client.messages.create(
-            model=MODEL_ID,
-            max_tokens=1024,
+        result = await complete_json(
             system=_SYSTEM_PROMPT,
-            tools=[
-                {
-                    "name": _TOOL_NAME,
-                    "description": "Record the abstract summary and keywords.",
-                    "input_schema": _TOOL_INPUT_SCHEMA,
-                }
-            ],
-            tool_choice={"type": "tool", "name": _TOOL_NAME},
-            messages=[{"role": "user", "content": f"Abstract:\n\n{text}"}],
+            user=f"Abstract:\n\n{text}",
+            schema=_TOOL_INPUT_SCHEMA,
+            model=settings.OPENROUTER_ENRICHMENT_MODEL or None,
+            max_tokens=1024,
         )
-    except anthropic.APIError as exc:
-        raise EnrichmentError(f"Anthropic API call failed: {exc}") from exc
+    except LLMError as exc:
+        raise EnrichmentError(f"LLM call failed: {exc}") from exc
 
-    tool_input = _extract_tool_input(message)
     try:
-        if isinstance(tool_input, str):
-            tool_input = json.loads(tool_input)
-        summary = AbstractSummary.model_validate(tool_input)
-    except (ValidationError, json.JSONDecodeError, TypeError) as exc:
-        raise EnrichmentError(f"LLM tool output failed schema validation: {exc}") from exc
+        summary = AbstractSummary.model_validate(result)
+    except ValidationError as exc:
+        raise EnrichmentError(f"LLM output failed schema validation: {exc}") from exc
 
     summary.keywords = [k.strip().lower() for k in summary.keywords if k and k.strip()][:8]
     return summary

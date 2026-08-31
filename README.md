@@ -31,7 +31,7 @@ unresolved decisions in
    ```
 
    Fill in `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` (Google OAuth login)
-   and `ANTHROPIC_API_KEY` (LLM header parsing) only if you're testing those
+   and `OPENROUTER_API_KEY` (LLM header parsing) only if you're testing those
    features — the core scaffold (API, DB, object storage, migrations) works
    fine with them left blank.
 
@@ -160,7 +160,7 @@ One-time setup:
 2. **Backend host** — Create the API service from this repo. Paste the
    `sync: false` secrets: `JWT_SECRET` (generate:
    `python3 -c "import secrets; print(secrets.token_urlsafe(48))"`),
-   `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `ANTHROPIC_API_KEY`, the R2
+   `GOOGLE_CLIENT_ID`/`GOOGLE_CLIENT_SECRET`, `OPENROUTER_API_KEY`, the R2
     values, optional `SENTRY_DSN`. Add the target custom API domain.
 3. **Web host (Vercel)** — import the repo, set **Root Directory =
     `apps/web`** (Vercel auto-detects Next.js and runs the monorepo install

@@ -4,7 +4,7 @@
   and a tag-stripped `abstract` out of a Crossref `message`.
 - `POST /v1/findings/{id}/link-doi` matches the paper's ISSN against a
   seeded `Journal` row and writes quartile / SJR into `publication_metadata`.
-- `POST /v1/findings/{id}/enrich` is a 200 no-op when `ANTHROPIC_API_KEY`
+- `POST /v1/findings/{id}/enrich` is a 200 no-op when `OPENROUTER_API_KEY`
   is unset (the state of the test environment).
 """
 from __future__ import annotations

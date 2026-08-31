@@ -17,7 +17,7 @@ preprocessing suite:
 
 Files are written in Horiba LabSpec ASCII format because that's a format
 the deterministic parser recognizes, so ingestion of the sample file works
-end-to-end without an Anthropic API key.
+end-to-end without an LLM API key.
 
 Idempotent: if the demo user already exists, the script reports and exits
 without touching anything (drop the user's rows to re-seed).
