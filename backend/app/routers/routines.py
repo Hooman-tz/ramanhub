@@ -83,6 +83,19 @@ def list_routines(
     return [RoutineResponse.model_validate(routine) for routine in routines]
 
 
+@router.delete("/routines/{routine_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_routine(
+    routine_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    routine = db.get(ProcessingRoutine, routine_id)
+    if routine is None or routine.owner_id != user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Routine not found")
+    db.delete(routine)
+    db.commit()
+
+
 @router.post(
     "/raw-files/{raw_file_id}/apply-routine/{routine_id}",
     response_model=LedgerCreateResponse,
