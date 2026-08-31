@@ -21,6 +21,7 @@ import { FindingImageUploader } from "~/components/finding-image-uploader";
 import { JournalCard } from "~/components/journal-card";
 import { Markdown } from "~/components/markdown";
 import { PostGallery } from "~/components/post-gallery";
+import { PinButton } from "~/components/profile/pin-button";
 import { serverApiOpts } from "~/lib/server-api";
 
 export const dynamic = "force-dynamic";
@@ -137,6 +138,12 @@ export default async function FindingPage({
         }
         initialShares={initialShares}
       />
+
+      {isOwner && finding.state === "published" && (
+        <div className="mt-3">
+          <PinButton kind="finding" id={finding.id} />
+        </div>
+      )}
 
       {(members.length > 0 || finding.images.length > 0) && (
         <section className="mt-6">

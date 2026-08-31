@@ -585,6 +585,8 @@ export interface PublicProfile {
   research_interests: string[] | null;
   followers: number;
   following: number;
+  spectrum_count: number;
+  finding_count: number;
   doi_linked: number;
   votes_received: number;
   shares_received: number;
@@ -603,6 +605,218 @@ export function getUserByHandle(
     `/users/by-handle/${encodeURIComponent(handle)}`,
     opts,
   );
+}
+
+/* --- profile: contribution activity ----------------------------------- */
+
+export interface ActivityDay {
+  date: string;
+  spectra: number;
+  findings: number;
+  comments: number;
+}
+
+export interface UserActivity {
+  days: ActivityDay[];
+  total: number;
+  current_streak: number;
+  longest_streak: number;
+}
+
+/** `GET /users/{handle}/activity?days=` — no auth. `days` is `1..730`. */
+export function getUserActivity(
+  handle: string,
+  days?: number,
+  opts?: ApiClientOptions,
+): Promise<UserActivity> {
+  return apiRequest<UserActivity>(
+    `/users/${encodeURIComponent(handle)}/activity`,
+    { ...opts, query: { days } },
+  );
+}
+
+/* --- profile: pinned items ------------------------------------------- */
+
+export interface Pin {
+  kind: "spectrum" | "finding";
+  id: string;
+  accession: string | null;
+  title: string | null;
+  position: number;
+}
+
+/** `GET /users/{handle}/pins` — no auth. */
+export function getUserPins(
+  handle: string,
+  opts?: ApiClientOptions,
+): Promise<Pin[]> {
+  return apiRequest<Pin[]>(
+    `/users/${encodeURIComponent(handle)}/pins`,
+    opts,
+  );
+}
+
+/** `POST /pins` — full account. Returns the caller's full pin list. */
+export function addPin(
+  body: { kind: "spectrum" | "finding"; id: string },
+  opts?: ApiClientOptions,
+): Promise<Pin[]> {
+  return apiRequest<Pin[]>("/pins", { ...opts, method: "POST", body });
+}
+
+/** `DELETE /pins/{kind}/{item_id}` — full account. Returns the remaining pins. */
+export function removePin(
+  kind: "spectrum" | "finding",
+  id: string,
+  opts?: ApiClientOptions,
+): Promise<Pin[]> {
+  return apiRequest<Pin[]>(
+    `/pins/${kind}/${encodeURIComponent(id)}`,
+    { ...opts, method: "DELETE" },
+  );
+}
+
+/* --- private reference library ------------------------------------- */
+
+export interface LibrarySpectrum {
+  id: string;
+  title: string | null;
+  material_type: string | null;
+  excitation_wavelength_nm: number | null;
+  snr: number | null;
+  modality: string;
+  doi: string | null;
+  published_at: string | null;
+  state: string;
+  raw_file_id: string;
+  metadata_state: string;
+  qc_state: string;
+  publish_ready: boolean;
+}
+
+export interface LibraryParams {
+  material_type?: string;
+  excitation_wavelength_nm?: number;
+  excitation_wavelength_tolerance_nm?: number;
+  min_snr?: number;
+  modality?: string;
+  limit?: number;
+  offset?: number;
+}
+
+/** `GET /library/mine` — the requester's own spectra, every state. */
+export function getMyLibrary(
+  params: LibraryParams = {},
+  opts?: ApiClientOptions,
+): Promise<LibrarySpectrum[]> {
+  return apiRequest<LibrarySpectrum[]>("/library/mine", {
+    ...opts,
+    query: { ...params },
+  });
+}
+
+/* --- processing: algorithm catalog + routines --------------------- */
+
+export interface AlgorithmInfo {
+  step_type: string;
+  version: string;
+  label: string;
+  category: string;
+  description: string;
+  param_schema: Record<string, unknown>;
+  transforms_axis: boolean;
+}
+
+export interface AlgorithmCatalog {
+  categories: string[];
+  algorithms: AlgorithmInfo[];
+}
+
+/** `GET /processing/algorithms` — public. */
+export function getAlgorithmCatalog(
+  opts?: ApiClientOptions,
+): Promise<AlgorithmCatalog> {
+  return apiRequest<AlgorithmCatalog>("/processing/algorithms", opts);
+}
+
+export interface RoutineStep {
+  type: string;
+  params: Record<string, unknown>;
+  order: number;
+}
+
+export interface Routine {
+  id: string;
+  owner_id: string;
+  modality: string;
+  name: string;
+  description: string | null;
+  steps_template: RoutineStep[];
+  created_at: string;
+  updated_at: string;
+}
+
+/** `GET /routines` — the caller's saved processing routines. */
+export function listRoutines(opts?: ApiClientOptions): Promise<Routine[]> {
+  return apiRequest<Routine[]>("/routines", opts);
+}
+
+/** `POST /routines` — create a saved routine. */
+export function createRoutine(
+  body: {
+    modality: string;
+    name: string;
+    description?: string;
+    steps_template: RoutineStep[];
+  },
+  opts?: ApiClientOptions,
+): Promise<Routine> {
+  return apiRequest<Routine>("/routines", { ...opts, method: "POST", body });
+}
+
+/** `DELETE /routines/{id}` — 204. */
+export function deleteRoutine(
+  id: string,
+  opts?: ApiClientOptions,
+): Promise<void> {
+  return apiRequest<void>(`/routines/${encodeURIComponent(id)}`, {
+    ...opts,
+    method: "DELETE",
+  });
+}
+
+/* --- account settings --------------------------------------------- */
+
+export interface UpdateMeBody {
+  display_name?: string;
+  orcid_id?: string;
+  profile_handle?: string;
+  bio?: string;
+  affiliation?: string;
+  research_interests?: string[];
+  is_profile_public?: boolean;
+}
+
+/** `PATCH /users/me` — full account only. Returns the updated user. */
+export function updateMe(
+  body: UpdateMeBody,
+  opts?: ApiClientOptions,
+): Promise<SessionUser> {
+  return apiRequest<SessionUser>("/users/me", {
+    ...opts,
+    method: "PATCH",
+    body,
+  });
+}
+
+/** `GET /users/me/export` — portable account export. */
+export function exportMe(opts?: ApiClientOptions): Promise<unknown> {
+  return apiRequest<unknown>("/users/me/export", opts);
+}
+
+/** `DELETE /users/me` — anonymize the account. 204. */
+export function deleteMe(opts?: ApiClientOptions): Promise<void> {
+  return apiRequest<void>("/users/me", { ...opts, method: "DELETE" });
 }
 
 /* --- spectra + findings: chart data ------------------------------------- */
