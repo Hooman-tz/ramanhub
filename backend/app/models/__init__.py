@@ -8,6 +8,7 @@ tables regardless of which module the caller imports directly.
 from app.models import accession as accession
 from app.models.analysis import AnalysisDataset, AnalysisDatasetSpectrum, AnalysisRun
 from app.models.auth_identity import AuthIdentity
+from app.models.curation import Pin
 from app.models.enums import (
     FieldDataType,
     FindingEntryKind,
@@ -73,6 +74,7 @@ __all__ = [
     "Notification",
     "NotificationPreference",
     "ParseSource",
+    "Pin",
     "PostReaction",
     "ProcessedCache",
     "ProcessingLedger",

@@ -3,16 +3,20 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app.activity import ActivitySummary, compute_activity
 from app.auth.deps import get_current_full_user, get_current_user
 from app.db.session import get_db
+from app.handles import normalize_handle
 from app.models.social import Comment, CommunityPost
 from app.models.spectrum import Spectrum
 from app.models.user import User
-from app.schemas.auth import UserOut, UserUpdate
+from app.profile_stats import compute_profile_stats
+from app.schemas.auth import PublicProfileOut, UserOut, UserUpdate
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -70,6 +74,68 @@ def patch_me(
         ) from exc
     db.refresh(current_user)
     return current_user
+
+
+@router.get("/by-handle/{handle}", response_model=PublicProfileOut)
+def get_public_profile(
+    handle: str, db: Session = Depends(get_db)
+) -> PublicProfileOut:
+    """A contributor's public profile. No auth required — this is what a DOI
+    or a citation points at.
+
+    Counts cover PUBLISHED work only. Including drafts would leak how much
+    unpublished work someone has, which is exactly what the draft/published
+    split exists to keep private. See `app.profile_stats` for what each
+    engagement figure counts and deliberately excludes.
+    """
+    user = db.scalar(
+        select(User).where(User.profile_handle == normalize_handle(handle))
+    )
+    if user is None or not user.is_active or user.is_guest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found"
+        )
+
+    stats = compute_profile_stats(user.id, db)
+
+    profile = PublicProfileOut.model_validate(user)
+    # Assigned after validation: `User` carries none of these as attributes —
+    # they are aggregates, not columns.
+    profile.spectrum_count = stats.spectrum_count
+    profile.finding_count = stats.finding_count
+    profile.followers = stats.followers
+    profile.following = stats.following
+    profile.doi_linked = stats.doi_linked
+    profile.votes_received = stats.votes_received
+    profile.shares_received = stats.shares_received
+    profile.comments_written = stats.comments_written
+    profile.reuse_findings = stats.reuse_findings
+    profile.reuse_groups = stats.reuse_groups
+    # Real ORCID OAuth landed in M3, so this is a genuine signal, not a
+    # placeholder: `orcid_verified_at` is set only by the verified OAuth flow.
+    profile.orcid_verified = user.orcid_verified_at is not None
+    return profile
+
+
+@router.get("/{handle}/activity", response_model=ActivitySummary)
+def get_public_activity(
+    handle: str,
+    days: int = Query(365, ge=1, le=730),
+    db: Session = Depends(get_db),
+) -> ActivitySummary:
+    """Per-day contribution counts plus streaks, for the profile chart.
+
+    Public, and published-events-only — see `app.activity` for what each kind
+    counts and why the series are kept separate rather than summed.
+    """
+    user = db.scalar(
+        select(User).where(User.profile_handle == normalize_handle(handle))
+    )
+    if user is None or not user.is_active or user.is_guest:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found"
+        )
+    return compute_activity(user.id, db, days=days)
 
 
 @router.get("/me/export")

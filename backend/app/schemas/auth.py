@@ -34,6 +34,48 @@ class UserOut(BaseModel):
     created_at: datetime
 
 
+class PublicProfileOut(BaseModel):
+    """A contributor's PUBLIC profile — deliberately NOT `UserOut`.
+
+    `UserOut` carries `email`, which is personal data collected via OAuth and
+    must never appear on a page anyone can load. Keeping the public shape as a
+    separate model means a field added to `UserOut` can't silently become
+    public.
+
+    The column-backed fields (`id`, `display_name`, `avatar_url`, `orcid_id`,
+    `profile_handle`, `bio`, `affiliation`, `research_interests`, `created_at`)
+    are filled by `model_validate(user)`. Everything else is an aggregate
+    computed in `app.profile_stats`, or `orcid_verified` which the router
+    derives from `user.orcid_verified_at`; all are assigned after validation
+    because `User` carries none of them as attributes.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    display_name: str | None = None
+    avatar_url: str | None = None
+    orcid_id: str | None = None
+    # Real since M3: set from `user.orcid_verified_at is not None` (ORCID
+    # OAuth), not hardcoded.
+    orcid_verified: bool = False
+    profile_handle: str | None = None
+    bio: str | None = None
+    affiliation: str | None = None
+    research_interests: list[str] | None = None
+    followers: int = 0
+    following: int = 0
+    spectrum_count: int = 0
+    finding_count: int = 0
+    doi_linked: int = 0
+    votes_received: int = 0
+    shares_received: int = 0
+    comments_written: int = 0
+    reuse_findings: int = 0
+    reuse_groups: int = 0
+    created_at: datetime
+
+
 class UserUpdate(BaseModel):
     """Body for PATCH /users/me. All fields optional (partial update)."""
 

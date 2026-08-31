@@ -45,6 +45,7 @@ from app.routers import (
     licenses,
     onboarding,
     orcid,
+    pins,
     processing,
     profiles,
     public_records,
@@ -102,6 +103,7 @@ app.include_router(findings.router)
 app.include_router(feed.router)
 app.include_router(follows.router)
 app.include_router(shares.router)
+app.include_router(pins.router)
 
 
 @app.get("/health")
