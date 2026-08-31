@@ -19,30 +19,46 @@ Two rules run through everything here:
 """
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Response, UploadFile, status
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app.analysis.engine import load_spectrum_arrays
 from app.auth.deps import get_current_full_user, get_current_user, get_current_user_optional
+from app.config import settings
 from app.db.session import get_db
 from app.doi_lookup import lookup_doi
+from app.enrichment import EnrichmentError, summarize_abstract
+from app.journals import match_journal
 from app.models.accession import next_finding_accession
 from app.models.enums import FindingEntryKind, FindingState, SpectrumState
 from app.models.finding import Finding, FindingEntry, FindingSpectrum
+from app.models.finding_image import FINDING_IMAGE_KINDS, FindingImage
 from app.models.social import Comment, Vote
 from app.models.spectrum import Spectrum
 from app.models.user import User
+from app.overlay import compute_overlay
 from app.processing.state_machine import require_finding_readable, require_owner_or_public
+from app.security.file_validation import validate_upload_size
+from app.storage.s3_client import download_bytes, object_exists, upload_bytes
 
 router = APIRouter(prefix="/v1", tags=["findings"])
 
 MAX_TAGS = 10
 MAX_TAG_LENGTH = 40
 MAX_SPECTRA_PER_FINDING = 200
+MAX_IMAGES_PER_FINDING = 12
+# Accepted image upload types -> the extension used in the storage key.
+IMAGE_CONTENT_TYPE_EXT = {
+    "image/png": "png",
+    "image/jpeg": "jpg",
+    "image/webp": "webp",
+}
 
 
 # --------------------------------------------------------------- schemas
@@ -84,6 +100,15 @@ class EntryReorder(BaseModel):
     entry_ids: list[UUID]
 
 
+class ImageUpdate(BaseModel):
+    caption: str | None = Field(default=None, max_length=2_000)
+    position: int | None = Field(default=None, ge=0)
+
+
+class ImageReorder(BaseModel):
+    image_ids: list[UUID]
+
+
 class AttachSpectrum(BaseModel):
     spectrum_id: UUID
     label: str | None = Field(default=None, max_length=120)
@@ -111,6 +136,16 @@ class MemberSpectrumOut(BaseModel):
     state: str
 
 
+class FindingImageOut(BaseModel):
+    id: UUID
+    kind: str
+    caption: str | None
+    position: int
+    content_type: str
+    url: str
+    created_at: datetime
+
+
 class FindingOut(BaseModel):
     id: UUID
     accession: str | None
@@ -130,8 +165,28 @@ class FindingOut(BaseModel):
     updated_at: datetime
     entries: list[EntryOut] = []
     spectra: list[MemberSpectrumOut] = []
+    images: list[FindingImageOut] = []
     vote_count: int = 0
     comment_count: int = 0
+
+
+class OverlayMemberOut(BaseModel):
+    spectrum_id: UUID
+    label: str | None = None
+
+
+class FindingOverlayResponse(BaseModel):
+    grid_wavenumbers: list[float]
+    mean: list[float]
+    std: list[float]
+    n: int
+    members: list[OverlayMemberOut]
+
+
+class EnrichResponse(BaseModel):
+    enriched: bool
+    reason: str | None = None
+    ai_summary: dict | None = None
 
 
 # --------------------------------------------------------------- helpers
@@ -176,6 +231,39 @@ def _members(finding_id: UUID, db: Session) -> list[tuple[FindingSpectrum, Spect
     return [(link, spectrum) for link, spectrum in rows]
 
 
+def _images(finding_id: UUID, db: Session) -> list[FindingImage]:
+    return list(
+        db.execute(
+            select(FindingImage)
+            .where(FindingImage.finding_id == finding_id)
+            .order_by(FindingImage.position, FindingImage.created_at)
+        ).scalars().all()
+    )
+
+
+def _serialize_image(image: FindingImage) -> FindingImageOut:
+    return FindingImageOut(
+        id=image.id,
+        kind=image.kind,
+        caption=image.caption,
+        position=image.position,
+        content_type=image.content_type,
+        # The portable read path: the bytes live in the owner's object store,
+        # streamed back (with the same read gate as the finding) by the route
+        # below rather than exposed as a raw storage URL.
+        url=f"/v1/findings/{image.finding_id}/images/{image.id}/file",
+        created_at=image.created_at,
+    )
+
+
+def _renormalize_image_positions(finding_id: UUID, db: Session) -> None:
+    """Rewrite positions to a dense 0..n-1 sequence in current sort order."""
+    for position, image in enumerate(_images(finding_id, db)):
+        if image.position != position:
+            image.position = position
+            db.add(image)
+
+
 def serialize_finding(finding: Finding, db: Session, include_body: bool = True) -> FindingOut:
     owner = db.get(User, finding.owner_id)
     out = FindingOut(
@@ -218,6 +306,8 @@ def serialize_finding(finding: Finding, db: Session, include_body: bool = True) 
             )
             for link, spectrum in _members(finding.id, db)
         ]
+
+        out.images = [_serialize_image(image) for image in _images(finding.id, db)]
 
     out.vote_count = int(
         db.execute(
@@ -387,16 +477,115 @@ async def link_doi(
     else:
         finding.doi = doi
         metadata = await lookup_doi(doi)
-        finding.publication_metadata = (
-            {**metadata.model_dump(), "resolved": True}
-            if metadata is not None
-            else {"doi": doi, "resolved": False}
-        )
+        if metadata is None:
+            finding.publication_metadata = {"doi": doi, "resolved": False}
+        else:
+            journal = match_journal(db, metadata.issn)
+            pub: dict = {
+                "doi": metadata.doi,
+                "title": metadata.title,
+                "authors": metadata.authors,
+                "journal": metadata.journal,
+                "issn": metadata.issn,
+                "year": metadata.year,
+                "url": metadata.url,
+                "resolved": True,
+                "citations": metadata.citations,
+                "quartile": journal.quartile if journal else None,
+                "sjr": journal.sjr if journal else None,
+                "cover_url": journal.cover_url if journal else None,
+                "abstract_raw": metadata.abstract,
+            }
+            # Enrich inline only when there's an abstract AND a configured key
+            # (empty locally / in tests). A failed enrichment is non-fatal —
+            # the DOI link still succeeds.
+            if metadata.abstract and settings.ANTHROPIC_API_KEY:
+                try:
+                    summary = await summarize_abstract(metadata.abstract)
+                    pub["ai_summary"] = summary.model_dump()
+                except EnrichmentError:
+                    pass
+            finding.publication_metadata = pub
 
     db.add(finding)
     db.commit()
     db.refresh(finding)
     return serialize_finding(finding, db)
+
+
+@router.get("/findings/{finding_id}/overlay", response_model=FindingOverlayResponse)
+def finding_overlay(
+    finding_id: UUID,
+    grid: int = Query(512, ge=16, le=2048),
+    max_points: int = Query(2000, gt=0),
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user_optional),
+) -> FindingOverlayResponse:
+    """Mean curve + per-point standard-deviation band across a finding's
+    member spectra, computed live (like every spectrum-derived read).
+
+    Members the viewer can't see (someone else's draft) are silently
+    excluded — same visibility gate as `GET /spectra/{id}/data`.
+    """
+    finding = db.get(Finding, finding_id)
+    require_finding_readable(finding, user)
+
+    arrays: list[tuple] = []
+    members: list[OverlayMemberOut] = []
+    for link, spectrum in _members(finding.id, db):
+        try:
+            require_owner_or_public(spectrum, user)
+        except HTTPException:
+            continue
+        wavenumbers, intensities = load_spectrum_arrays(spectrum, db)
+        if wavenumbers.size == 0:
+            continue
+        arrays.append((wavenumbers, intensities))
+        members.append(OverlayMemberOut(spectrum_id=spectrum.id, label=link.label))
+
+    grid_wavenumbers, mean, std = compute_overlay(
+        arrays, grid_points=grid, max_points=max_points
+    )
+    return FindingOverlayResponse(
+        grid_wavenumbers=[float(v) for v in grid_wavenumbers],
+        mean=[float(v) for v in mean],
+        std=[float(v) for v in std],
+        n=len(arrays),
+        members=members,
+    )
+
+
+@router.post("/findings/{finding_id}/enrich", response_model=EnrichResponse)
+async def enrich_finding(
+    finding_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_full_user),
+) -> EnrichResponse:
+    """Owner-only. Summarize the linked paper's abstract into
+    `publication_metadata.ai_summary`. A no-op (200, `enriched=false`) when
+    no Anthropic key is configured, so the frontend can always call it."""
+    finding = _get_finding_for_owner(finding_id, user, db)
+    if not settings.ANTHROPIC_API_KEY:
+        return EnrichResponse(enriched=False, reason="llm_not_configured")
+
+    pub = dict(finding.publication_metadata or {})
+    abstract_raw = pub.get("abstract_raw")
+    if not abstract_raw:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This finding has no linked-paper abstract to summarize.",
+        )
+    try:
+        summary = await summarize_abstract(abstract_raw)
+    except EnrichmentError as exc:
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
+
+    pub["ai_summary"] = summary.model_dump()
+    finding.publication_metadata = pub
+    db.add(finding)
+    db.commit()
+    db.refresh(finding)
+    return EnrichResponse(enriched=True, ai_summary=pub["ai_summary"])
 
 
 @router.delete("/findings/{finding_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -634,3 +823,220 @@ def reorder_entries(
     db.commit()
     db.refresh(finding)
     return serialize_finding(finding, db)
+
+
+# --- images ------------------------------------------------------------
+#
+# Author-supplied raster images (figures, graphical abstract). Unlike
+# analysis entries — which store parameters and recompute their figure from
+# live spectrum data — these can't be regenerated, so they're the user's own
+# data: stored in the same object store as their spectra, keyed under the
+# owner, and streamed back through `/file` under the finding's read gate.
+
+
+@router.post(
+    "/findings/{finding_id}/images",
+    response_model=FindingImageOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def upload_finding_image(
+    finding_id: UUID,
+    file: UploadFile,
+    kind: str = Form("figure"),
+    caption: str | None = Form(None),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FindingImageOut:
+    """Attach an image to a finding. Owner-only. Idempotent on identical
+    bytes: re-uploading the same file returns the existing row."""
+    finding = _get_finding_for_owner(finding_id, user, db)
+
+    if kind not in FINDING_IMAGE_KINDS:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"kind must be one of {sorted(FINDING_IMAGE_KINDS)}",
+        )
+
+    content_type = (file.content_type or "").split(";")[0].strip().lower()
+    ext = IMAGE_CONTENT_TYPE_EXT.get(content_type)
+    if ext is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Image must be PNG, JPEG, or WebP.",
+        )
+
+    raw = await file.read()
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file"
+        )
+    validate_upload_size(len(raw))  # raises 413 past MAX_UPLOAD_SIZE_MB
+
+    content_hash = hashlib.sha256(raw).hexdigest()
+    existing = db.execute(
+        select(FindingImage).where(
+            FindingImage.finding_id == finding.id,
+            FindingImage.content_hash == content_hash,
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return _serialize_image(existing)
+
+    count = db.execute(
+        select(func.count(FindingImage.id)).where(
+            FindingImage.finding_id == finding.id
+        )
+    ).scalar_one()
+    if count >= MAX_IMAGES_PER_FINDING:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A finding can hold at most {MAX_IMAGES_PER_FINDING} images.",
+        )
+
+    key = f"figures/{finding.owner_id}/{finding.id}/{uuid4().hex}.{ext}"
+    upload_bytes(
+        bucket=settings.S3_BUCKET_FIGURES,
+        key=key,
+        data=raw,
+        content_type=content_type,
+    )
+
+    next_position = db.execute(
+        select(func.coalesce(func.max(FindingImage.position), -1) + 1).where(
+            FindingImage.finding_id == finding.id
+        )
+    ).scalar_one()
+
+    image = FindingImage(
+        finding_id=finding.id,
+        uploaded_by=user.id,
+        kind=kind,
+        caption=caption or None,
+        position=int(next_position),
+        storage_bucket=settings.S3_BUCKET_FIGURES,
+        storage_key=key,
+        content_type=content_type,
+        content_hash=content_hash,
+    )
+    db.add(image)
+    db.commit()
+    db.refresh(image)
+    return _serialize_image(image)
+
+
+@router.patch(
+    "/findings/{finding_id}/images/{image_id}", response_model=FindingImageOut
+)
+def update_finding_image(
+    finding_id: UUID,
+    image_id: UUID,
+    body: ImageUpdate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FindingImageOut:
+    """Owner-only. Edit the caption and/or move the image to a new position
+    (positions are renormalized dense afterwards)."""
+    finding = _get_finding_for_owner(finding_id, user, db)
+    image = db.get(FindingImage, image_id)
+    if image is None or image.finding_id != finding.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
+        )
+
+    if body.caption is not None:
+        image.caption = body.caption or None
+
+    if body.position is not None:
+        ordered = [img for img in _images(finding.id, db) if img.id != image.id]
+        target = max(0, min(body.position, len(ordered)))
+        ordered.insert(target, image)
+        for position, img in enumerate(ordered):
+            img.position = position
+            db.add(img)
+
+    db.add(image)
+    db.commit()
+    db.refresh(image)
+    return _serialize_image(image)
+
+
+@router.delete(
+    "/findings/{finding_id}/images/{image_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+)
+def delete_finding_image(
+    finding_id: UUID,
+    image_id: UUID,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> None:
+    """Owner-only. Drops the row and renormalizes positions. The stored
+    object is deliberately left in place — same as raw files, whose bytes
+    are never deleted at the app layer."""
+    finding = _get_finding_for_owner(finding_id, user, db)
+    image = db.get(FindingImage, image_id)
+    if image is None or image.finding_id != finding.id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
+        )
+    db.delete(image)
+    db.flush()
+    _renormalize_image_positions(finding.id, db)
+    db.commit()
+
+
+@router.post("/findings/{finding_id}/images/reorder", response_model=FindingOut)
+def reorder_finding_images(
+    finding_id: UUID,
+    body: ImageReorder,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_user),
+) -> FindingOut:
+    """Owner-only. Supply the complete image-id list in the desired order —
+    the full set exactly once, same rule as entry reordering."""
+    finding = _get_finding_for_owner(finding_id, user, db)
+    images = db.execute(
+        select(FindingImage).where(FindingImage.finding_id == finding.id)
+    ).scalars().all()
+
+    by_id = {image.id: image for image in images}
+    if set(body.image_ids) != set(by_id) or len(body.image_ids) != len(by_id):
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Supply every image id exactly once, in the order you want.",
+        )
+
+    for position, image_id in enumerate(body.image_ids):
+        by_id[image_id].position = position
+        db.add(by_id[image_id])
+    db.commit()
+    db.refresh(finding)
+    return serialize_finding(finding, db)
+
+
+@router.get("/findings/{finding_id}/images/{image_id}/file")
+def get_finding_image_file(
+    finding_id: UUID,
+    image_id: UUID,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user_optional),
+) -> Response:
+    """Stream the image bytes, gated by the finding's read rule (a draft is
+    owner-only). Content-addressed key -> long immutable cache."""
+    finding = db.get(Finding, finding_id)
+    require_finding_readable(finding, user)  # 404 on missing or non-readable
+
+    image = db.get(FindingImage, image_id)
+    if image is None or image.finding_id != finding_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    if not object_exists(image.storage_bucket, image.storage_key):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Image object missing"
+        )
+
+    data = download_bytes(image.storage_bucket, image.storage_key)
+    return Response(
+        content=data,
+        media_type=image.content_type,
+        headers={"Cache-Control": "public, max-age=31536000, immutable"},
+    )

@@ -20,8 +20,10 @@ from app.models.enums import (
 )
 from app.models.field_registry import LedgerStepDefinition, MetadataFieldDefinition
 from app.models.finding import Finding, FindingEntry, FindingSpectrum
+from app.models.finding_image import FindingImage
 from app.models.graph import Follow, HandleHistory
 from app.models.ingestion_job import IngestionJob
+from app.models.journal import Journal
 from app.models.license import License
 from app.models.processed_cache import ProcessedCache
 from app.models.processing_ledger import ProcessingLedger
@@ -56,12 +58,14 @@ __all__ = [
     "Finding",
     "FindingEntry",
     "FindingEntryKind",
+    "FindingImage",
     "FindingSpectrum",
     "FindingState",
     "Follow",
     "HandleHistory",
     "IngestionJob",
     "IngestionStatus",
+    "Journal",
     "LedgerStepDefinition",
     "License",
     "MetadataFieldDefinition",

@@ -86,6 +86,24 @@ def download_bytes(bucket: str, key: str, client: BaseClient | None = None) -> b
     return response["Body"].read()
 
 
+def generate_presigned_get(
+    bucket: str, key: str, ttl: int = 3600, client: BaseClient | None = None
+) -> str | None:
+    """A time-limited GET URL for `bucket/key`, or `None` on the `local`
+    backend (which has no HTTP surface).
+
+    Not wired into any response yet — the API's own `/file` route stays the
+    portable read path. This exists for a later optimization where large
+    objects (e.g. Finding images) are served straight from object storage.
+    """
+    if settings.STORAGE_BACKEND == "local":
+        return None
+    s3 = client or get_s3_client()
+    return s3.generate_presigned_url(
+        "get_object", Params={"Bucket": bucket, "Key": key}, ExpiresIn=ttl
+    )
+
+
 def object_exists(bucket: str, key: str, client: BaseClient | None = None) -> bool:
     """Return True if `bucket/key` exists, False on a 404/NoSuchKey."""
     if settings.STORAGE_BACKEND == "local":

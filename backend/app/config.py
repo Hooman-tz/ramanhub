@@ -66,6 +66,10 @@ class Settings(BaseSettings):
     S3_SECRET_ACCESS_KEY: str = "minioadmin"
     S3_BUCKET_RAW: str = "raw-spectra"
     S3_BUCKET_PROCESSED: str = "processed-spectra"
+    # Author-supplied Finding images (figures, graphical abstract). Its own
+    # bucket so image lifecycle/ACLs stay independent of spectrum data; for
+    # the `local` backend it's just a subdirectory, no infra needed.
+    S3_BUCKET_FIGURES: str = "figures"
     S3_REGION: str = "auto"
 
     # Google OAuth

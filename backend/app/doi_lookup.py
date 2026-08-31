@@ -12,6 +12,8 @@ that into a clean "not found" response rather than a 500.
 """
 from __future__ import annotations
 
+import re
+from html import unescape
 from typing import Any
 
 import httpx
@@ -51,6 +53,12 @@ class DoiMetadata(BaseModel):
     journal: str | None = None
     year: int | None = None
     url: str | None = None
+    # Added in M6.1 — all optional, so `/doi-lookup`'s response shape stays
+    # backwards compatible. `issn` feeds the SCImago journal match;
+    # `abstract` is JATS/XML-stripped plain text, capped for storage.
+    issn: list[str] = []
+    citations: int | None = None
+    abstract: str | None = None
 
 
 def _extract_title(message: dict[str, Any]) -> str | None:
@@ -115,6 +123,53 @@ def _extract_url(message: dict[str, Any], doi: str) -> str | None:
     return f"https://doi.org/{doi}"
 
 
+_MARKUP_TAG_RE = re.compile(r"<[^>]+>")
+_WHITESPACE_RE = re.compile(r"\s+")
+_ABSTRACT_MAX_CHARS = 5000
+
+
+def _extract_issn(message: dict[str, Any]) -> list[str]:
+    raw = message.get("ISSN")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return []
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in raw:
+        if isinstance(item, str) and item.strip() and item not in seen:
+            seen.add(item)
+            out.append(item.strip())
+    return out
+
+
+def _extract_citations(message: dict[str, Any]) -> int | None:
+    value = message.get("is-referenced-by-count")
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _strip_markup(text: str) -> str:
+    text = _MARKUP_TAG_RE.sub(" ", text)
+    text = unescape(text)
+    return _WHITESPACE_RE.sub(" ", text).strip()
+
+
+def _extract_abstract(message: dict[str, Any]) -> str | None:
+    raw = message.get("abstract")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    cleaned = _strip_markup(raw)
+    if not cleaned:
+        return None
+    return cleaned[:_ABSTRACT_MAX_CHARS]
+
+
 def _parse_crossref_message(doi: str, message: dict[str, Any]) -> DoiMetadata:
     return DoiMetadata(
         doi=doi,
@@ -123,6 +178,9 @@ def _parse_crossref_message(doi: str, message: dict[str, Any]) -> DoiMetadata:
         journal=_extract_journal(message),
         year=_extract_year(message),
         url=_extract_url(message, doi),
+        issn=_extract_issn(message),
+        citations=_extract_citations(message),
+        abstract=_extract_abstract(message),
     )
 
 

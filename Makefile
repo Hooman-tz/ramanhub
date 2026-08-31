@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate seed seed-demo test lint
+.PHONY: up down logs migrate seed seed-demo import-journals test lint
 
 up:
 	docker compose up -d
@@ -17,6 +17,9 @@ seed:
 
 seed-demo:
 	cd backend && uv run python -m app.seed.demo_data
+
+import-journals:
+	cd backend && uv run python -m scripts.import_scimago $(FILE)
 
 test:
 	cd backend && uv run pytest
