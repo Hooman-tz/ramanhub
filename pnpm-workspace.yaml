@@ -3,11 +3,6 @@ packages:
   - packages/*
   - tooling/*
 
-allowBuilds:
-  bufferutil: set this to true or false
-  core-js-pure: set this to true or false
-  sharp: set this to true or false
-
 catalog:
   "@better-auth/cli": 1.4.0-beta.9
   "@better-auth/expo": 1.4.0-beta.9
@@ -42,11 +37,18 @@ linkWorkspacePackages: true
 # (sharp, bufferutil, …) are un-run; warn instead.
 verifyDepsBeforeRun: warn
 
+# Native builds we DO want to run.
 onlyBuiltDependencies:
   - "@tailwindcss/oxide"
   - esbuild
   - sharp
   - bufferutil
+
+# Packages whose (postinstall) build script we deliberately skip — declaring
+# them here stops `pnpm install --frozen-lockfile` failing with
+# ERR_PNPM_IGNORED_BUILDS in CI. `core-js-pure`'s only script is a funding
+# notice; nothing needs to run.
+ignoredBuiltDependencies:
   - core-js-pure
 
 overrides:
