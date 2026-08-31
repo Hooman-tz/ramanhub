@@ -1,4 +1,4 @@
-import Link from "next/link";
+import { BackLink } from "~/components/back-link";
 
 /**
  * Shared shell for the /terms and /privacy pages. Content is written to be
@@ -16,19 +16,20 @@ export function LegalDoc({
 }) {
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
-      <Link href="/" className="text-muted-foreground text-sm hover:underline">
-        ← Feed
-      </Link>
+      <BackLink />
       <h1 className="mt-4 text-2xl font-bold tracking-tight">{title}</h1>
-      <p className="text-muted-foreground mt-1 text-xs">
+      <p className="text-foreground/80 mt-1 text-xs">
         Last updated: {updated} · Draft for the early-access beta — not yet
         reviewed by a lawyer.
       </p>
-      <div className="mt-6 space-y-6 text-sm leading-relaxed [&_h2]:mt-6 [&_h2]:text-sm [&_h2]:font-semibold [&_p]:text-foreground/90">
+      <div className="[&_p]:text-foreground/90 mt-6 space-y-6 text-sm leading-relaxed [&_h2]:mt-6 [&_h2]:text-sm [&_h2]:font-semibold">
         {children}
       </div>
       <p className="text-muted-foreground mt-10 text-xs">
-        Questions? <a className="hover:underline" href="mailto:hello@spectra-in.site">hello@spectra-in.site</a>
+        Questions?{" "}
+        <a className="hover:underline" href="mailto:hello@spectra-in.site">
+          hello@spectra-in.site
+        </a>
       </p>
     </main>
   );

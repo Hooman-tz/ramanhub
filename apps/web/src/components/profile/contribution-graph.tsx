@@ -2,9 +2,9 @@
 
 import { useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { getUserActivity } from "@ramanhub/api-client";
-import type { ActivityDay } from "@ramanhub/api-client";
 
+import type { ActivityDay } from "@ramanhub/api-client";
+import { getUserActivity } from "@ramanhub/api-client";
 import { Card } from "@ramanhub/ui/card";
 import { Skeleton } from "@ramanhub/ui/skeleton";
 
@@ -78,13 +78,14 @@ export function ContributionGraph({ handle }: { handle: string }) {
   return (
     <Card className="gap-3 p-4">
       <div className="flex flex-wrap items-baseline justify-between gap-2">
-        <h2 className="text-sm font-semibold">
-          {totalCount} contribution{totalCount === 1 ? "" : "s"} in the last year
+        <h2 className="text-base font-semibold tracking-tight">
+          {totalCount} contribution{totalCount === 1 ? "" : "s"} in the last
+          year
         </h2>
-        <p className="text-muted-foreground text-xs">
+        <p className="text-foreground/70 text-xs">
           Current streak{" "}
-          <strong className="text-foreground">{current_streak}</strong> · Longest{" "}
-          <strong className="text-foreground">{longest_streak}</strong>
+          <strong className="text-foreground">{current_streak}</strong> ·
+          Longest <strong className="text-foreground">{longest_streak}</strong>
         </p>
       </div>
 
@@ -133,7 +134,7 @@ export function ContributionGraph({ handle }: { handle: string }) {
         </div>
       </div>
 
-      <div className="text-muted-foreground flex items-center gap-1 text-[0.6rem]">
+      <div className="text-foreground/70 flex items-center gap-1 text-[0.65rem]">
         <span>Less</span>
         <span className="bg-muted size-[11px] rounded-[2px]" />
         <span className="bg-chart-5 size-[11px] rounded-[2px]" />

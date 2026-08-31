@@ -1,6 +1,7 @@
 import Link from "next/link";
-import type { PublicProfile } from "@ramanhub/api-client";
+import { BadgeCheck } from "lucide-react";
 
+import type { PublicProfile } from "@ramanhub/api-client";
 import { Avatar, AvatarFallback, AvatarImage } from "@ramanhub/ui/avatar";
 import { Badge } from "@ramanhub/ui/badge";
 import { Button } from "@ramanhub/ui/button";
@@ -66,15 +67,17 @@ export function ProfileHeader({
                   href={`https://orcid.org/${profile.orcid_id}`}
                   target="_blank"
                   rel="noreferrer"
+                  className="focus-visible:ring-ring/50 focus-visible:ring-[3px] focus-visible:outline-none"
                 >
-                  ✓ ORCID verified
+                  <BadgeCheck className="size-3" aria-hidden />
+                  ORCID verified
                 </a>
               </Badge>
             )}
           </div>
-          <p className="text-muted-foreground text-sm">@{handle}</p>
+          <p className="text-foreground/70 text-sm">@{handle}</p>
           {profile.affiliation && (
-            <p className="text-muted-foreground mt-1 text-sm">
+            <p className="text-foreground/80 mt-1 text-sm">
               {profile.affiliation}
             </p>
           )}
@@ -95,7 +98,7 @@ export function ProfileHeader({
               </div>
             )}
 
-          <div className="text-muted-foreground mt-4 flex flex-wrap gap-x-4 gap-y-1 text-sm">
+          <div className="text-foreground/70 mt-4 flex flex-wrap gap-x-4 gap-y-1 text-sm">
             <span>
               <strong className="text-foreground">
                 {profile.finding_count}
@@ -110,14 +113,14 @@ export function ProfileHeader({
             </span>
             <Link
               href={`/u/${handle}?tab=connections`}
-              className="hover:text-foreground"
+              className="hover:text-foreground focus-visible:ring-ring/50 rounded transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
             >
               <strong className="text-foreground">{profile.followers}</strong>{" "}
               followers
             </Link>
             <Link
               href={`/u/${handle}?tab=connections`}
-              className="hover:text-foreground"
+              className="hover:text-foreground focus-visible:ring-ring/50 rounded transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
             >
               <strong className="text-foreground">{profile.following}</strong>{" "}
               following

@@ -1,5 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
+
+import type {
+  FindingComment,
+  FindingShares,
+  FindingVotes,
+} from "@ramanhub/api-client";
 import {
   getFinding,
   getFindingShares,
@@ -8,13 +14,9 @@ import {
   isApiError,
   listFindingComments,
 } from "@ramanhub/api-client";
-import type {
-  FindingComment,
-  FindingShares,
-  FindingVotes,
-} from "@ramanhub/api-client";
 
 import { AbstractSummary } from "~/components/abstract-summary";
+import { BackLink } from "~/components/back-link";
 import { FindingActions } from "~/components/finding-actions";
 import { FindingComments } from "~/components/finding-comments";
 import { FindingImageUploader } from "~/components/finding-image-uploader";
@@ -68,11 +70,9 @@ export default async function FindingPage({
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
-      <Link href="/" className="text-muted-foreground text-sm hover:underline">
-        ← Feed
-      </Link>
+      <BackLink />
 
-      <div className="text-muted-foreground mt-4 flex items-center gap-2 text-xs">
+      <div className="text-foreground/80 mt-4 flex flex-wrap items-center gap-2 text-xs">
         {finding.owner_handle ? (
           <Link
             href={`/u/${finding.owner_handle}`}
@@ -99,7 +99,9 @@ export default async function FindingPage({
         </span>
       </div>
 
-      <h1 className="mt-2 text-2xl font-bold tracking-tight">{finding.title}</h1>
+      <h1 className="mt-2 text-2xl font-bold tracking-tight">
+        {finding.title}
+      </h1>
 
       {finding.abstract_md && (
         <div className="mt-3">
@@ -110,7 +112,10 @@ export default async function FindingPage({
       {finding.tags && finding.tags.length > 0 && (
         <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
           {finding.tags.map((t) => (
-            <span key={t} className="bg-muted rounded px-1.5 py-0.5">
+            <span
+              key={t}
+              className="bg-muted text-foreground/80 rounded px-1.5 py-0.5"
+            >
               #{t}
             </span>
           ))}
@@ -165,21 +170,18 @@ export default async function FindingPage({
       />
 
       {isOwner && (
-        <FindingImageUploader
-          findingId={finding.id}
-          images={finding.images}
-        />
+        <FindingImageUploader findingId={finding.id} images={finding.images} />
       )}
 
       {finding.entries.length > 0 && (
-        <section className="mt-6 space-y-4">
-          <h2 className="text-sm font-semibold">Thread</h2>
+        <section className="mt-8 space-y-4">
+          <h2 className="text-base font-semibold tracking-tight">Thread</h2>
           {finding.entries.map((entry) => (
             <div
               key={entry.id}
-              className="border-border rounded-lg border p-3 text-sm"
+              className="border-border rounded-lg border p-3.5 text-sm"
             >
-              <div className="text-muted-foreground mb-1 text-xs uppercase">
+              <div className="text-foreground/60 mb-1 text-xs tracking-wide uppercase">
                 {entry.kind}
               </div>
               {entry.body_md && <Markdown>{entry.body_md}</Markdown>}

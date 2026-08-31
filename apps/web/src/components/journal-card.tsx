@@ -1,5 +1,6 @@
-import type { PublicationMeta } from "@ramanhub/api-client";
+import { ExternalLink } from "lucide-react";
 
+import type { PublicationMeta } from "@ramanhub/api-client";
 import { Badge } from "@ramanhub/ui/badge";
 import { Card, CardContent } from "@ramanhub/ui/card";
 
@@ -50,26 +51,28 @@ export function JournalCard({ meta }: { meta: PublicationMeta | null }) {
 
         <div className="min-w-0 flex-1 text-sm">
           {meta.title && (
-            <p className="font-medium" title={meta.title}>
+            <p className="text-foreground font-medium" title={meta.title}>
               {meta.title}
             </p>
           )}
-          <p className="text-muted-foreground mt-0.5">
+          <p className="text-foreground/70 mt-0.5">
             {journal}
             {meta.year ? ` · ${meta.year}` : ""}
           </p>
 
           <div className="mt-2 flex flex-wrap items-center gap-2 text-xs">
             {q && (
-              <Badge variant={q.toUpperCase() === "Q1" ? "success" : "secondary"}>
-                {q.toUpperCase()}
+              <Badge
+                variant={q.toUpperCase() === "Q1" ? "success" : "secondary"}
+              >
+                {q.toUpperCase()} journal
               </Badge>
             )}
             {meta.sjr != null && (
-              <span className="text-muted-foreground">SJR {meta.sjr}</span>
+              <span className="text-foreground/70">SJR {meta.sjr}</span>
             )}
             {meta.citations != null && (
-              <span className="text-muted-foreground">
+              <span className="text-foreground/70">
                 {meta.citations} citations
               </span>
             )}
@@ -79,9 +82,10 @@ export function JournalCard({ meta }: { meta: PublicationMeta | null }) {
             href={`https://doi.org/${meta.doi}`}
             target="_blank"
             rel="noreferrer"
-            className="text-primary mt-2 inline-block text-xs hover:underline"
+            className="text-primary focus-visible:ring-ring/50 mt-2 inline-flex items-center gap-1 rounded text-xs hover:underline focus-visible:ring-[3px] focus-visible:outline-none"
           >
-            View paper ↗
+            View paper
+            <ExternalLink className="size-3.5" aria-hidden />
           </a>
         </div>
       </CardContent>

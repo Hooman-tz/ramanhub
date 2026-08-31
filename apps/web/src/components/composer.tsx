@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { isApiError, postNote } from "@ramanhub/api-client";
-import type { SessionUser } from "@ramanhub/api-client";
 
+import type { SessionUser } from "@ramanhub/api-client";
+import { isApiError, postNote } from "@ramanhub/api-client";
 import { Button } from "@ramanhub/ui/button";
 
 export function Composer({ session }: { session: SessionUser | null }) {
@@ -39,13 +39,13 @@ export function Composer({ session }: { session: SessionUser | null }) {
 
   if (!session || session.is_guest) {
     return (
-      <div className="border-border bg-card rounded-xl border p-4 text-sm">
-        <p className="text-muted-foreground">
+      <div className="border-border bg-card rounded-xl border p-4 text-sm shadow-sm">
+        <p className="text-foreground/80">
           Sign in to post a note to the feed.
         </p>
-        <a href="/login" className="mt-2 inline-block">
-          <Button size="sm">Sign in</Button>
-        </a>
+        <Button asChild size="sm" className="mt-2">
+          <a href="/login">Sign in</a>
+        </Button>
       </div>
     );
   }
@@ -53,8 +53,9 @@ export function Composer({ session }: { session: SessionUser | null }) {
   if (!open) {
     return (
       <button
+        type="button"
         onClick={() => setOpen(true)}
-        className="border-border bg-card text-muted-foreground hover:border-primary/40 w-full rounded-xl border p-4 text-left text-sm transition-colors"
+        className="border-border bg-card text-foreground/70 hover:border-primary/40 hover:text-foreground focus-visible:ring-ring/50 w-full cursor-pointer rounded-xl border p-4 text-left text-sm shadow-sm transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
       >
         Share a note, a result, a question…
       </button>
@@ -67,30 +68,46 @@ export function Composer({ session }: { session: SessionUser | null }) {
         e.preventDefault();
         if (title.trim()) mutation.mutate();
       }}
-      className="border-border bg-card space-y-2 rounded-xl border p-4"
+      className="border-border bg-card space-y-2 rounded-xl border p-4 shadow-sm"
     >
+      <label htmlFor="composer-title" className="sr-only">
+        Title
+      </label>
       <input
+        id="composer-title"
         autoFocus
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="Title"
-        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+        className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
         required
       />
+      <label htmlFor="composer-body" className="sr-only">
+        Body
+      </label>
       <textarea
+        id="composer-body"
         value={body}
         onChange={(e) => setBody(e.target.value)}
         placeholder="Say more (markdown, optional)"
         rows={3}
-        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+        className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm leading-relaxed focus-visible:ring-[3px] focus-visible:outline-none"
       />
+      <label htmlFor="composer-tags" className="sr-only">
+        Tags
+      </label>
       <input
+        id="composer-tags"
         value={tags}
         onChange={(e) => setTags(e.target.value)}
         placeholder="tags, comma separated (optional)"
-        className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+        className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
       />
-      {error && <p className="text-destructive text-xs">{error}</p>}
+      {error && (
+        <p className="text-destructive text-xs" role="alert">
+          {error}
+        </p>
+      )}
       <div className="flex justify-end gap-2">
         <Button
           type="button"
@@ -100,7 +117,11 @@ export function Composer({ session }: { session: SessionUser | null }) {
         >
           Cancel
         </Button>
-        <Button type="submit" size="sm" disabled={!title.trim() || mutation.isPending}>
+        <Button
+          type="submit"
+          size="sm"
+          disabled={!title.trim() || mutation.isPending}
+        >
           {mutation.isPending ? "Posting…" : "Post"}
         </Button>
       </div>

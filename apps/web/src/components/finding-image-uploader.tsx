@@ -3,6 +3,9 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
+import { ArrowDown, ArrowUp } from "lucide-react";
+
+import type { FindingImage } from "@ramanhub/api-client";
 import {
   deleteFindingImage,
   findingImageFileUrl,
@@ -11,7 +14,6 @@ import {
   updateFindingImage,
   uploadFindingImage,
 } from "@ramanhub/api-client";
-import type { FindingImage } from "@ramanhub/api-client";
 
 type Kind = FindingImage["kind"];
 
@@ -63,7 +65,9 @@ export function FindingImageUploader({
   const saveCaption = async (image: FindingImage, caption: string) => {
     if (caption === (image.caption ?? "")) return;
     try {
-      const updated = await updateFindingImage(findingId, image.id, { caption });
+      const updated = await updateFindingImage(findingId, image.id, {
+        caption,
+      });
       setItems((prev) => prev.map((i) => (i.id === updated.id ? updated : i)));
       refresh();
     } catch (e) {
@@ -94,9 +98,7 @@ export function FindingImageUploader({
         findingId,
         reordered.map((i) => i.id),
       );
-      setItems(
-        [...finding.images].sort((a, b) => a.position - b.position),
-      );
+      setItems([...finding.images].sort((a, b) => a.position - b.position));
       refresh();
     } catch (e) {
       setItems(items);
@@ -106,20 +108,20 @@ export function FindingImageUploader({
 
   return (
     <details className="border-border mt-6 rounded-lg border p-3">
-      <summary className="cursor-pointer text-sm font-semibold">
+      <summary className="focus-visible:ring-ring/50 -m-1 cursor-pointer rounded-md p-1 text-sm font-semibold focus-visible:ring-[3px] focus-visible:outline-none">
         Figures &amp; images ({items.length})
       </summary>
 
       <div className="mt-3 space-y-3">
         <div className="flex items-center gap-2 text-xs">
-          <label htmlFor="fig-kind" className="text-muted-foreground">
+          <label htmlFor="fig-kind" className="text-foreground/80">
             Upload as
           </label>
           <select
             id="fig-kind"
             value={kind}
             onChange={(e) => setKind(e.target.value as Kind)}
-            className="border-input bg-background rounded-md border px-2 py-1"
+            className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring cursor-pointer rounded-md border px-2 py-1 focus-visible:ring-[3px] focus-visible:outline-none"
           >
             <option value="figure">Figure</option>
             <option value="graphical_abstract">Graphical abstract</option>
@@ -180,29 +182,29 @@ export function FindingImageUploader({
                   className="border-input bg-background mt-1 w-full rounded border px-2 py-1 text-xs"
                   onBlur={(e) => void saveCaption(image, e.target.value)}
                 />
-                <div className="mt-1 flex items-center gap-2 text-xs">
+                <div className="mt-1 flex items-center gap-1 text-xs">
                   <button
                     type="button"
-                    aria-label="Move up"
+                    aria-label="Move image up"
                     disabled={index === 0}
                     onClick={() => void move(index, -1)}
-                    className="disabled:opacity-30"
+                    className="hover:bg-muted focus-visible:ring-ring/50 flex size-8 cursor-pointer items-center justify-center rounded-md transition-colors focus-visible:ring-[3px] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30 motion-reduce:transition-none"
                   >
-                    ↑
+                    <ArrowUp className="size-4" aria-hidden />
                   </button>
                   <button
                     type="button"
-                    aria-label="Move down"
+                    aria-label="Move image down"
                     disabled={index === items.length - 1}
                     onClick={() => void move(index, 1)}
-                    className="disabled:opacity-30"
+                    className="hover:bg-muted focus-visible:ring-ring/50 flex size-8 cursor-pointer items-center justify-center rounded-md transition-colors focus-visible:ring-[3px] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30 motion-reduce:transition-none"
                   >
-                    ↓
+                    <ArrowDown className="size-4" aria-hidden />
                   </button>
                   <button
                     type="button"
                     onClick={() => void remove(image)}
-                    className="text-destructive ml-auto hover:underline"
+                    className="text-destructive hover:bg-destructive/10 focus-visible:ring-destructive/40 ml-auto min-h-8 cursor-pointer rounded-md px-2 transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
                   >
                     Delete
                   </button>

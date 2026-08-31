@@ -10,6 +10,14 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
+import { ArrowRight, X } from "lucide-react";
+
+import type {
+  FollowUser,
+  LibraryParams,
+  LibrarySpectrum,
+  PublicProfile,
+} from "@ramanhub/api-client";
 import {
   createRoutine,
   deleteRoutine,
@@ -21,13 +29,7 @@ import {
   listMyFindings,
   listRoutines,
 } from "@ramanhub/api-client";
-import type {
-  FollowUser,
-  LibraryParams,
-  LibrarySpectrum,
-  PublicProfile,
-} from "@ramanhub/api-client";
-
+import { cn } from "@ramanhub/ui";
 import { Avatar, AvatarFallback, AvatarImage } from "@ramanhub/ui/avatar";
 import { Badge } from "@ramanhub/ui/badge";
 import { Button } from "@ramanhub/ui/button";
@@ -43,6 +45,7 @@ import {
 } from "@ramanhub/ui/dialog";
 import { Input } from "@ramanhub/ui/input";
 import { Label } from "@ramanhub/ui/label";
+import { Skeleton } from "@ramanhub/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@ramanhub/ui/tabs";
 
 import { FeedCard } from "~/components/feed-card";
@@ -83,7 +86,7 @@ export function ProfileTabs({
     <Tabs value={active} onValueChange={setTab}>
       <TabsList className="flex-wrap">
         {tabs.map((t) => (
-          <TabsTrigger key={t} value={t} className="capitalize">
+          <TabsTrigger key={t} value={t} className="cursor-pointer capitalize">
             {t}
           </TabsTrigger>
         ))}
@@ -115,12 +118,18 @@ export function ProfileTabs({
 /* -------------------------------------------------------------------------- */
 
 function Loading() {
-  return <p className="text-muted-foreground text-sm">Loading…</p>;
+  return (
+    <div className="space-y-2" aria-hidden>
+      {[0, 1, 2].map((i) => (
+        <Skeleton key={i} className="h-16 w-full rounded-lg" />
+      ))}
+    </div>
+  );
 }
 
 function EmptyState({ children }: { children: ReactNode }) {
   return (
-    <p className="text-muted-foreground rounded-xl border border-dashed p-6 text-center text-sm">
+    <p className="text-foreground/70 rounded-xl border border-dashed p-6 text-center text-sm">
       {children}
     </p>
   );
@@ -136,7 +145,8 @@ function PostsTab({ handle }: { handle: string }) {
 
   if (feed.isLoading) return <Loading />;
   const items = feed.data ?? [];
-  if (items.length === 0) return <EmptyState>Nothing published yet.</EmptyState>;
+  if (items.length === 0)
+    return <EmptyState>Nothing published yet.</EmptyState>;
 
   return (
     <div className="grid gap-3 sm:grid-cols-2">
@@ -158,7 +168,9 @@ function DraftsTab() {
   if (findings.isLoading) return <Loading />;
   const drafts = (findings.data ?? []).filter((f) => f.state === "draft");
   if (drafts.length === 0)
-    return <EmptyState>No drafts — everything you have is published.</EmptyState>;
+    return (
+      <EmptyState>No drafts — everything you have is published.</EmptyState>
+    );
 
   return (
     <ul className="space-y-2">
@@ -374,7 +386,9 @@ function AlgorithmCatalogBlock() {
 
   return (
     <div>
-      <h3 className="mb-2 text-sm font-semibold">Algorithm catalog</h3>
+      <h2 className="mb-2 text-base font-semibold tracking-tight">
+        Algorithm catalog
+      </h2>
       <div className="space-y-4">
         {categories.map((c) => {
           const algs = algorithms.filter((a) => a.category === c);
@@ -393,7 +407,9 @@ function AlgorithmCatalogBlock() {
                     <summary className="cursor-pointer font-medium">
                       {a.label}
                     </summary>
-                    <p className="text-muted-foreground mt-1">{a.description}</p>
+                    <p className="text-muted-foreground mt-1">
+                      {a.description}
+                    </p>
                     <p className="mt-1 font-mono text-xs">{a.step_type}</p>
                     {schemaKeys(a.param_schema).length > 0 && (
                       <p className="text-muted-foreground mt-1 text-xs">
@@ -453,7 +469,9 @@ function RoutinesBlock() {
 
   return (
     <div>
-      <h3 className="mb-2 text-sm font-semibold">Saved routines</h3>
+      <h2 className="mb-2 text-base font-semibold tracking-tight">
+        Saved routines
+      </h2>
 
       {list.length === 0 && !routines.isLoading && (
         <EmptyState>No routines yet.</EmptyState>
@@ -471,23 +489,30 @@ function RoutinesBlock() {
                 {r.steps_template.map((s, i) => (
                   <span
                     key={i}
-                    className="text-muted-foreground flex items-center text-xs"
+                    className="text-foreground/70 flex items-center text-xs"
                   >
-                    {i > 0 && <span className="mx-1">→</span>}
-                    <span className="bg-muted rounded px-1.5 py-0.5">
+                    {i > 0 && (
+                      <ArrowRight className="mx-1 size-3" aria-hidden />
+                    )}
+                    <span className="bg-muted text-foreground/80 rounded px-1.5 py-0.5">
                       {s.type}
                     </span>
                   </span>
                 ))}
               </div>
-              <p className="text-muted-foreground mt-1 text-xs">
+              <p className="text-foreground/60 mt-1 text-xs">
                 {new Date(r.created_at).toLocaleDateString()}
               </p>
             </div>
             <Dialog>
               <DialogTrigger asChild>
-                <Button size="sm" variant="ghost" aria-label="Delete routine">
-                  ×
+                <Button
+                  size="icon"
+                  variant="ghost"
+                  className="cursor-pointer"
+                  aria-label={`Delete routine ${r.name}`}
+                >
+                  <X className="size-4" aria-hidden />
                 </Button>
               </DialogTrigger>
               <DialogContent>
@@ -532,16 +557,20 @@ function RoutinesBlock() {
               <button
                 key={s.step_type}
                 type="button"
+                aria-pressed={on}
                 onClick={() =>
                   setPicked((p) =>
-                    on ? p.filter((x) => x !== s.step_type) : [...p, s.step_type],
+                    on
+                      ? p.filter((x) => x !== s.step_type)
+                      : [...p, s.step_type],
                   )
                 }
-                className={
+                className={cn(
+                  "focus-visible:ring-ring/50 min-h-8 cursor-pointer rounded border px-2.5 py-1 text-xs transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none",
                   on
-                    ? "border-transparent bg-primary text-primary-foreground rounded border px-2 py-0.5 text-xs"
-                    : "bg-muted rounded border border-transparent px-2 py-0.5 text-xs"
-                }
+                    ? "bg-primary text-primary-foreground border-transparent"
+                    : "bg-muted text-foreground/80 hover:bg-muted/70 border-transparent",
+                )}
               >
                 {s.label}
               </button>
@@ -549,7 +578,7 @@ function RoutinesBlock() {
           })}
         </div>
         {picked.length > 0 && (
-          <p className="text-muted-foreground text-xs">
+          <p className="text-foreground/70 text-xs">
             Order: {picked.join(" → ")}
           </p>
         )}
@@ -604,7 +633,7 @@ function FollowColumn({
 }) {
   return (
     <div>
-      <h3 className="mb-2 text-sm font-semibold">{title}</h3>
+      <h2 className="mb-2 text-base font-semibold tracking-tight">{title}</h2>
       {loading && <Loading />}
       {!loading && users.length === 0 && <EmptyState>Nobody yet.</EmptyState>}
       <ul className="space-y-2">

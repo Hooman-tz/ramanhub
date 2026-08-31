@@ -1,6 +1,9 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowBigUp, Repeat2 } from "lucide-react";
+
+import type { FindingShares, FindingVotes } from "@ramanhub/api-client";
 import {
   getFindingShares,
   getFindingVotes,
@@ -8,8 +11,6 @@ import {
   toggleFindingShare,
   toggleFindingVote,
 } from "@ramanhub/api-client";
-import type { FindingShares, FindingVotes } from "@ramanhub/api-client";
-
 import { cn } from "@ramanhub/ui";
 
 export function FindingActions({
@@ -86,21 +87,25 @@ export function FindingActions({
   const voted = votes.data?.voted_by_me ?? false;
   const shared = shares.data?.shared_by_me ?? false;
 
+  const pill =
+    "focus-visible:ring-ring/50 border-border inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-full border px-3.5 py-1.5 transition-colors focus-visible:ring-[3px] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none";
+
   return (
-    <div className="mt-4 flex items-center gap-2 text-sm">
+    <div className="mt-5 flex flex-wrap items-center gap-2 text-sm">
       <button
         type="button"
         disabled={!signedIn || voteMutation.isPending}
         onClick={() => voteMutation.mutate()}
         aria-pressed={voted}
+        aria-label={voted ? "Remove your vote" : "Vote for this finding"}
         className={cn(
-          "border-border inline-flex items-center gap-1.5 rounded-full border px-3 py-1 transition-colors disabled:opacity-60",
+          pill,
           voted
             ? "border-primary/40 bg-primary/10 text-primary"
-            : "hover:border-primary/40",
+            : "hover:border-primary/40 hover:bg-muted",
         )}
       >
-        <span aria-hidden>▲</span>
+        <ArrowBigUp className="size-4" aria-hidden />
         <span>{votes.data?.count ?? 0}</span>
       </button>
 
@@ -109,20 +114,24 @@ export function FindingActions({
         disabled={!signedIn || shareMutation.isPending}
         onClick={() => shareMutation.mutate()}
         aria-pressed={shared}
+        aria-label={shared ? "Undo share" : "Share this finding"}
         className={cn(
-          "border-border inline-flex items-center gap-1.5 rounded-full border px-3 py-1 transition-colors disabled:opacity-60",
+          pill,
           shared
             ? "border-primary/40 bg-primary/10 text-primary"
-            : "hover:border-primary/40",
+            : "hover:border-primary/40 hover:bg-muted",
         )}
       >
-        <span aria-hidden>↻</span>
+        <Repeat2 className="size-4" aria-hidden />
         <span>{shares.data?.count ?? 0}</span>
       </button>
 
       {!signedIn && (
-        <span className="text-muted-foreground text-xs">
-          <a href="/login" className="hover:text-foreground underline">
+        <span className="text-foreground/70 text-xs">
+          <a
+            href="/login"
+            className="hover:text-foreground focus-visible:ring-ring/50 rounded underline focus-visible:ring-[3px] focus-visible:outline-none"
+          >
             Sign in
           </a>{" "}
           to vote or share

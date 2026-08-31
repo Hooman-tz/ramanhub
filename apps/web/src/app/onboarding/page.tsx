@@ -3,6 +3,9 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, X } from "lucide-react";
+
+import type { HandleAvailability } from "@ramanhub/api-client";
 import {
   checkHandle,
   getSession,
@@ -11,9 +14,8 @@ import {
   submitOnboarding,
   toggleFollow,
 } from "@ramanhub/api-client";
-import type { HandleAvailability } from "@ramanhub/api-client";
-
 import { Button } from "@ramanhub/ui/button";
+import { Skeleton } from "@ramanhub/ui/skeleton";
 
 function useDebounced<T>(value: T, ms: number): T {
   const [debounced, setDebounced] = useState(value);
@@ -116,49 +118,60 @@ export default function OnboardingPage() {
 
   return (
     <main className="mx-auto w-full max-w-lg px-4 py-10">
-      <h1 className="text-2xl font-bold tracking-tight">
-        Set up your profile
-      </h1>
-      <p className="text-muted-foreground mt-1 text-sm">
+      <h1 className="text-2xl font-bold tracking-tight">Set up your profile</h1>
+      <p className="text-foreground/80 mt-1 text-sm">
         A few details so people can find and follow your work.
       </p>
 
       {/* Step 1: handle + name */}
-      <section className="mt-8 space-y-3">
-        <h2 className="text-sm font-semibold">1 · Handle &amp; name</h2>
-        <div>
-          <label className="text-muted-foreground text-xs" htmlFor="handle">
+      <section className="mt-8 space-y-4">
+        <h2 className="text-base font-semibold tracking-tight">
+          1 · Handle &amp; name
+        </h2>
+        <div className="space-y-1.5">
+          <label
+            className="text-foreground text-sm font-medium"
+            htmlFor="handle"
+          >
             Handle
           </label>
-          <div className="mt-1 flex items-center gap-2">
-            <span className="text-muted-foreground text-sm">@</span>
+          <div className="flex items-center gap-2">
+            <span className="text-foreground/70 text-sm">@</span>
             <input
               id="handle"
               value={handle}
               onChange={(e) => setHandle(e.target.value)}
               placeholder="jane-doe"
-              className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+              className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
             />
           </div>
           {debouncedHandle.length >= 3 && (
             <p
               className={
                 handleOk
-                  ? "mt-1 text-xs text-emerald-600 dark:text-emerald-400"
-                  : "text-destructive mt-1 text-xs"
+                  ? "inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"
+                  : "text-destructive inline-flex items-center gap-1 text-xs"
               }
             >
-              {availability.isLoading
-                ? "Checking…"
-                : handleOk
-                  ? `✓ @${availability.data?.normalized} is available`
-                  : `✗ ${availability.data?.reason ?? "Not available"}`}
+              {availability.isLoading ? (
+                "Checking…"
+              ) : handleOk ? (
+                <>
+                  <Check className="size-3.5" aria-hidden />@
+                  {availability.data?.normalized} is available
+                </>
+              ) : (
+                <>
+                  <X className="size-3.5" aria-hidden />
+                  {availability.data?.reason ?? "Not available"}
+                </>
+              )}
             </p>
           )}
         </div>
-        <div>
+        <div className="space-y-1.5">
           <label
-            className="text-muted-foreground text-xs"
+            className="text-foreground text-sm font-medium"
             htmlFor="display-name"
           >
             Display name
@@ -168,25 +181,27 @@ export default function OnboardingPage() {
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
             placeholder="Jane Doe"
-            className="border-input bg-background mt-1 w-full rounded-md border px-3 py-2 text-sm"
+            className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
           />
         </div>
       </section>
 
       {/* Step 2: interests */}
-      <section className="mt-8 space-y-3">
-        <h2 className="text-sm font-semibold">2 · Research interests</h2>
+      <section className="mt-8 space-y-4">
+        <h2 className="text-base font-semibold tracking-tight">
+          2 · Research interests
+        </h2>
         <div className="flex flex-wrap gap-1.5">
           {interests.map((t) => (
             <button
               key={t}
               type="button"
-              onClick={() =>
-                setInterests((i) => i.filter((x) => x !== t))
-              }
-              className="bg-muted hover:bg-muted/70 rounded px-2 py-0.5 text-xs"
+              aria-label={`Remove ${t}`}
+              onClick={() => setInterests((i) => i.filter((x) => x !== t))}
+              className="bg-muted text-foreground/80 hover:bg-muted/70 focus-visible:ring-ring/50 inline-flex min-h-8 cursor-pointer items-center gap-1 rounded px-2 text-xs transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
             >
-              #{t} ✕
+              #{t}
+              <X className="size-3" aria-hidden />
             </button>
           ))}
         </div>
@@ -201,19 +216,31 @@ export default function OnboardingPage() {
               }
             }}
             placeholder="e.g. surface-enhanced Raman"
-            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            aria-label="Add a research interest"
+            className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
           />
-          <Button type="button" variant="outline" size="sm" onClick={addInterest}>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={addInterest}
+          >
             Add
           </Button>
         </div>
       </section>
 
       {/* Step 3: follow people */}
-      <section className="mt-8 space-y-3">
-        <h2 className="text-sm font-semibold">3 · Follow a few people</h2>
+      <section className="mt-8 space-y-4">
+        <h2 className="text-base font-semibold tracking-tight">
+          3 · Follow a few people
+        </h2>
         {suggested.isLoading && (
-          <p className="text-muted-foreground text-sm">Loading suggestions…</p>
+          <div className="space-y-2" aria-hidden>
+            {[0, 1, 2].map((i) => (
+              <Skeleton key={i} className="h-16 w-full rounded-lg" />
+            ))}
+          </div>
         )}
         <ul className="space-y-2">
           {suggested.data?.map((u) => (
@@ -225,7 +252,7 @@ export default function OnboardingPage() {
                 <p className="truncate text-sm font-medium">
                   {u.display_name ?? `@${u.profile_handle}`}
                 </p>
-                <p className="text-muted-foreground truncate text-xs">
+                <p className="text-foreground/70 truncate text-xs">
                   @{u.profile_handle}
                   {u.affiliation ? ` · ${u.affiliation}` : ""} ·{" "}
                   {u.follower_count} followers
@@ -244,16 +271,21 @@ export default function OnboardingPage() {
         </ul>
       </section>
 
-      <label className="mt-8 flex items-center gap-2 text-sm">
+      <label className="mt-8 flex cursor-pointer items-center gap-2 text-sm">
         <input
           type="checkbox"
           checked={isPublic}
           onChange={(e) => setIsPublic(e.target.checked)}
+          className="accent-primary focus-visible:ring-ring/50 size-4 cursor-pointer rounded focus-visible:ring-[3px] focus-visible:outline-none"
         />
         Make my profile public
       </label>
 
-      {error && <p className="text-destructive mt-3 text-sm">{error}</p>}
+      {error && (
+        <p className="text-destructive mt-3 text-sm" role="alert">
+          {error}
+        </p>
+      )}
 
       <div className="mt-6">
         <Button

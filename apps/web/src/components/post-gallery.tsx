@@ -2,13 +2,14 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { ChevronLeft, ChevronRight } from "lucide-react";
+
+import type { FindingImage } from "@ramanhub/api-client";
 import {
   findingImageFileUrl,
   getFindingOverlay,
   getSpectrumData,
 } from "@ramanhub/api-client";
-import type { FindingImage } from "@ramanhub/api-client";
-
 import { cn } from "@ramanhub/ui";
 import { ScrollArea, ScrollBar } from "@ramanhub/ui/scroll-area";
 import { Skeleton } from "@ramanhub/ui/skeleton";
@@ -145,38 +146,42 @@ export function PostGallery({
             aria-label="Previous panel"
             onClick={() => scrollToIndex(activeIndex - 1)}
             disabled={activeIndex <= 0}
-            className="border-border bg-background/80 hover:bg-background absolute top-1/2 left-1 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border text-sm shadow-sm backdrop-blur transition-opacity disabled:opacity-30"
+            className="border-border bg-background/80 hover:bg-background focus-visible:ring-ring/50 absolute top-1/2 left-1 flex size-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border shadow-sm backdrop-blur transition-colors focus-visible:ring-[3px] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30 motion-reduce:transition-none"
           >
-            ‹
+            <ChevronLeft className="size-5" aria-hidden />
           </button>
           <button
             type="button"
             aria-label="Next panel"
             onClick={() => scrollToIndex(activeIndex + 1)}
             disabled={activeIndex >= panels.length - 1}
-            className="border-border bg-background/80 hover:bg-background absolute top-1/2 right-1 flex size-8 -translate-y-1/2 items-center justify-center rounded-full border text-sm shadow-sm backdrop-blur transition-opacity disabled:opacity-30"
+            className="border-border bg-background/80 hover:bg-background focus-visible:ring-ring/50 absolute top-1/2 right-1 flex size-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border shadow-sm backdrop-blur transition-colors focus-visible:ring-[3px] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-30 motion-reduce:transition-none"
           >
-            ›
+            <ChevronRight className="size-5" aria-hidden />
           </button>
         </>
       )}
 
       {showDots && (
-        <div className="mt-2 flex justify-center gap-1.5">
+        <div className="mt-2 flex justify-center gap-1">
           {panels.map((p, i) => (
             <button
               key={p.key}
               type="button"
-              aria-label={`Go to panel ${i + 1}`}
+              aria-label={`Go to panel ${i + 1} of ${panels.length}`}
               aria-current={i === activeIndex}
               onClick={() => scrollToIndex(i)}
-              className={cn(
-                "size-1.5 rounded-full transition-colors",
-                i === activeIndex
-                  ? "bg-primary"
-                  : "bg-muted-foreground/30 hover:bg-muted-foreground/60",
-              )}
-            />
+              className="focus-visible:ring-ring/50 group flex size-8 cursor-pointer items-center justify-center rounded-full focus-visible:ring-[3px] focus-visible:outline-none"
+            >
+              <span
+                className={cn(
+                  "size-2 rounded-full transition-colors motion-reduce:transition-none",
+                  i === activeIndex
+                    ? "bg-primary"
+                    : "bg-foreground/25 group-hover:bg-foreground/50",
+                )}
+              />
+            </button>
           ))}
         </div>
       )}

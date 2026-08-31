@@ -841,6 +841,31 @@ export interface FindingOverlay {
   members: { spectrum_id: string; label: string | null }[];
 }
 
+export interface Spectrum {
+  id: string;
+  title: string | null;
+  description: string | null;
+  modality: string;
+  material_type: string | null;
+  state: "draft" | "published" | "embargoed";
+  doi: string | null;
+  license_id: string | null;
+  published_at: string | null;
+  is_owner: boolean;
+  confirmed_metadata: Record<string, unknown> | null;
+}
+
+/** `GET /spectra/{id}` — spectrum record metadata (no array data). */
+export function getSpectrum(
+  spectrumId: string,
+  opts?: ApiClientOptions,
+): Promise<Spectrum> {
+  return apiRequest<Spectrum>(
+    `/spectra/${encodeURIComponent(spectrumId)}`,
+    opts,
+  );
+}
+
 /** `GET /spectra/{id}/data` — chart-ready (wavenumbers, intensities). */
 export function getSpectrumData(
   spectrumId: string,

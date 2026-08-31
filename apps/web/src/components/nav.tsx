@@ -45,13 +45,20 @@ export function Nav() {
   return (
     <header className="border-border bg-background/80 sticky top-0 z-40 w-full border-b backdrop-blur">
       <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-4">
-        <Link href="/" className="text-lg font-medium tracking-tight">
+        <Link
+          href="/"
+          aria-label="Spectra Insight — home"
+          className="hover:text-primary focus-visible:ring-ring/50 -mx-1 rounded-md px-1 py-1 text-lg font-medium tracking-tight transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
+        >
           Spectra<span className="font-bold">Insight</span>
         </Link>
 
         {isFullUser ? (
           <DropdownMenu>
-            <DropdownMenuTrigger className="focus-visible:ring-ring/50 rounded-full outline-none focus-visible:ring-[3px]">
+            <DropdownMenuTrigger
+              aria-label="Account menu"
+              className="focus-visible:ring-ring/50 hover:bg-muted flex cursor-pointer items-center justify-center rounded-full p-1.5 transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
+            >
               <Avatar>
                 {user.avatar_url ? (
                   <AvatarImage
@@ -89,7 +96,7 @@ export function Nav() {
         ) : (
           <Link
             href="/login"
-            className="text-muted-foreground hover:text-foreground text-sm font-medium transition-colors"
+            className="text-foreground/80 hover:text-foreground hover:bg-muted focus-visible:ring-ring/50 inline-flex min-h-9 items-center rounded-md px-3 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
           >
             Sign in
           </Link>

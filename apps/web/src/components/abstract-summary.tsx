@@ -2,9 +2,9 @@
 
 import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { enrichFinding, isApiError } from "@ramanhub/api-client";
-import type { AiSummary, PublicationMeta } from "@ramanhub/api-client";
 
+import type { AiSummary, PublicationMeta } from "@ramanhub/api-client";
+import { enrichFinding, isApiError } from "@ramanhub/api-client";
 import { Badge } from "@ramanhub/ui/badge";
 import { Button } from "@ramanhub/ui/button";
 
@@ -17,7 +17,7 @@ function SummaryBlock({
 }) {
   return (
     <div className="mt-6">
-      <h2 className="text-sm font-semibold">Summary</h2>
+      <h2 className="text-base font-semibold tracking-tight">Summary</h2>
       <p className="text-foreground/90 mt-2 text-sm leading-relaxed">
         {summary.summary}
       </p>
@@ -31,14 +31,16 @@ function SummaryBlock({
         </div>
       )}
       {abstractRaw && (
-        <details className="text-muted-foreground mt-3 text-sm">
-          <summary className="hover:text-foreground cursor-pointer">
+        <details className="mt-3 text-sm">
+          <summary className="text-foreground/70 hover:text-foreground focus-visible:ring-ring/50 -m-1 w-fit cursor-pointer rounded-md p-1 transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none">
             Original abstract
           </summary>
-          <p className="mt-2 whitespace-pre-wrap">{abstractRaw}</p>
+          <p className="text-foreground/80 mt-2 leading-relaxed whitespace-pre-wrap">
+            {abstractRaw}
+          </p>
         </details>
       )}
-      <p className="text-muted-foreground mt-2 text-xs">AI-generated summary.</p>
+      <p className="text-foreground/60 mt-2 text-xs">AI-generated summary.</p>
     </div>
   );
 }
@@ -77,15 +79,13 @@ export function AbstractSummary({
 
   const summary = meta?.ai_summary ?? result;
   if (summary) {
-    return (
-      <SummaryBlock summary={summary} abstractRaw={meta?.abstract_raw} />
-    );
+    return <SummaryBlock summary={summary} abstractRaw={meta?.abstract_raw} />;
   }
 
   if (isOwner && meta?.abstract_raw) {
     return (
       <div className="mt-6">
-        <h2 className="text-sm font-semibold">Summary</h2>
+        <h2 className="text-base font-semibold tracking-tight">Summary</h2>
         <p className="text-muted-foreground mt-2 text-sm">
           The linked paper has an abstract but no summary yet.
         </p>
@@ -98,9 +98,7 @@ export function AbstractSummary({
         >
           {mutation.isPending ? "Summarizing…" : "Summarize with AI"}
         </Button>
-        {note && (
-          <p className="text-muted-foreground mt-2 text-xs">{note}</p>
-        )}
+        {note && <p className="text-muted-foreground mt-2 text-xs">{note}</p>}
       </div>
     );
   }

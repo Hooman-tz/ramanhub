@@ -1,8 +1,9 @@
 import { Suspense } from "react";
-import Link from "next/link";
 import { notFound } from "next/navigation";
+
 import { getSession, getUserByHandle, isApiError } from "@ramanhub/api-client";
 
+import { BackLink } from "~/components/back-link";
 import { ContributionGraph } from "~/components/profile/contribution-graph";
 import { PinnedGrid } from "~/components/profile/pinned-grid";
 import { ProfileHeader } from "~/components/profile/profile-header";
@@ -33,9 +34,7 @@ export default async function ProfilePage({
 
   return (
     <main className="mx-auto w-full max-w-4xl space-y-6 px-4 py-8">
-      <Link href="/" className="text-muted-foreground text-sm hover:underline">
-        ← Feed
-      </Link>
+      <BackLink />
 
       <ProfileHeader profile={profile} isOwner={isOwner} />
       <ContributionGraph handle={h} />

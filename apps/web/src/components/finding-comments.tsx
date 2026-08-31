@@ -2,15 +2,16 @@
 
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+
+import type { FindingComment } from "@ramanhub/api-client";
 import {
   getSession,
   isApiError,
   listFindingComments,
   postFindingComment,
 } from "@ramanhub/api-client";
-import type { FindingComment } from "@ramanhub/api-client";
-
 import { Button } from "@ramanhub/ui/button";
+import { Skeleton } from "@ramanhub/ui/skeleton";
 
 function timeAgo(iso: string): string {
   const secs = Math.round((Date.now() - new Date(iso).getTime()) / 1000);
@@ -59,38 +60,54 @@ export function FindingComments({
   const list = comments.data ?? [];
 
   return (
-    <section className="mt-8">
-      <h2 className="text-sm font-semibold">
+    <section className="mt-10">
+      <h2 className="text-base font-semibold tracking-tight">
         Comments{list.length > 0 && ` (${list.length})`}
       </h2>
 
-      <ul className="mt-3 space-y-3">
+      {comments.isLoading && list.length === 0 && (
+        <div className="mt-4 space-y-3" aria-hidden>
+          {[0, 1].map((i) => (
+            <div key={i} className="border-border rounded-lg border p-3">
+              <Skeleton className="h-3 w-40" />
+              <Skeleton className="mt-2 h-4 w-full" />
+              <Skeleton className="mt-1.5 h-4 w-2/3" />
+            </div>
+          ))}
+        </div>
+      )}
+
+      <ul className="mt-4 space-y-3">
         {list.map((c) => (
           <li
             key={c.id}
-            className="border-border rounded-lg border p-3 text-sm"
+            className="border-border rounded-lg border p-3.5 text-sm"
           >
-            <div className="text-muted-foreground mb-1 flex items-center gap-2 text-xs">
+            <div className="mb-1.5 flex items-center gap-2 text-xs">
               {c.author_handle ? (
                 <a
                   href={`/u/${c.author_handle}`}
-                  className="hover:text-foreground font-medium"
+                  className="text-foreground hover:text-primary focus-visible:ring-ring/50 rounded font-medium transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
                 >
                   {c.author_display_name ?? `@${c.author_handle}`}
                 </a>
               ) : (
-                <span className="font-medium">
+                <span className="text-foreground font-medium">
                   {c.author_display_name ?? "Someone"}
                 </span>
               )}
-              <span>· {timeAgo(c.created_at)}</span>
+              <span className="text-foreground/60">
+                · {timeAgo(c.created_at)}
+              </span>
             </div>
-            <p className="whitespace-pre-wrap">{c.body}</p>
+            <p className="text-foreground/90 leading-relaxed whitespace-pre-wrap">
+              {c.body}
+            </p>
           </li>
         ))}
         {list.length === 0 && !comments.isLoading && (
-          <li className="text-muted-foreground text-sm">
-            No comments yet.
+          <li className="text-foreground/70 rounded-lg border border-dashed p-4 text-center text-sm">
+            No comments yet — start the discussion.
           </li>
         )}
       </ul>
@@ -103,14 +120,22 @@ export function FindingComments({
             if (body.trim()) mutation.mutate();
           }}
         >
+          <label htmlFor="comment-body" className="sr-only">
+            Add a comment
+          </label>
           <textarea
+            id="comment-body"
             value={body}
             onChange={(e) => setBody(e.target.value)}
             placeholder="Add a comment…"
             rows={3}
-            className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+            className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm leading-relaxed focus-visible:ring-[3px] focus-visible:outline-none"
           />
-          {error && <p className="text-destructive text-xs">{error}</p>}
+          {error && (
+            <p className="text-destructive text-xs" role="alert">
+              {error}
+            </p>
+          )}
           <div className="flex justify-end">
             <Button
               type="submit"
@@ -122,8 +147,11 @@ export function FindingComments({
           </div>
         </form>
       ) : (
-        <p className="text-muted-foreground mt-4 text-sm">
-          <a href="/login" className="hover:text-foreground underline">
+        <p className="text-foreground/70 mt-4 text-sm">
+          <a
+            href="/login"
+            className="hover:text-foreground focus-visible:ring-ring/50 rounded underline focus-visible:ring-[3px] focus-visible:outline-none"
+          >
             Sign in
           </a>{" "}
           to join the discussion.

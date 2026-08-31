@@ -3,8 +3,8 @@
 import { Suspense, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
-import { startGuestSession } from "@ramanhub/api-client";
 
+import { startGuestSession } from "@ramanhub/api-client";
 import { Button } from "@ramanhub/ui/button";
 
 const PROVIDERS = [
@@ -40,17 +40,15 @@ function LoginCard() {
       <h1 className="text-xl font-bold tracking-tight">
         Sign in to Spectra<span className="text-primary">Insight</span>
       </h1>
-      <p className="text-muted-foreground mt-1 text-sm">
+      <p className="text-foreground/80 mt-1 text-sm">
         Use an academic identity to publish, vote, and comment.
       </p>
 
       <div className="mt-6 space-y-2">
         {PROVIDERS.map((p) => (
-          <a key={p.href} href={p.href} className="block">
-            <Button variant="outline" className="w-full">
-              {p.label}
-            </Button>
-          </a>
+          <Button key={p.href} asChild variant="outline" className="w-full">
+            <a href={p.href}>{p.label}</a>
+          </Button>
         ))}
       </div>
 
@@ -64,15 +62,25 @@ function LoginCard() {
       >
         {busy ? "One moment…" : "Continue as guest"}
       </Button>
-      {error && <p className="text-destructive mt-2 text-xs">{error}</p>}
+      {error && (
+        <p className="text-destructive mt-2 text-xs" role="alert">
+          {error}
+        </p>
+      )}
 
-      <p className="text-muted-foreground mt-5 text-center text-xs">
+      <p className="text-foreground/70 mt-5 text-center text-xs">
         By continuing you agree to our{" "}
-        <a href="/terms" className="hover:underline">
+        <a
+          href="/terms"
+          className="text-foreground focus-visible:ring-ring/50 rounded underline underline-offset-2 focus-visible:ring-[3px] focus-visible:outline-none"
+        >
           Terms
         </a>{" "}
         and{" "}
-        <a href="/privacy" className="hover:underline">
+        <a
+          href="/privacy"
+          className="text-foreground focus-visible:ring-ring/50 rounded underline underline-offset-2 focus-visible:ring-[3px] focus-visible:outline-none"
+        >
           Privacy Policy
         </a>
         .

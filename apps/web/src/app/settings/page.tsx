@@ -3,6 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Check, X } from "lucide-react";
+
+import type { HandleAvailability } from "@ramanhub/api-client";
 import {
   checkHandle,
   deleteMe,
@@ -12,8 +15,6 @@ import {
   isApiError,
   updateMe,
 } from "@ramanhub/api-client";
-import type { HandleAvailability } from "@ramanhub/api-client";
-
 import { Button } from "@ramanhub/ui/button";
 import {
   Card,
@@ -231,15 +232,24 @@ export default function SettingsPage() {
                 <p
                   className={
                     handleOk
-                      ? "text-xs text-emerald-600 dark:text-emerald-400"
-                      : "text-destructive text-xs"
+                      ? "inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"
+                      : "text-destructive inline-flex items-center gap-1 text-xs"
                   }
                 >
-                  {availability.isLoading
-                    ? "Checking…"
-                    : handleOk
-                      ? `✓ @${availability.data?.normalized ?? debouncedHandle} is available`
-                      : `✗ ${availability.data?.reason ?? "Not available"}`}
+                  {availability.isLoading ? (
+                    "Checking…"
+                  ) : handleOk ? (
+                    <>
+                      <Check className="size-3.5" aria-hidden />@
+                      {availability.data?.normalized ?? debouncedHandle} is
+                      available
+                    </>
+                  ) : (
+                    <>
+                      <X className="size-3.5" aria-hidden />
+                      {availability.data?.reason ?? "Not available"}
+                    </>
+                  )}
                 </p>
               )}
               {handleTooShort && (
@@ -267,7 +277,7 @@ export default function SettingsPage() {
                 rows={4}
                 value={form.bio}
                 onChange={(e) => setForm({ ...form, bio: e.target.value })}
-                className="border-input bg-background w-full rounded-md border px-3 py-2 text-sm"
+                className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm leading-relaxed focus-visible:ring-[3px] focus-visible:outline-none"
               />
             </div>
 
@@ -278,12 +288,14 @@ export default function SettingsPage() {
                   <button
                     key={t}
                     type="button"
+                    aria-label={`Remove ${t}`}
                     onClick={() =>
                       setInterests((i) => i.filter((x) => x !== t))
                     }
-                    className="bg-muted hover:bg-muted/70 rounded px-2 py-0.5 text-xs"
+                    className="bg-muted text-foreground/80 hover:bg-muted/70 focus-visible:ring-ring/50 inline-flex min-h-8 cursor-pointer items-center gap-1 rounded px-2 text-xs transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
                   >
-                    {t} ✕
+                    {t}
+                    <X className="size-3" aria-hidden />
                   </button>
                 ))}
               </div>
@@ -311,13 +323,14 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            <label className="flex items-center gap-2 text-sm">
+            <label className="flex cursor-pointer items-center gap-2 text-sm">
               <input
                 type="checkbox"
                 checked={form.is_profile_public}
                 onChange={(e) =>
                   setForm({ ...form, is_profile_public: e.target.checked })
                 }
+                className="accent-primary focus-visible:ring-ring/50 size-4 cursor-pointer rounded focus-visible:ring-[3px] focus-visible:outline-none"
               />
               Make my profile public
             </label>
@@ -400,8 +413,8 @@ export default function SettingsPage() {
                 <DialogHeader>
                   <DialogTitle>Delete your account?</DialogTitle>
                   <DialogDescription>
-                    Your profile is anonymized. Published scientific records stay
-                    for provenance, but this cannot be undone.
+                    Your profile is anonymized. Published scientific records
+                    stay for provenance, but this cannot be undone.
                   </DialogDescription>
                 </DialogHeader>
                 <DialogFooter>
