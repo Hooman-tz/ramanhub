@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
-import { getSession } from "@ramanhub/api-client";
+import { getSession, logout } from "@ramanhub/api-client";
 import { Avatar, AvatarFallback, AvatarImage } from "@ramanhub/ui/avatar";
 import {
   DropdownMenu,
@@ -32,9 +32,7 @@ export function Nav() {
   });
 
   const signOut = useMutation({
-    mutationFn: async () => {
-      await fetch("/api/auth/logout", { method: "POST" });
-    },
+    mutationFn: () => logout(),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ["session"] });
       router.push("/");

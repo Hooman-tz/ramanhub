@@ -162,6 +162,11 @@ export function startGuestSession(opts?: ApiClientOptions): Promise<SessionUser>
   return apiRequest<SessionUser>("/auth/guest", { ...opts, method: "POST" });
 }
 
+/** Clear the session cookie. */
+export function logout(opts?: ApiClientOptions): Promise<unknown> {
+  return apiRequest<unknown>("/auth/logout", { ...opts, method: "POST" });
+}
+
 export function googleLoginUrl(base = "/api"): string {
   return `${base.replace(/\/$/, "")}/auth/login`;
 }
@@ -974,5 +979,5 @@ export function findingImageFileUrl(
   findingId: string,
   imageId: string,
 ): string {
-  return `/api/v1/findings/${findingId}/images/${imageId}/file`;
+  return `/api/v1/findings/${encodeURIComponent(findingId)}/images/${encodeURIComponent(imageId)}/file`;
 }

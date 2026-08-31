@@ -44,7 +44,6 @@ from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.overlay import compute_overlay
 from app.processing.state_machine import require_finding_readable, require_owner_or_public
-from app.security.file_validation import validate_upload_size
 from app.storage.s3_client import download_bytes, object_exists, upload_bytes
 
 router = APIRouter(prefix="/v1", tags=["findings"])
@@ -53,12 +52,27 @@ MAX_TAGS = 10
 MAX_TAG_LENGTH = 40
 MAX_SPECTRA_PER_FINDING = 200
 MAX_IMAGES_PER_FINDING = 12
+# Figures are raster images, not datasets — a much tighter cap than the
+# raw-spectrum `MAX_UPLOAD_SIZE_MB`.
+MAX_IMAGE_BYTES = 8 * 1024 * 1024
 # Accepted image upload types -> the extension used in the storage key.
 IMAGE_CONTENT_TYPE_EXT = {
     "image/png": "png",
     "image/jpeg": "jpg",
     "image/webp": "webp",
 }
+
+
+def _sniff_image_type(raw: bytes) -> str | None:
+    """Leading magic bytes -> content-type, independent of the client's
+    declared `Content-Type`. Returns None if the bytes match nothing we accept."""
+    if raw.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if raw.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if raw[:4] == b"RIFF" and raw[8:12] == b"WEBP":
+        return "image/webp"
+    return None
 
 
 # --------------------------------------------------------------- schemas
@@ -857,20 +871,25 @@ async def upload_finding_image(
             detail=f"kind must be one of {sorted(FINDING_IMAGE_KINDS)}",
         )
 
-    content_type = (file.content_type or "").split(";")[0].strip().lower()
-    ext = IMAGE_CONTENT_TYPE_EXT.get(content_type)
-    if ext is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Image must be PNG, JPEG, or WebP.",
-        )
-
     raw = await file.read()
     if not raw:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file"
         )
-    validate_upload_size(len(raw))  # raises 413 past MAX_UPLOAD_SIZE_MB
+    if len(raw) > MAX_IMAGE_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail=f"Image must be at most {MAX_IMAGE_BYTES // (1024 * 1024)} MB.",
+        )
+
+    # Trust the bytes, not the client's declared Content-Type.
+    content_type = _sniff_image_type(raw)
+    ext = IMAGE_CONTENT_TYPE_EXT.get(content_type or "")
+    if ext is None:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Image must be PNG, JPEG, or WebP.",
+        )
 
     content_hash = hashlib.sha256(raw).hexdigest()
     existing = db.execute(

@@ -163,6 +163,8 @@ def remove_pin(
     db: Session = Depends(get_db),
     user: User = Depends(get_current_full_user),
 ) -> list[PinOut]:
+    if kind not in ("spectrum", "finding"):
+        raise HTTPException(status_code=422, detail="kind must be 'spectrum' or 'finding'")
     column = Pin.spectrum_id if kind == "spectrum" else Pin.finding_id
     pin = db.scalar(select(Pin).where(Pin.user_id == user.id, column == item_id))
     if pin is not None:

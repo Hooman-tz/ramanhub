@@ -133,14 +133,19 @@ def test_rejects_bad_type_and_bad_kind(client, make_user):
     gif = _upload(client, fid, content=b"GIF89a", content_type="image/gif")
     assert gif.status_code == 422
 
+    # Content-Type is spoofed as PNG but the bytes are not an image -> rejected
+    # on the magic-byte sniff, not the declared header.
+    spoofed = _upload(
+        client, fid, content=b"<html>not an image</html>", content_type="image/png"
+    )
+    assert spoofed.status_code == 422
+
     bad_kind = _upload(client, fid, kind="banner")
     assert bad_kind.status_code == 422
 
 
 def test_rejects_oversized(client, make_user, monkeypatch):
-    from app.config import settings
-
-    monkeypatch.setattr(settings, "MAX_UPLOAD_SIZE_MB", 1)
+    monkeypatch.setattr(findings, "MAX_IMAGE_BYTES", 1024 * 1024)
     author = make_user()
     client.set_current_user(author)
     fid = _make_finding(client)
