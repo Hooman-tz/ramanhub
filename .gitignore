@@ -57,3 +57,6 @@ storage-data/
 
 # Local editor/agent state
 .claude/
+
+# SCImago journal-rank CSVs (operator-supplied data import, see `make import-journals`)
+scimagojr*.csv

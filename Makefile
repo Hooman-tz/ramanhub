@@ -19,7 +19,7 @@ seed-demo:
 	cd backend && uv run python -m app.seed.demo_data
 
 import-journals:
-	cd backend && uv run python -m scripts.import_scimago $(FILE)
+	cd backend && uv run python -m scripts.import_scimago "$(FILE)"
 
 test:
 	cd backend && uv run pytest
