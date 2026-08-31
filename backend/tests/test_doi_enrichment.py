@@ -18,10 +18,19 @@ from app.auth.deps import (
     get_current_user,
     get_current_user_optional,
 )
+from app.config import settings
 from app.db.session import get_db
 from app.doi_lookup import DoiMetadata, _parse_crossref_message
 from app.models.journal import Journal
 from app.routers import findings
+
+
+@pytest.fixture(autouse=True)
+def _no_llm_key(monkeypatch):
+    """These tests assert the LLM-not-configured path. Force the key empty so
+    they don't depend on whether the developer's `.env` has a real
+    OPENROUTER key."""
+    monkeypatch.setattr(settings, "OPENROUTER_API_KEY", "")
 
 DOI = "10.1021/acs.analchem.0c00001"
 

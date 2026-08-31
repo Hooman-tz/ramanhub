@@ -5,7 +5,7 @@ rename without coordinating.
 """
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import AliasChoices, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Anchored to the repo root (three levels up from this file:
@@ -99,8 +99,12 @@ class Settings(BaseSettings):
 
     # LLM (ingestion header parsing + abstract enrichment) — routed through
     # OpenRouter so the operator can pick a smaller/cheaper model. An empty
-    # OPENROUTER_API_KEY means LLM features are skipped, not an error.
-    OPENROUTER_API_KEY: str = ""
+    # key means LLM features are skipped, not an error. `OPENROUTER` is
+    # accepted as an alias for `OPENROUTER_API_KEY`.
+    OPENROUTER_API_KEY: str = Field(
+        default="",
+        validation_alias=AliasChoices("OPENROUTER_API_KEY", "OPENROUTER"),
+    )
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
     # Default model — cheap, reliable JSON. Operator overrides via env.
     OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
