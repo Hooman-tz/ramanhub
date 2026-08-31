@@ -1,6 +1,6 @@
 # Spectra Insight — Product Status
 
-_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-29 (M5 shipped — web beta feature-complete)._
+_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-30 (M6 shipped — visual feed & rich profile)._
 
 Full plan: `/Users/hooman/.claude/plans/how-is-our-social-gentle-alpaca.md`
 
@@ -117,12 +117,51 @@ vars, the per-instance in-memory rate-limiter caveat). ADR-004 amended
 **Accepted** (3 OAuth providers via `auth_identities`). `dependabot.yml`
 repointed off the deleted `frontend/`.
 
-**Next action:** the web beta (M0–M5) is done on `integration/social-forward`
-and unpushed. Owner steps to go live: review the branch, merge to `main`,
-register the three OAuth apps + set their secrets (see `docs/OPERATIONS.md` §5),
-deploy the API (Render) and `apps/web` (Vercel, Root Directory `apps/web`), then
-smoke-test a real signup. Deferred to later pushes: the Expo mobile app (M-mobile),
-extracting the Python processing worker (M6), the Go API service (M7).
+**M6 shipped (2026-08-30) — visual feed & rich profile.** Seven commits
+`afc2367`…`d4cc54c` on `integration/social-forward`.
+- **M6.0** — 9 `@ramanhub/ui` primitives (card/tabs/avatar/badge/dialog/
+  scroll-area/aspect-ratio/skeleton/hover-card), ECharts dep, `--chart-mean/
+  -band/-grid/-axis` + `--success` tokens, a sticky `<Nav>` (the app had none).
+- **M6.1** — `GET /v1/findings/{id}/overlay` (resample members → mean/std band);
+  `journals` table + `scripts/import_scimago.py` + `make import-journals` (SCImago
+  SJR → quartile/SJR by ISSN); Crossref parse extended (ISSN, citation count,
+  abstract); `link-doi` persists a rich `publication_metadata`; `app/enrichment.py`
+  + `POST /v1/findings/{id}/enrich` (LLM abstract summary + keywords, no-op
+  without `ANTHROPIC_API_KEY`).
+- **M6.2** — `FindingImage` model + object storage under
+  `figures/{owner_id}/{finding_id}/` (bucket `S3_BUCKET_FIGURES`); upload / patch
+  / delete / reorder + a `require_finding_readable`-gated streaming `/file` route;
+  `serialize_finding` gains `images[]`.
+- **M6.3** — cherry-picked `app/profile_stats.py` + `app/activity.py` +
+  `GET /users/by-handle/{handle}` (**fixes the `/u/[handle]` 404**; `orcid_verified`
+  now real) + `GET /users/{handle}/activity` + `pins` (model/router/`GET
+  /users/{handle}/pins` etc.) from `feature/mvp-toolbox-social`.
+- **M6.4** — ECharts `spectrum-chart` island (raw/processed overlay + mean±std
+  shaded band), scroll-snap `post-gallery` (overlay → per-member traces → figures →
+  graphical abstract), feed-card chart strip, `<JournalCard>` (generated cover,
+  Q1–Q4 badge, SJR, citations), `<AbstractSummary>` (AI summary + keyword chips),
+  owner `<FindingImageUploader>`, markdown abstracts; api-client gains
+  spectrum/overlay/DOI/image methods + typed `PublicationMeta`.
+- **`bf8ffee`** — `DELETE /routines/{id}` (owner-only) for the Workspace tab.
+- **M6.5** — `/u/[handle]` rebuilt as a tabbed profile (LinkedIn header, GitHub
+  contribution heatmap + streaks, pinned grid, Posts / Drafts / Library /
+  Workspace / Connections tabs) + a real `/settings` page (profile edit, ORCID
+  status, data export, delete). `<PinButton>` on owned published findings.
+
+Backend **423 tests pass, 0 fail**; single Alembic head `c9d2e5f8a1b4`; `pnpm
+typecheck` 10/10; `pnpm --filter @ramanhub/web build` green. Live-smoked on the
+local stack (`ramanhub_beta` migrated to head): feed, `/findings/[id]` gallery,
+`/u/[handle]` tabs, `/settings` all render; overlay/activity/pins/algorithms/
+routines/library endpoints all 200 through the proxy.
+
+**Next action:** M0–M6 are done on `integration/social-forward` and unpushed.
+Owner steps to go live: review the branch, merge to `main`, run `make
+import-journals FILE=<scimagojr.csv>` (download the free SCImago CSV) so journal
+cards show quartiles, set `ANTHROPIC_API_KEY` for AI abstract summaries, register
+the three OAuth apps + secrets (`docs/OPERATIONS.md` §5), deploy the API (Render,
+now also needs an object store for `S3_BUCKET_FIGURES`) and `apps/web` (Vercel,
+Root Directory `apps/web`). Deferred: direct messages (M-DM), user-supplied
+algorithms (M-Algo), Expo mobile app, Python processing worker (M7), Go API (M8).
 
 ---
 
@@ -136,8 +175,11 @@ extracting the Python processing worker (M6), the Go API service (M7).
 | **M3** | Backend: follow graph + `shares` + votes/comments on findings; `auth_identities` + Google/GitHub/ORCID signup (email/pw deferred) + onboarding endpoints | GitHub + ORCID sign-in work; onboarding (follow 3) → Following feed fills | **Shipped** (`9fb9c1e`; migrations `d4a7c1e93b25`→`e5b8d2fa4c36`→`a7f3c1d9e2b4`; 379 tests pass) | — | fixed `test_trending ×3` |
 | **M4** | Web: follow / vote / share / comment UI, onboarding wizard, 3-provider `/login`, `<RequireOnboarding>`; **delete `frontend/`**; point Vercel at `apps/web` | Full new-user journey on web; old frontend gone; CI green | **Shipped** (typecheck 10/10, web build green; `frontend/` deleted; CI `web` job) | — | none |
 | **M5** | Fix remaining backend failures; single-alembic-head CI check; real legal pages; `docs/OPERATIONS.md` OAuth-app registration. _(Expo mobile is a separate post-beta push.)_ | `pnpm typecheck` + web build + `uv run pytest` all green; a stranger signs up unaided | **Shipped** (382 tests pass, 0 fail; `/terms` + `/privacy` live; CI single-head step) | — | fixed `test_search ×2`, `test_processing_api ×1`, `test_ingestion_api ×5` |
-| _M6 (later)_ | Extract `processing/` + `ingestion/` behind an internal API as a standalone Python worker | FastAPI calls the worker as a client; no behavior change | Not started | — | — |
-| _M7 (later)_ | Go API service for auth/feed/follows/findings/CRUD/DOI against the same Postgres + `/v1` contract; keep the Python worker | `api-client` base URL cut over to Go; parity | Not started | — | — |
+| **M6** | Visual feed & rich profile: ECharts spectra plots (mean±deviation band) in a swipeable per-post gallery, journal card (SCImago quartile + citations), AI abstract summary, author figure/graphical-abstract uploads; tabbed profile (LinkedIn header + GitHub contribution graph + pinned items + Posts/Drafts/Library/Workspace/Connections) + `/settings` | Open a post → swipe the gallery, see the journal card + summary; open `/u/<handle>` → tabs, heatmap, pins | **Shipped** (`afc2367`…`d4cc54c`; 423 tests pass; head `c9d2e5f8a1b4`; typecheck 10/10, web build green; live-smoked) | — | none |
+| _M7 (later)_ | Extract `processing/` + `ingestion/` behind an internal API as a standalone Python worker | FastAPI calls the worker as a client; no behavior change | Not started | — | — |
+| _M8 (later)_ | Go API service for auth/feed/follows/findings/CRUD/DOI against the same Postgres + `/v1` contract; keep the Python worker | `api-client` base URL cut over to Go; parity | Not started | — | — |
+| _M-DM (later)_ | Direct messages: conversations model, send/list/read, unread badges | 1:1 message thread between two users | Not started | — | — |
+| _M-Algo (later)_ | User-supplied processing algorithms (code upload, param schema, sandbox, trust/review) | A user adds an algorithm; it runs in a ledger | Not started | — | — |
 
 ---
 
@@ -209,3 +251,14 @@ extracting the Python processing worker (M6), the Go API service (M7).
   §5 = Google/GitHub/ORCID OAuth-app registration. ADR-004 amended, ADR-007
   → Accepted. `dependabot.yml` off the deleted `frontend/`.
   **M0–M5 complete on `integration/social-forward` (unpushed).**
+- **2026-08-30** — **M6 shipped** — visual feed & rich profile (`afc2367`…
+  `d4cc54c`, 7 commits). ECharts spectra plots with a mean±deviation band in a
+  swipeable per-post gallery; `GET /v1/findings/{id}/overlay`; SCImago `journals`
+  table + import; journal card (quartile + citations); LLM abstract summary +
+  keywords; author figure / graphical-abstract uploads (`FindingImage` + object
+  store). Rich tabbed `/u/[handle]` (LinkedIn header, GitHub contribution
+  heatmap, pinned items, Posts/Drafts/Library/Workspace/Connections) + a real
+  `/settings`; cherry-picked `by-handle` / `activity` / `pins` from Track A
+  (fixes the `/u/[handle]` 404). Backend **423 tests pass**; head
+  `c9d2e5f8a1b4`; typecheck 10/10; web build green; live-smoked on the local
+  stack. Deferred: direct messages, user-defined algorithms.
