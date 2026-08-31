@@ -1,6 +1,8 @@
 import Link from "next/link";
 import type { FeedItem } from "@ramanhub/api-client";
 
+import { FeedCardMedia } from "./feed-card-media";
+
 function initials(name: string | null): string {
   if (!name) return "?";
   return name
@@ -32,11 +34,23 @@ function timeAgo(iso: string | null): string {
   return "";
 }
 
+function metaChip(item: FeedItem): string | null {
+  const parts: string[] = [];
+  if (item.material_type) parts.push(item.material_type.toUpperCase());
+  if (item.snr != null) parts.push(`SNR ${Math.round(item.snr)}`);
+  return parts.length ? parts.join(" · ") : null;
+}
+
 export function FeedCard({ item }: { item: FeedItem }) {
   const href =
     item.kind === "finding" ? `/findings/${item.id}` : `/spectra/${item.id}`;
   const authorName = item.author?.display_name ?? item.author?.handle ?? "Someone";
   const authorHref = item.author?.handle ? `/u/${item.author.handle}` : null;
+  const chip = metaChip(item);
+  const hasMedia =
+    item.kind === "finding" &&
+    item.spectrum_count != null &&
+    item.spectrum_count > 0;
 
   return (
     <article className="border-border bg-card hover:border-primary/40 rounded-xl border p-4 transition-colors">
@@ -69,9 +83,16 @@ export function FeedCard({ item }: { item: FeedItem }) {
         </p>
       )}
 
+      {hasMedia && <FeedCardMedia findingId={item.id} />}
+
       <div className="text-muted-foreground mt-3 flex flex-wrap items-center gap-3 text-xs">
         <span>▲ {item.vote_count}</span>
         <span>💬 {item.comment_count}</span>
+        {chip && (
+          <span className="bg-muted rounded px-1.5 py-0.5 font-medium">
+            {chip}
+          </span>
+        )}
         {item.spectrum_count != null && item.spectrum_count > 0 && (
           <span>{item.spectrum_count} spectra</span>
         )}

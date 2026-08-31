@@ -4,6 +4,7 @@ import {
   getFinding,
   getFindingShares,
   getFindingVotes,
+  getSession,
   isApiError,
   listFindingComments,
 } from "@ramanhub/api-client";
@@ -13,8 +14,13 @@ import type {
   FindingVotes,
 } from "@ramanhub/api-client";
 
+import { AbstractSummary } from "~/components/abstract-summary";
 import { FindingActions } from "~/components/finding-actions";
 import { FindingComments } from "~/components/finding-comments";
+import { FindingImageUploader } from "~/components/finding-image-uploader";
+import { JournalCard } from "~/components/journal-card";
+import { Markdown } from "~/components/markdown";
+import { PostGallery } from "~/components/post-gallery";
 import { serverApiOpts } from "~/lib/server-api";
 
 export const dynamic = "force-dynamic";
@@ -38,15 +44,26 @@ export default async function FindingPage({
   let initialVotes: FindingVotes | undefined;
   let initialShares: FindingShares | undefined;
   let initialComments: FindingComment[] | undefined;
+  let isOwner = false;
   try {
-    [initialVotes, initialShares, initialComments] = await Promise.all([
+    const [votes, shares, comments, session] = await Promise.all([
       getFindingVotes(id, opts),
       getFindingShares(id, opts),
       listFindingComments(id, opts),
+      getSession(opts),
     ]);
+    initialVotes = votes;
+    initialShares = shares;
+    initialComments = comments;
+    isOwner = !!session && session.id === finding.owner_id;
   } catch {
     /* islands will fetch client-side */
   }
+
+  const members = finding.spectra.map((s) => ({
+    spectrum_id: s.spectrum_id,
+    label: s.label ?? s.title ?? s.accession,
+  }));
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
@@ -82,10 +99,11 @@ export default async function FindingPage({
       </div>
 
       <h1 className="mt-2 text-2xl font-bold tracking-tight">{finding.title}</h1>
+
       {finding.abstract_md && (
-        <p className="text-foreground/90 mt-3 whitespace-pre-wrap text-sm">
-          {finding.abstract_md}
-        </p>
+        <div className="mt-3">
+          <Markdown>{finding.abstract_md}</Markdown>
+        </div>
       )}
 
       {finding.tags && finding.tags.length > 0 && (
@@ -98,7 +116,7 @@ export default async function FindingPage({
         </div>
       )}
 
-      {finding.doi && (
+      {finding.doi && !finding.publication_metadata && (
         <div className="mt-4 text-xs">
           <a
             href={`https://doi.org/${finding.doi}`}
@@ -120,17 +138,30 @@ export default async function FindingPage({
         initialShares={initialShares}
       />
 
-      {finding.spectra.length > 0 && (
+      {(members.length > 0 || finding.images.length > 0) && (
         <section className="mt-6">
-          <h2 className="text-sm font-semibold">Spectra</h2>
-          <ul className="mt-2 space-y-1 text-sm">
-            {finding.spectra.map((s) => (
-              <li key={s.spectrum_id} className="text-muted-foreground">
-                {s.label ?? s.title ?? s.accession ?? s.spectrum_id}
-              </li>
-            ))}
-          </ul>
+          <PostGallery
+            variant="full"
+            findingId={finding.id}
+            members={members}
+            images={finding.images}
+          />
         </section>
+      )}
+
+      <JournalCard meta={finding.publication_metadata} />
+
+      <AbstractSummary
+        meta={finding.publication_metadata}
+        findingId={finding.id}
+        isOwner={isOwner}
+      />
+
+      {isOwner && (
+        <FindingImageUploader
+          findingId={finding.id}
+          images={finding.images}
+        />
       )}
 
       {finding.entries.length > 0 && (
@@ -144,9 +175,7 @@ export default async function FindingPage({
               <div className="text-muted-foreground mb-1 text-xs uppercase">
                 {entry.kind}
               </div>
-              {entry.body_md && (
-                <p className="whitespace-pre-wrap">{entry.body_md}</p>
-              )}
+              {entry.body_md && <Markdown>{entry.body_md}</Markdown>}
             </div>
           ))}
         </section>

@@ -48,7 +48,10 @@ export interface ApiClientOptions {
 
 export interface RequestOptions extends ApiClientOptions {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
-  /** JSON-serializable request body. */
+  /**
+   * Request body. A `FormData` instance is sent as-is (multipart, the
+   * browser sets the boundary); anything else is JSON-serialized.
+   */
   body?: unknown;
   /** Extra query params. */
   query?: Record<string, string | number | boolean | undefined>;
@@ -71,18 +74,26 @@ export async function apiRequest<T>(
       ).toString()
     : "";
 
+  const isFormBody =
+    typeof FormData !== "undefined" && opts.body instanceof FormData;
+
   const res = await fetch(`${base}${rel}${qs}`, {
     method: opts.method ?? "GET",
     credentials: "include",
     signal: opts.signal,
     headers: {
-      ...(opts.body !== undefined
+      ...(opts.body !== undefined && !isFormBody
         ? { "content-type": "application/json" }
         : {}),
       ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
       ...opts.headers,
     },
-    body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+    body:
+      opts.body === undefined
+        ? undefined
+        : isFormBody
+          ? (opts.body as FormData)
+          : JSON.stringify(opts.body),
   });
 
   if (!res.ok) {
@@ -96,6 +107,9 @@ export async function apiRequest<T>(
       /* non-JSON error body */
     }
     const err: ApiError = { status: res.status, message, body };
+    // Deliberately a plain structured value, not an Error subclass — callers
+    // discriminate it with `isApiError`, and RN/Next both preserve the shape.
+    // eslint-disable-next-line @typescript-eslint/only-throw-error
     throw err;
   }
 
@@ -227,6 +241,46 @@ export interface MemberSpectrum {
   state: string;
 }
 
+/** AI-generated abstract digest, cached on `publication_metadata`. */
+export interface AiSummary {
+  summary: string;
+  keywords: string[];
+}
+
+/**
+ * Cached paper metadata on a Finding, populated at DOI-link time from
+ * Crossref + the SCImago journal table (see `POST /v1/findings/{id}/link-doi`).
+ * `resolved` is `false` when Crossref couldn't find the DOI — only `doi` is
+ * then meaningful.
+ */
+export interface PublicationMeta {
+  doi: string;
+  title?: string | null;
+  authors?: string[];
+  journal?: string | null;
+  issn?: string[];
+  year?: number | null;
+  url?: string | null;
+  resolved: boolean;
+  citations?: number | null;
+  quartile?: string | null;
+  sjr?: number | null;
+  cover_url?: string | null;
+  abstract_raw?: string | null;
+  ai_summary?: AiSummary | null;
+}
+
+export interface FindingImage {
+  id: string;
+  kind: "figure" | "graphical_abstract";
+  caption: string | null;
+  position: number;
+  content_type: string;
+  /** Relative API path, e.g. `/v1/findings/{id}/images/{image_id}/file`. */
+  url: string;
+  created_at: string;
+}
+
 export interface Finding {
   id: string;
   accession: string | null;
@@ -239,13 +293,14 @@ export interface Finding {
   state: "draft" | "published";
   license_id: string | null;
   doi: string | null;
-  publication_metadata: Record<string, unknown> | null;
+  publication_metadata: PublicationMeta | null;
   tags: string[] | null;
   published_at: string | null;
   created_at: string;
   updated_at: string;
   entries: FindingEntry[];
   spectra: MemberSpectrum[];
+  images: FindingImage[];
   vote_count: number;
   comment_count: number;
 }
@@ -548,4 +603,162 @@ export function getUserByHandle(
     `/users/by-handle/${encodeURIComponent(handle)}`,
     opts,
   );
+}
+
+/* --- spectra + findings: chart data ------------------------------------- */
+
+export interface SpectrumData {
+  wavenumbers: number[];
+  intensities: number[];
+  downsampled: boolean;
+  total_points: number;
+}
+
+export interface FindingOverlay {
+  grid_wavenumbers: number[];
+  mean: number[];
+  std: number[];
+  n: number;
+  members: { spectrum_id: string; label: string | null }[];
+}
+
+/** `GET /spectra/{id}/data` — chart-ready (wavenumbers, intensities). */
+export function getSpectrumData(
+  spectrumId: string,
+  params: { maxPoints?: number; raw?: boolean } = {},
+  opts?: ApiClientOptions,
+): Promise<SpectrumData> {
+  return apiRequest<SpectrumData>(
+    `/spectra/${encodeURIComponent(spectrumId)}/data`,
+    { ...opts, query: { max_points: params.maxPoints, raw: params.raw } },
+  );
+}
+
+/** `GET /v1/findings/{id}/overlay` — mean + std band across member spectra. */
+export function getFindingOverlay(
+  findingId: string,
+  params: { grid?: number; maxPoints?: number } = {},
+  opts?: ApiClientOptions,
+): Promise<FindingOverlay> {
+  return apiRequest<FindingOverlay>(
+    `/v1/findings/${encodeURIComponent(findingId)}/overlay`,
+    { ...opts, query: { grid: params.grid, max_points: params.maxPoints } },
+  );
+}
+
+/* --- DOI metadata + AI enrichment ------------------------------------- */
+
+export interface DoiMetadata {
+  doi: string;
+  title?: string | null;
+  authors: string[];
+  journal?: string | null;
+  year?: number | null;
+  url?: string | null;
+  issn: string[];
+  citations: number | null;
+  abstract: string | null;
+}
+
+/**
+ * `GET /doi-lookup?doi=` — Crossref-backed lookup. Resolves to `null` when
+ * the DOI can't be resolved (the API answers 404 in that case).
+ */
+export async function lookupDoi(
+  doi: string,
+  opts?: ApiClientOptions,
+): Promise<DoiMetadata | null> {
+  try {
+    return await apiRequest<DoiMetadata | null>("/doi-lookup", {
+      ...opts,
+      query: { doi },
+    });
+  } catch (e) {
+    if (isApiError(e) && e.status === 404) return null;
+    throw e;
+  }
+}
+
+export interface EnrichResult {
+  enriched: boolean;
+  reason?: string;
+  ai_summary: AiSummary | null;
+}
+
+/** `POST /v1/findings/{id}/enrich` — owner-only; 200 no-op when no LLM key. */
+export function enrichFinding(
+  findingId: string,
+  opts?: ApiClientOptions,
+): Promise<EnrichResult> {
+  return apiRequest<EnrichResult>(
+    `/v1/findings/${encodeURIComponent(findingId)}/enrich`,
+    { ...opts, method: "POST" },
+  );
+}
+
+/* --- finding images -------------------------------------------------- */
+
+/** `POST /v1/findings/{id}/images` — multipart upload. Owner-only. */
+export function uploadFindingImage(
+  findingId: string,
+  input: {
+    file: File | Blob;
+    kind: "figure" | "graphical_abstract";
+    caption?: string;
+  },
+  opts?: ApiClientOptions,
+): Promise<FindingImage> {
+  const form = new FormData();
+  form.append("file", input.file);
+  form.append("kind", input.kind);
+  if (input.caption != null) form.append("caption", input.caption);
+  return apiRequest<FindingImage>(
+    `/v1/findings/${encodeURIComponent(findingId)}/images`,
+    { ...opts, method: "POST", body: form },
+  );
+}
+
+/** `PATCH /v1/findings/{id}/images/{image_id}` — caption / position. */
+export function updateFindingImage(
+  findingId: string,
+  imageId: string,
+  body: { caption?: string; position?: number },
+  opts?: ApiClientOptions,
+): Promise<FindingImage> {
+  return apiRequest<FindingImage>(
+    `/v1/findings/${encodeURIComponent(findingId)}/images/${encodeURIComponent(imageId)}`,
+    { ...opts, method: "PATCH", body },
+  );
+}
+
+/** `DELETE /v1/findings/{id}/images/{image_id}` — 204. */
+export function deleteFindingImage(
+  findingId: string,
+  imageId: string,
+  opts?: ApiClientOptions,
+): Promise<void> {
+  return apiRequest<void>(
+    `/v1/findings/${encodeURIComponent(findingId)}/images/${encodeURIComponent(imageId)}`,
+    { ...opts, method: "DELETE" },
+  );
+}
+
+/** `POST /v1/findings/{id}/images/reorder` — full id list; returns the Finding. */
+export function reorderFindingImages(
+  findingId: string,
+  imageIds: string[],
+  opts?: ApiClientOptions,
+): Promise<Finding> {
+  return apiRequest<Finding>(
+    `/v1/findings/${encodeURIComponent(findingId)}/images/reorder`,
+    { ...opts, method: "POST", body: { image_ids: imageIds } },
+  );
+}
+
+/** Browser `<img src>` URL for a finding image (goes through the `/api` rewrite). */
+export function findingImageFileUrl(
+  findingId: string,
+  imageId: string,
+): string {
+  return `/api/v1/findings/${findingId}/images/${imageId}/file`;
 }
