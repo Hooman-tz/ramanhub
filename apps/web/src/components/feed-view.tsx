@@ -1,16 +1,40 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Search, X } from "lucide-react";
 
 import { getFeed, getSession } from "@ramanhub/api-client";
 import { cn } from "@ramanhub/ui";
 import { Skeleton } from "@ramanhub/ui/skeleton";
 
+import { ComposeFab } from "./compose-fab";
 import { Composer } from "./composer";
 import { FeedCard } from "./feed-card";
 
 type Tab = "following" | "discover";
+
+/** Parsed feed search: at most one of `tag` / `author` is set. */
+interface FeedQuery {
+  tag?: string;
+  author?: string;
+}
+
+function parseSearch(raw: string): {
+  query: FeedQuery;
+  multiWord: boolean;
+} {
+  const trimmed = raw.trim();
+  if (!trimmed) return { query: {}, multiWord: false };
+  if (trimmed.startsWith("@")) {
+    return { query: { author: trimmed.slice(1).trim() }, multiWord: false };
+  }
+  const words = trimmed.replace(/^#/, "").split(/\s+/).filter(Boolean);
+  return {
+    query: { tag: (words[0] ?? "").toLowerCase() },
+    multiWord: words.length > 1,
+  };
+}
 
 function FeedSkeleton() {
   return (
@@ -46,8 +70,16 @@ function EmptyState({ children }: { children: React.ReactNode }) {
   );
 }
 
-export function FeedView() {
+export function FeedView({
+  showExpandedComposer = false,
+}: {
+  showExpandedComposer?: boolean;
+}) {
   const [tab, setTab] = useState<Tab>("discover");
+  const [searchInput, setSearchInput] = useState("");
+  const [query, setQuery] = useState<FeedQuery>({});
+  const [multiWordNote, setMultiWordNote] = useState(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
 
   const session = useQuery({
     queryKey: ["session"],
@@ -57,13 +89,38 @@ export function FeedView() {
   const signedIn = !!session.data && !session.data.is_guest;
 
   const feed = useQuery({
-    queryKey: ["feed", tab],
+    queryKey: ["feed", tab, query.tag ?? null, query.author ?? null],
     queryFn: () =>
-      getFeed({ filter: tab === "following" ? "following" : "all", limit: 30 }),
+      getFeed({
+        filter: tab === "following" ? "following" : "all",
+        tag: query.tag,
+        author: query.author,
+        limit: 30,
+      }),
   });
 
+  function submitSearch(e?: React.FormEvent) {
+    e?.preventDefault();
+    const { query: parsed, multiWord } = parseSearch(searchInput);
+    setQuery(parsed);
+    setMultiWordNote(multiWord);
+  }
+
+  function clearSearch() {
+    setSearchInput("");
+    setQuery({});
+    setMultiWordNote(false);
+    inputRef.current?.focus();
+  }
+
+  const activeChip = query.author
+    ? `author: ${query.author}`
+    : query.tag
+      ? `#${query.tag}`
+      : null;
+
   return (
-    <main className="mx-auto w-full max-w-2xl px-4 py-8">
+    <main className="mx-auto w-full max-w-3xl px-4 py-8">
       <header className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">
           Spectra<span className="text-primary">Insight</span>
@@ -72,6 +129,64 @@ export function FeedView() {
           What researchers are sharing.
         </p>
       </header>
+
+      {showExpandedComposer && (
+        <div className="mb-5">
+          <Composer session={session.data ?? null} variant="expanded" />
+        </div>
+      )}
+
+      <form
+        role="search"
+        onSubmit={submitSearch}
+        className="mb-3 flex items-stretch gap-2"
+      >
+        <label htmlFor="feed-search" className="sr-only">
+          Search the feed
+        </label>
+        <input
+          id="feed-search"
+          ref={inputRef}
+          type="text"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") {
+              e.preventDefault();
+              clearSearch();
+            }
+          }}
+          placeholder="Search the feed — @author or #tag"
+          className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
+        />
+        <button
+          type="submit"
+          aria-label="Search the feed"
+          className="bg-primary text-primary-foreground focus-visible:ring-ring/50 inline-flex size-11 shrink-0 items-center justify-center rounded-md transition-opacity hover:opacity-90 focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
+        >
+          <Search className="size-4" aria-hidden />
+        </button>
+      </form>
+
+      {multiWordNote && (
+        <p className="text-foreground/60 mb-2 text-xs">
+          Multiple words — searching the first tag only.
+        </p>
+      )}
+
+      {activeChip && (
+        <div className="mb-3">
+          <button
+            type="button"
+            onClick={clearSearch}
+            className="bg-muted text-foreground/80 hover:text-foreground focus-visible:ring-ring/50 inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
+          >
+            {activeChip}
+            <X className="size-3.5" aria-hidden />
+            <span className="sr-only">Clear search filter</span>
+          </button>
+        </div>
+      )}
 
       <div
         className="border-border mb-5 flex gap-1 border-b text-sm"
@@ -95,10 +210,6 @@ export function FeedView() {
         ))}
       </div>
 
-      <div className="mb-5">
-        <Composer session={session.data ?? null} />
-      </div>
-
       {tab === "following" && !signedIn && (
         <EmptyState>
           Sign in and follow some researchers to build this feed.
@@ -113,9 +224,11 @@ export function FeedView() {
       )}
       {feed.data?.length === 0 && !feed.isLoading && (
         <EmptyState>
-          {tab === "following"
-            ? "Nothing from people you follow yet."
-            : "Nothing here yet — be the first to post."}
+          {activeChip
+            ? "Nothing matches that search."
+            : tab === "following"
+              ? "Nothing from people you follow yet."
+              : "Nothing here yet — be the first to post."}
         </EmptyState>
       )}
 
@@ -124,6 +237,8 @@ export function FeedView() {
           <FeedCard key={`${item.kind}-${item.id}`} item={item} />
         ))}
       </div>
+
+      <ComposeFab />
     </main>
   );
 }

@@ -1,40 +1,87 @@
 "use client";
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { ImageIcon, LineChart } from "lucide-react";
 
 import type { SessionUser } from "@ramanhub/api-client";
-import { isApiError, postNote } from "@ramanhub/api-client";
+import { createFinding, isApiError, postNote } from "@ramanhub/api-client";
+import { Avatar, AvatarFallback, AvatarImage } from "@ramanhub/ui/avatar";
 import { Button } from "@ramanhub/ui/button";
 
-export function Composer({ session }: { session: SessionUser | null }) {
+/**
+ * `dialog`   — bare form, no card chrome; used inside the compose dialog
+ *              (FAB / nav "+"). Renders the form directly (no click-to-expand).
+ * `expanded` — always-open form with a card, avatar header, tag helper, and a
+ *              secondary row that spins up a real Finding draft so "post with
+ *              visuals" leads to the gallery editor.
+ */
+export type ComposerVariant = "dialog" | "expanded";
+
+function initials(name: string | null): string {
+  if (!name) return "?";
+  return name
+    .split(/\s+/)
+    .map((p) => p[0])
+    .filter(Boolean)
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
+}
+
+export function Composer({
+  session,
+  variant = "dialog",
+  onPosted,
+}: {
+  session: SessionUser | null;
+  variant?: ComposerVariant;
+  /** Called after a successful note post (e.g. to close the dialog). */
+  onPosted?: () => void;
+}) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
+  const router = useRouter();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
   const [tags, setTags] = useState("");
   const [error, setError] = useState<string | null>(null);
 
-  const mutation = useMutation({
+  const parseTags = () =>
+    tags
+      .split(/[,\s]+/)
+      .map((t) => t.trim())
+      .filter(Boolean);
+
+  const post = useMutation({
     mutationFn: () =>
       postNote({
         title: title.trim(),
         abstract_md: body.trim() || undefined,
-        tags: tags
-          .split(/[,\s]+/)
-          .map((t) => t.trim())
-          .filter(Boolean),
+        tags: parseTags(),
       }),
     onSuccess: () => {
       setTitle("");
       setBody("");
       setTags("");
-      setOpen(false);
       setError(null);
       void qc.invalidateQueries({ queryKey: ["feed"] });
+      onPosted?.();
     },
     onError: (e) =>
       setError(isApiError(e) ? e.message : "Could not post — try again."),
+  });
+
+  const draft = useMutation({
+    mutationFn: () => createFinding({ title: title.trim(), tags: parseTags() }),
+    onSuccess: (finding) => {
+      setError(null);
+      router.push(`/findings/${finding.id}`);
+    },
+    onError: (e) =>
+      setError(
+        isApiError(e) ? e.message : "Could not start a draft — try again.",
+      ),
   });
 
   if (!session || session.is_guest) {
@@ -50,32 +97,50 @@ export function Composer({ session }: { session: SessionUser | null }) {
     );
   }
 
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="border-border bg-card text-foreground/70 hover:border-primary/40 hover:text-foreground focus-visible:ring-ring/50 w-full cursor-pointer rounded-xl border p-4 text-left text-sm shadow-sm transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
-      >
-        Share a note, a result, a question…
-      </button>
-    );
-  }
+  const hasTitle = !!title.trim();
+  const busy = post.isPending || draft.isPending;
+  const expanded = variant === "expanded";
 
   return (
     <form
       onSubmit={(e) => {
         e.preventDefault();
-        if (title.trim()) mutation.mutate();
+        if (hasTitle) post.mutate();
       }}
-      className="border-border bg-card space-y-2 rounded-xl border p-4 shadow-sm"
+      className={
+        expanded
+          ? "border-border bg-card space-y-3 rounded-xl border p-4 shadow-sm"
+          : "space-y-2"
+      }
     >
+      {expanded && (
+        <div className="flex items-center gap-3">
+          <Avatar>
+            {session.avatar_url ? (
+              <AvatarImage
+                src={session.avatar_url}
+                alt={session.display_name ?? "You"}
+              />
+            ) : null}
+            <AvatarFallback>{initials(session.display_name)}</AvatarFallback>
+          </Avatar>
+          <div className="min-w-0">
+            <p className="text-sm font-semibold tracking-tight">
+              Share with the community
+            </p>
+            <p className="text-foreground/60 text-xs">
+              Post a note, or start a finding with visuals.
+            </p>
+          </div>
+        </div>
+      )}
+
       <label htmlFor="composer-title" className="sr-only">
         Title
       </label>
       <input
         id="composer-title"
-        autoFocus
+        autoFocus={variant === "dialog"}
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder="Title"
@@ -93,38 +158,68 @@ export function Composer({ session }: { session: SessionUser | null }) {
         rows={3}
         className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm leading-relaxed focus-visible:ring-[3px] focus-visible:outline-none"
       />
-      <label htmlFor="composer-tags" className="sr-only">
-        Tags
-      </label>
-      <input
-        id="composer-tags"
-        value={tags}
-        onChange={(e) => setTags(e.target.value)}
-        placeholder="tags, comma separated (optional)"
-        className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
-      />
+      <div className="space-y-1">
+        <label htmlFor="composer-tags" className="sr-only">
+          Tags
+        </label>
+        <input
+          id="composer-tags"
+          value={tags}
+          onChange={(e) => setTags(e.target.value)}
+          placeholder="tags, comma separated (optional)"
+          className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
+        />
+        {expanded && (
+          <p className="text-foreground/60 text-xs">
+            Add up to 5 tags, comma separated
+          </p>
+        )}
+      </div>
+
       {error && (
         <p className="text-destructive text-xs" role="alert">
           {error}
         </p>
       )}
-      <div className="flex justify-end gap-2">
-        <Button
-          type="button"
-          variant="ghost"
-          size="sm"
-          onClick={() => setOpen(false)}
-        >
-          Cancel
-        </Button>
-        <Button
-          type="submit"
-          size="sm"
-          disabled={!title.trim() || mutation.isPending}
-        >
-          {mutation.isPending ? "Posting…" : "Post"}
-        </Button>
-      </div>
+
+      {expanded ? (
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={!hasTitle || busy}
+            onClick={() => draft.mutate()}
+          >
+            <LineChart aria-hidden />
+            Attach spectra
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            disabled={!hasTitle || busy}
+            onClick={() => draft.mutate()}
+          >
+            <ImageIcon aria-hidden />
+            Attach figure
+          </Button>
+          <Button
+            type="submit"
+            size="sm"
+            className="ml-auto"
+            disabled={!hasTitle || busy}
+          >
+            {post.isPending ? "Posting…" : "Post"}
+          </Button>
+        </div>
+      ) : (
+        <div className="flex justify-end gap-2">
+          <Button type="submit" size="sm" disabled={!hasTitle || busy}>
+            {post.isPending ? "Posting…" : "Post"}
+          </Button>
+        </div>
+      )}
     </form>
   );
 }

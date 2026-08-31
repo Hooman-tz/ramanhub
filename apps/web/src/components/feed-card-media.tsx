@@ -7,7 +7,7 @@ import { Skeleton } from "@ramanhub/ui/skeleton";
 
 import { SpectrumChart } from "./charts/spectrum-chart";
 
-const HEIGHT = 140;
+const HEIGHT = 300;
 
 /**
  * Feed-card preview strip: the finding's mean-of-members overlay band, only.
@@ -26,7 +26,7 @@ export function FeedCardMedia({ findingId }: { findingId: string }) {
   if (overlay.isError || !overlay.data || overlay.data.n < 1) return null;
 
   return (
-    <div className="border-border mt-3 rounded-lg border p-1">
+    <div className="border-border mt-3 overflow-hidden rounded-lg border">
       <SpectrumChart
         mode="band"
         grid={overlay.data.grid_wavenumbers}
@@ -55,7 +55,7 @@ export function FeedCardSpectrum({ spectrumId }: { spectrumId: string }) {
   if (q.isError || !q.data || q.data.wavenumbers.length < 2) return null;
 
   return (
-    <div className="border-border mt-3 rounded-lg border p-1">
+    <div className="border-border mt-3 overflow-hidden rounded-lg border">
       <SpectrumChart
         mode="trace"
         wavenumbers={q.data.wavenumbers}

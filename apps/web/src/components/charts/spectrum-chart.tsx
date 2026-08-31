@@ -79,6 +79,27 @@ function resolveColors() {
 
 const AXIS_NAME = "Raman shift (cm⁻¹)";
 
+/**
+ * `#rgb` / `#rrggbb` → `rgba(r, g, b, alpha)`. Returns `null` when the input
+ * isn't a plain hex string (e.g. it's already `rgb()` / `oklch()`), so callers
+ * can fall back to a token colour.
+ */
+function hexToRgba(hex: string, alpha: number): string | null {
+  const m = /^#?([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(hex.trim());
+  if (!m?.[1]) return null;
+  let h = m[1];
+  if (h.length === 3)
+    h = h
+      .split("")
+      .map((ch) => ch + ch)
+      .join("");
+  const int = Number.parseInt(h, 16);
+  const r = (int >> 16) & 255;
+  const g = (int >> 8) & 255;
+  const b = int & 255;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
 function fmt(v: number | undefined): string {
   if (v === undefined || !Number.isFinite(v)) return "—";
   const abs = Math.abs(v);
@@ -159,9 +180,33 @@ export function SpectrumChart(props: SpectrumChartProps) {
       nameTextStyle: { color: c.axis },
       axisLabel: { color: c.axis },
       axisLine: { lineStyle: { color: c.grid } },
-      splitLine: { lineStyle: { color: c.grid } },
+      splitLine: {
+        lineStyle: { color: c.grid, type: "dashed" as const, opacity: 0.5 },
+      },
     };
     const compact = height <= 200;
+
+    // Respect the OS "reduce motion" setting — no entrance animation then.
+    const reducedMotion =
+      typeof window !== "undefined" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    const drawAnimation = {
+      animation: !reducedMotion,
+      animationDuration: 400,
+      animationEasing: "cubicOut" as const,
+    };
+
+    // Soft gradient area fill under the primary line — colour derived from the
+    // mean-line token, fading to transparent at the baseline.
+    const fillTop = hexToRgba(c.mean, 0.22) ?? c.band;
+    const fillBottom = hexToRgba(c.mean, 0) ?? "rgba(0, 0, 0, 0)";
+    const areaFill = {
+      color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
+        { offset: 0, color: fillTop },
+        { offset: 1, color: fillBottom },
+      ]),
+      opacity: 1,
+    };
     const baseTooltip = {
       // `confine` keeps the tooltip inside the chart box — without it, a
       // small chart in a feed card throws the tooltip outside/over the card
@@ -171,7 +216,7 @@ export function SpectrumChart(props: SpectrumChartProps) {
       backgroundColor: c.surface,
       borderColor: c.border,
       borderWidth: 1,
-      borderRadius: 8,
+      borderRadius: 10,
       padding: [6, 10],
       textStyle: { color: c.ink, fontSize: 12 },
       extraCssText: "box-shadow: 0 4px 12px rgba(0,0,0,0.12);",
@@ -193,7 +238,7 @@ export function SpectrumChart(props: SpectrumChartProps) {
 
       chart.setOption(
         {
-          animation: false,
+          ...drawAnimation,
           textStyle: baseTextStyle,
           grid: { left: 56, right: 20, top: 16, bottom: 44 },
           tooltip: {
@@ -253,8 +298,10 @@ export function SpectrumChart(props: SpectrumChartProps) {
               data: meanLine,
               symbol: "none",
               sampling: "lttb",
-              lineStyle: { width: 2, color: c.mean },
+              lineStyle: { width: 2.25, color: c.mean },
               itemStyle: { color: c.mean },
+              areaStyle: areaFill,
+              emphasis: { focus: "series" },
               z: 3,
             },
           ],
@@ -272,8 +319,11 @@ export function SpectrumChart(props: SpectrumChartProps) {
           data: zip(wavenumbers, intensities),
           showSymbol: false,
           sampling: "lttb",
-          lineStyle: { width: 2, color: c.mean },
+          smooth: 0.15,
+          lineStyle: { width: 2.25, color: c.mean },
           itemStyle: { color: c.mean },
+          areaStyle: areaFill,
+          emphasis: { focus: "series" },
           yAxisIndex: 0,
           z: 3,
         },
@@ -299,7 +349,7 @@ export function SpectrumChart(props: SpectrumChartProps) {
 
       chart.setOption(
         {
-          animation: false,
+          ...drawAnimation,
           textStyle: baseTextStyle,
           legend: overlay
             ? {

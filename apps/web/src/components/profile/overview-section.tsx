@@ -1,5 +1,10 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
+
+import { getSession } from "@ramanhub/api-client";
+
+import { Composer } from "~/components/composer";
 import { ContributionGraph } from "~/components/profile/contribution-graph";
 import { PinnedGrid } from "~/components/profile/pinned-grid";
 import { RecentPosts } from "~/components/profile/profile-tabs";
@@ -13,8 +18,17 @@ export function OverviewSection({
   isOwner: boolean;
   onSeeAllPosts: () => void;
 }) {
+  const session = useQuery({
+    queryKey: ["session"],
+    queryFn: () => getSession(),
+    enabled: isOwner,
+  });
+  const owner = session.data && !session.data.is_guest ? session.data : null;
+
   return (
     <div className="space-y-6">
+      {isOwner && owner && <Composer session={owner} variant="expanded" />}
+
       <ContributionGraph handle={handle} />
       <PinnedGrid handle={handle} isOwner={isOwner} />
 

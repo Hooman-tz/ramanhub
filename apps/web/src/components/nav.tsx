@@ -14,6 +14,8 @@ import {
   DropdownMenuTrigger,
 } from "@ramanhub/ui/dropdown-menu";
 
+import { ComposeFab } from "./compose-fab";
+
 function initials(name: string | null, email: string | null): string {
   const source = name?.trim() ?? email?.trim() ?? "";
   if (!source) return "?";
@@ -54,45 +56,48 @@ export function Nav() {
         </Link>
 
         {isFullUser ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              aria-label="Account menu"
-              className="focus-visible:ring-ring/50 hover:bg-muted flex cursor-pointer items-center justify-center rounded-full p-1.5 transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
-            >
-              <Avatar>
-                {user.avatar_url ? (
-                  <AvatarImage
-                    src={user.avatar_url}
-                    alt={user.display_name ?? "Account"}
-                  />
-                ) : null}
-                <AvatarFallback>
-                  {initials(user.display_name, user.email)}
-                </AvatarFallback>
-              </Avatar>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="min-w-44">
-              {user.profile_handle ? (
-                <DropdownMenuItem asChild>
-                  <Link href={`/u/${user.profile_handle}`}>My profile</Link>
-                </DropdownMenuItem>
-              ) : null}
-              <DropdownMenuItem asChild>
-                <Link href="/settings">Settings</Link>
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem
-                variant="destructive"
-                disabled={signOut.isPending}
-                onSelect={(e) => {
-                  e.preventDefault();
-                  signOut.mutate();
-                }}
+          <div className="flex items-center gap-1">
+            <ComposeFab variant="nav-button" />
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                aria-label="Account menu"
+                className="focus-visible:ring-ring/50 hover:bg-muted flex cursor-pointer items-center justify-center rounded-full p-1.5 transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
               >
-                Sign out
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
+                <Avatar>
+                  {user.avatar_url ? (
+                    <AvatarImage
+                      src={user.avatar_url}
+                      alt={user.display_name ?? "Account"}
+                    />
+                  ) : null}
+                  <AvatarFallback>
+                    {initials(user.display_name, user.email)}
+                  </AvatarFallback>
+                </Avatar>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="min-w-44">
+                {user.profile_handle ? (
+                  <DropdownMenuItem asChild>
+                    <Link href={`/u/${user.profile_handle}`}>My profile</Link>
+                  </DropdownMenuItem>
+                ) : null}
+                <DropdownMenuItem asChild>
+                  <Link href="/settings">Settings</Link>
+                </DropdownMenuItem>
+                <DropdownMenuSeparator />
+                <DropdownMenuItem
+                  variant="destructive"
+                  disabled={signOut.isPending}
+                  onSelect={(e) => {
+                    e.preventDefault();
+                    signOut.mutate();
+                  }}
+                >
+                  Sign out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
         ) : (
           <Link
             href="/login"
