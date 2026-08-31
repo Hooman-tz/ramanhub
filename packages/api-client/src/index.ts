@@ -790,6 +790,44 @@ export function deleteRoutine(
   });
 }
 
+/* --- processing: build & apply a pipeline ------------------------- */
+
+export interface LedgerResult {
+  ledger_id: string;
+  ledger_hash: string;
+  reused_existing: boolean;
+  processed: { length: number };
+}
+
+/**
+ * `POST /raw-files/{rawFileId}/ledgers` — build + persist a processing
+ * pipeline. Returns the ledger id; call `updateSpectrum` to make it the
+ * spectrum's current view, then re-`getSpectrumData` for the processed curve.
+ */
+export function createLedger(
+  rawFileId: string,
+  steps: RoutineStep[],
+  opts?: ApiClientOptions,
+): Promise<LedgerResult> {
+  return apiRequest<LedgerResult>(
+    `/raw-files/${encodeURIComponent(rawFileId)}/ledgers`,
+    { ...opts, method: "POST", body: { steps } },
+  );
+}
+
+/** `PATCH /spectra/{id}` — point the spectrum at a processing ledger (or `null` to reset to raw). */
+export function updateSpectrum(
+  spectrumId: string,
+  body: { current_ledger_id: string | null },
+  opts?: ApiClientOptions,
+): Promise<Spectrum> {
+  return apiRequest<Spectrum>(`/spectra/${encodeURIComponent(spectrumId)}`, {
+    ...opts,
+    method: "PATCH",
+    body,
+  });
+}
+
 /* --- account settings --------------------------------------------- */
 
 export interface UpdateMeBody {

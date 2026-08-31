@@ -1,123 +1,40 @@
 "use client";
 
+/**
+ * Section bodies for the profile shell. The horizontal `<Tabs>` chrome was
+ * replaced by `<ProfileNav>` + `<ProfileShell>`; these components are now
+ * rendered directly into the shell's content pane.
+ */
 import type { ReactNode } from "react";
 import { useState } from "react";
 import Link from "next/link";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import {
-  useInfiniteQuery,
-  useMutation,
-  useQuery,
-  useQueryClient,
-} from "@tanstack/react-query";
-import { ArrowRight, X } from "lucide-react";
+import { useInfiniteQuery, useQuery } from "@tanstack/react-query";
 
 import type {
   FollowUser,
   LibraryParams,
   LibrarySpectrum,
-  PublicProfile,
 } from "@ramanhub/api-client";
 import {
-  createRoutine,
-  deleteRoutine,
-  getAlgorithmCatalog,
   getFeed,
   getMyLibrary,
   listFollowers,
   listFollowing,
   listMyFindings,
-  listRoutines,
 } from "@ramanhub/api-client";
-import { cn } from "@ramanhub/ui";
 import { Avatar, AvatarFallback, AvatarImage } from "@ramanhub/ui/avatar";
 import { Badge } from "@ramanhub/ui/badge";
 import { Button } from "@ramanhub/ui/button";
-import {
-  Dialog,
-  DialogClose,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-  DialogTrigger,
-} from "@ramanhub/ui/dialog";
 import { Input } from "@ramanhub/ui/input";
 import { Label } from "@ramanhub/ui/label";
 import { Skeleton } from "@ramanhub/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@ramanhub/ui/tabs";
 
 import { FeedCard } from "~/components/feed-card";
 import { FollowButton } from "~/components/follow-button";
 
-const OWNER_TABS = [
-  "posts",
-  "drafts",
-  "library",
-  "workspace",
-  "connections",
-] as const;
-const VISITOR_TABS = ["posts", "connections"] as const;
-
-export function ProfileTabs({
-  profile,
-  isOwner,
-}: {
-  profile: PublicProfile;
-  isOwner: boolean;
-}) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const handle = profile.profile_handle ?? "";
-
-  const tabs: readonly string[] = isOwner ? OWNER_TABS : VISITOR_TABS;
-  const requested = searchParams.get("tab") ?? "posts";
-  const active = tabs.includes(requested) ? requested : "posts";
-
-  function setTab(value: string) {
-    const params = new URLSearchParams(searchParams.toString());
-    params.set("tab", value);
-    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
-  }
-
-  return (
-    <Tabs value={active} onValueChange={setTab}>
-      <TabsList className="flex-wrap">
-        {tabs.map((t) => (
-          <TabsTrigger key={t} value={t} className="cursor-pointer capitalize">
-            {t}
-          </TabsTrigger>
-        ))}
-      </TabsList>
-
-      <TabsContent value="posts" className="mt-4">
-        <PostsTab handle={handle} />
-      </TabsContent>
-      <TabsContent value="connections" className="mt-4">
-        <ConnectionsTab handle={handle} />
-      </TabsContent>
-      {isOwner && (
-        <>
-          <TabsContent value="drafts" className="mt-4">
-            <DraftsTab />
-          </TabsContent>
-          <TabsContent value="library" className="mt-4">
-            <LibraryTab />
-          </TabsContent>
-          <TabsContent value="workspace" className="mt-4">
-            <WorkspaceTab />
-          </TabsContent>
-        </>
-      )}
-    </Tabs>
-  );
-}
-
 /* -------------------------------------------------------------------------- */
 
-function Loading() {
+export function Loading() {
   return (
     <div className="space-y-2" aria-hidden>
       {[0, 1, 2].map((i) => (
@@ -127,7 +44,7 @@ function Loading() {
   );
 }
 
-function EmptyState({ children }: { children: ReactNode }) {
+export function EmptyState({ children }: { children: ReactNode }) {
   return (
     <p className="text-foreground/70 rounded-xl border border-dashed p-6 text-center text-sm">
       {children}
@@ -137,7 +54,7 @@ function EmptyState({ children }: { children: ReactNode }) {
 
 /* --- Posts --------------------------------------------------------------- */
 
-function PostsTab({ handle }: { handle: string }) {
+export function PostsTab({ handle }: { handle: string }) {
   const feed = useQuery({
     queryKey: ["feed", "author", handle],
     queryFn: () => getFeed({ author: handle, limit: 50 }),
@@ -157,9 +74,30 @@ function PostsTab({ handle }: { handle: string }) {
   );
 }
 
+/** Trimmed feed preview for the Overview section — first 3 published items. */
+export function RecentPosts({ handle }: { handle: string }) {
+  const feed = useQuery({
+    queryKey: ["feed", "author", handle, "preview"],
+    queryFn: () => getFeed({ author: handle, limit: 3 }),
+  });
+
+  if (feed.isLoading) return <Loading />;
+  const items = feed.data ?? [];
+  if (items.length === 0)
+    return <EmptyState>Nothing published yet.</EmptyState>;
+
+  return (
+    <div className="grid gap-3 sm:grid-cols-2">
+      {items.map((item) => (
+        <FeedCard key={`${item.kind}-${item.id}`} item={item} />
+      ))}
+    </div>
+  );
+}
+
 /* --- Drafts ------------------------------------------------------------- */
 
-function DraftsTab() {
+export function DraftsTab() {
   const findings = useQuery({
     queryKey: ["my-findings"],
     queryFn: () => listMyFindings(),
@@ -211,7 +149,7 @@ const EMPTY_FILTERS: LibFilters = {
 };
 const LIB_LIMIT = 20;
 
-function ReadinessBadge({ s }: { s: LibrarySpectrum }) {
+export function ReadinessBadge({ s }: { s: LibrarySpectrum }) {
   if (s.publish_ready) return <Badge variant="success">Ready</Badge>;
   const blocked = /block|fail|reject/i.test(s.qc_state);
   return (
@@ -231,7 +169,7 @@ function buildLibParams(f: LibFilters): LibraryParams {
   return p;
 }
 
-function LibraryTab() {
+export function LibraryTab() {
   const [draft, setDraft] = useState<LibFilters>(EMPTY_FILTERS);
   const [applied, setApplied] = useState<LibFilters>(EMPTY_FILTERS);
 
@@ -355,248 +293,9 @@ function LibraryTab() {
   );
 }
 
-/* --- Workspace ------------------------------------------------------- */
-
-function schemaKeys(schema: Record<string, unknown>): string[] {
-  const props = schema.properties;
-  if (props && typeof props === "object")
-    return Object.keys(props as Record<string, unknown>);
-  return Object.keys(schema);
-}
-
-function WorkspaceTab() {
-  return (
-    <div className="space-y-8">
-      <AlgorithmCatalogBlock />
-      <RoutinesBlock />
-    </div>
-  );
-}
-
-function AlgorithmCatalogBlock() {
-  const cat = useQuery({
-    queryKey: ["algorithms"],
-    queryFn: () => getAlgorithmCatalog(),
-  });
-
-  if (cat.isLoading) return <Loading />;
-  if (!cat.data) return null;
-
-  const { categories, algorithms } = cat.data;
-
-  return (
-    <div>
-      <h2 className="mb-2 text-base font-semibold tracking-tight">
-        Algorithm catalog
-      </h2>
-      <div className="space-y-4">
-        {categories.map((c) => {
-          const algs = algorithms.filter((a) => a.category === c);
-          if (algs.length === 0) return null;
-          return (
-            <div key={c}>
-              <p className="text-muted-foreground text-xs font-medium uppercase">
-                {c}
-              </p>
-              <div className="mt-1 space-y-1">
-                {algs.map((a) => (
-                  <details
-                    key={a.step_type}
-                    className="border-border rounded-lg border p-2 text-sm"
-                  >
-                    <summary className="cursor-pointer font-medium">
-                      {a.label}
-                    </summary>
-                    <p className="text-muted-foreground mt-1">
-                      {a.description}
-                    </p>
-                    <p className="mt-1 font-mono text-xs">{a.step_type}</p>
-                    {schemaKeys(a.param_schema).length > 0 && (
-                      <p className="text-muted-foreground mt-1 text-xs">
-                        Params: {schemaKeys(a.param_schema).join(", ")}
-                      </p>
-                    )}
-                  </details>
-                ))}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function RoutinesBlock() {
-  const qc = useQueryClient();
-  const routines = useQuery({
-    queryKey: ["routines"],
-    queryFn: () => listRoutines(),
-  });
-  const catalog = useQuery({
-    queryKey: ["algorithms"],
-    queryFn: () => getAlgorithmCatalog(),
-  });
-
-  const [name, setName] = useState("");
-  const [picked, setPicked] = useState<string[]>([]);
-
-  const create = useMutation({
-    mutationFn: () =>
-      createRoutine({
-        modality: "raman",
-        name: name.trim(),
-        steps_template: picked.map((type, i) => ({
-          type,
-          params: {},
-          order: i,
-        })),
-      }),
-    onSuccess: () => {
-      setName("");
-      setPicked([]);
-      void qc.invalidateQueries({ queryKey: ["routines"] });
-    },
-  });
-
-  const remove = useMutation({
-    mutationFn: (id: string) => deleteRoutine(id),
-    onSuccess: () => void qc.invalidateQueries({ queryKey: ["routines"] }),
-  });
-
-  const steps = catalog.data?.algorithms ?? [];
-  const list = routines.data ?? [];
-
-  return (
-    <div>
-      <h2 className="mb-2 text-base font-semibold tracking-tight">
-        Saved routines
-      </h2>
-
-      {list.length === 0 && !routines.isLoading && (
-        <EmptyState>No routines yet.</EmptyState>
-      )}
-
-      <ul className="space-y-2">
-        {list.map((r) => (
-          <li
-            key={r.id}
-            className="border-border flex items-start justify-between gap-3 rounded-lg border p-3"
-          >
-            <div className="min-w-0">
-              <p className="text-sm font-medium">{r.name}</p>
-              <div className="mt-1 flex flex-wrap items-center gap-1">
-                {r.steps_template.map((s, i) => (
-                  <span
-                    key={i}
-                    className="text-foreground/70 flex items-center text-xs"
-                  >
-                    {i > 0 && (
-                      <ArrowRight className="mx-1 size-3" aria-hidden />
-                    )}
-                    <span className="bg-muted text-foreground/80 rounded px-1.5 py-0.5">
-                      {s.type}
-                    </span>
-                  </span>
-                ))}
-              </div>
-              <p className="text-foreground/60 mt-1 text-xs">
-                {new Date(r.created_at).toLocaleDateString()}
-              </p>
-            </div>
-            <Dialog>
-              <DialogTrigger asChild>
-                <Button
-                  size="icon"
-                  variant="ghost"
-                  className="cursor-pointer"
-                  aria-label={`Delete routine ${r.name}`}
-                >
-                  <X className="size-4" aria-hidden />
-                </Button>
-              </DialogTrigger>
-              <DialogContent>
-                <DialogHeader>
-                  <DialogTitle>Delete “{r.name}”?</DialogTitle>
-                  <DialogDescription>This cannot be undone.</DialogDescription>
-                </DialogHeader>
-                <DialogFooter>
-                  <DialogClose asChild>
-                    <Button variant="outline" size="sm">
-                      Cancel
-                    </Button>
-                  </DialogClose>
-                  <DialogClose asChild>
-                    <Button
-                      variant="destructive"
-                      size="sm"
-                      onClick={() => remove.mutate(r.id)}
-                    >
-                      Delete
-                    </Button>
-                  </DialogClose>
-                </DialogFooter>
-              </DialogContent>
-            </Dialog>
-          </li>
-        ))}
-      </ul>
-
-      <div className="border-border mt-4 space-y-2 rounded-lg border p-3">
-        <p className="text-sm font-medium">New routine</p>
-        <Input
-          placeholder="Routine name"
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          className="h-8"
-        />
-        <div className="flex flex-wrap gap-1.5">
-          {steps.map((s) => {
-            const on = picked.includes(s.step_type);
-            return (
-              <button
-                key={s.step_type}
-                type="button"
-                aria-pressed={on}
-                onClick={() =>
-                  setPicked((p) =>
-                    on
-                      ? p.filter((x) => x !== s.step_type)
-                      : [...p, s.step_type],
-                  )
-                }
-                className={cn(
-                  "focus-visible:ring-ring/50 min-h-8 cursor-pointer rounded border px-2.5 py-1 text-xs transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none",
-                  on
-                    ? "bg-primary text-primary-foreground border-transparent"
-                    : "bg-muted text-foreground/80 hover:bg-muted/70 border-transparent",
-                )}
-              >
-                {s.label}
-              </button>
-            );
-          })}
-        </div>
-        {picked.length > 0 && (
-          <p className="text-foreground/70 text-xs">
-            Order: {picked.join(" → ")}
-          </p>
-        )}
-        <Button
-          size="sm"
-          disabled={!name.trim() || picked.length === 0 || create.isPending}
-          onClick={() => create.mutate()}
-        >
-          {create.isPending ? "Saving…" : "Create routine"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
 /* --- Connections --------------------------------------------------- */
 
-function ConnectionsTab({ handle }: { handle: string }) {
+export function ConnectionsTab({ handle }: { handle: string }) {
   const followers = useQuery({
     queryKey: ["followers", handle],
     queryFn: () => listFollowers(handle),

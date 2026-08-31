@@ -4,10 +4,8 @@ import { notFound } from "next/navigation";
 import { getSession, getUserByHandle, isApiError } from "@ramanhub/api-client";
 
 import { BackLink } from "~/components/back-link";
-import { ContributionGraph } from "~/components/profile/contribution-graph";
-import { PinnedGrid } from "~/components/profile/pinned-grid";
 import { ProfileHeader } from "~/components/profile/profile-header";
-import { ProfileTabs } from "~/components/profile/profile-tabs";
+import { ProfileShell } from "~/components/profile/profile-shell";
 import { serverApiOpts } from "~/lib/server-api";
 
 export const dynamic = "force-dynamic";
@@ -30,17 +28,18 @@ export default async function ProfilePage({
 
   const session = await getSession(opts);
   const isOwner = !!session && session.id === profile.id;
-  const h = profile.profile_handle ?? handle;
 
   return (
-    <main className="mx-auto w-full max-w-4xl space-y-6 px-4 py-8">
-      <BackLink />
+    <main className="w-full py-8">
+      <div className="mx-auto max-w-5xl px-4">
+        <BackLink />
+        <div className="mt-4">
+          <ProfileHeader profile={profile} isOwner={isOwner} />
+        </div>
+      </div>
 
-      <ProfileHeader profile={profile} isOwner={isOwner} />
-      <ContributionGraph handle={h} />
-      <PinnedGrid handle={h} isOwner={isOwner} />
       <Suspense fallback={null}>
-        <ProfileTabs profile={profile} isOwner={isOwner} />
+        <ProfileShell profile={profile} isOwner={isOwner} />
       </Suspense>
     </main>
   );
