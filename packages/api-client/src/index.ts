@@ -11,8 +11,7 @@
  *   - server / React Native -> absolute `API_URL`
  */
 
-const isBrowser =
-  typeof globalThis !== "undefined" && "window" in globalThis;
+const isBrowser = typeof globalThis !== "undefined" && "window" in globalThis;
 
 /** Base URL for API calls. Override per-call via {@link ApiClientOptions.baseUrl}. */
 export function resolveBaseUrl(explicit?: string): string {
@@ -31,12 +30,7 @@ export interface ApiError {
 }
 
 export function isApiError(e: unknown): e is ApiError {
-  return (
-    typeof e === "object" &&
-    e !== null &&
-    "status" in e &&
-    "message" in e
-  );
+  return typeof e === "object" && e !== null && "status" in e && "message" in e;
 }
 
 export interface ApiClientOptions {
@@ -158,7 +152,9 @@ export async function getSession(
 }
 
 /** Mint an anonymous guest session (cookie set by the response). */
-export function startGuestSession(opts?: ApiClientOptions): Promise<SessionUser> {
+export function startGuestSession(
+  opts?: ApiClientOptions,
+): Promise<SessionUser> {
   return apiRequest<SessionUser>("/auth/guest", { ...opts, method: "POST" });
 }
 
@@ -298,6 +294,8 @@ export interface Finding {
   state: "draft" | "published";
   license_id: string | null;
   doi: string | null;
+  /** Optional link to the code/analysis repo behind the write-up (e.g. a GitHub repo). Not verified. */
+  repo_url: string | null;
   publication_metadata: PublicationMeta | null;
   tags: string[] | null;
   published_at: string | null;
@@ -322,10 +320,34 @@ export function listMyFindings(opts?: ApiClientOptions): Promise<Finding[]> {
 }
 
 export function createFinding(
-  body: { title: string; abstract_md?: string; tags?: string[] },
+  body: {
+    title: string;
+    abstract_md?: string;
+    tags?: string[];
+    repo_url?: string;
+  },
   opts?: ApiClientOptions,
 ): Promise<Finding> {
   return apiRequest<Finding>("/v1/findings", { ...opts, method: "POST", body });
+}
+
+/** `PATCH /v1/findings/{id}` — edit an owned finding's title / abstract / tags / doi / repo_url. */
+export function updateFinding(
+  id: string,
+  body: {
+    title?: string;
+    abstract_md?: string;
+    tags?: string[];
+    doi?: string;
+    repo_url?: string;
+  },
+  opts?: ApiClientOptions,
+): Promise<Finding> {
+  return apiRequest<Finding>(`/v1/findings/${encodeURIComponent(id)}`, {
+    ...opts,
+    method: "PATCH",
+    body,
+  });
 }
 
 export function publishFinding(
@@ -655,10 +677,7 @@ export function getUserPins(
   handle: string,
   opts?: ApiClientOptions,
 ): Promise<Pin[]> {
-  return apiRequest<Pin[]>(
-    `/users/${encodeURIComponent(handle)}/pins`,
-    opts,
-  );
+  return apiRequest<Pin[]>(`/users/${encodeURIComponent(handle)}/pins`, opts);
 }
 
 /** `POST /pins` — full account. Returns the caller's full pin list. */
@@ -675,10 +694,10 @@ export function removePin(
   id: string,
   opts?: ApiClientOptions,
 ): Promise<Pin[]> {
-  return apiRequest<Pin[]>(
-    `/pins/${kind}/${encodeURIComponent(id)}`,
-    { ...opts, method: "DELETE" },
-  );
+  return apiRequest<Pin[]>(`/pins/${kind}/${encodeURIComponent(id)}`, {
+    ...opts,
+    method: "DELETE",
+  });
 }
 
 /* --- private reference library ------------------------------------- */

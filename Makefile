@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate seed seed-demo import-journals test lint
+.PHONY: up down logs migrate seed seed-demo seed-scenarios import-journals test lint
 
 up:
 	docker compose up -d
@@ -17,6 +17,12 @@ seed:
 
 seed-demo:
 	cd backend && uv run python -m app.seed.demo_data
+
+# 20 test personas with synthetic spectra, datasets, processing, write-ups
+# and a social graph. Requires `make seed` first. `make seed-scenarios ARGS=--reset`
+# drops the personas.
+seed-scenarios:
+	cd backend && uv run python -m app.seed.scenarios_data $(ARGS)
 
 import-journals:
 	cd backend && uv run python -m scripts.import_scimago "$(FILE)"

@@ -24,6 +24,7 @@ figure is recomputed from live data on every view, so it stays honest if the
 underlying processing changes, and a reader can re-run it themselves. That
 is the same reproducibility bet the processing ledger makes.
 """
+
 from __future__ import annotations
 
 import uuid
@@ -62,9 +63,7 @@ class Finding(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
-    accession: Mapped[str | None] = mapped_column(
-        String, unique=True, nullable=True, index=True
-    )
+    accession: Mapped[str | None] = mapped_column(String, unique=True, nullable=True, index=True)
     owner_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False, index=True
     )
@@ -76,15 +75,19 @@ class Finding(Base):
         server_default=FindingState.draft.value,
         index=True,
     )
-    license_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("licenses.id"), nullable=True
-    )
+    license_id: Mapped[str | None] = mapped_column(String, ForeignKey("licenses.id"), nullable=True)
     # The linked publication. `doi` drives the DOI-verified trust tier the
     # same way it does for spectra; `publication_metadata` caches the
     # Crossref lookup (title, authors, journal, year) so rendering a feed
     # card doesn't make an outbound HTTP call per item.
     doi: Mapped[str | None] = mapped_column(String, nullable=True, index=True)
     publication_metadata: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # An optional link to the code/analysis repository behind the write-up
+    # (a GitHub repo, a notebook archive). Free-text URL, not verified: it is
+    # a provenance breadcrumb for readers, the same role `doi` plays for the
+    # paper. Kept next to `doi` because they are the two "where does this
+    # lead" fields a reader looks for.
+    repo_url: Mapped[str | None] = mapped_column(String, nullable=True)
     # Free-text topic tags. JSONB rather than a join table: tags here are a
     # browsing aid, not a controlled vocabulary, and there is no evidence
     # yet of needing to query or rename them at scale (Scaling Posture:
@@ -93,9 +96,7 @@ class Finding(Base):
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -129,9 +130,7 @@ class FindingEntry(Base):
     # Analysis parameters (spectrum ids, prominence, n_components, ...) —
     # never a rendered image. See the module docstring.
     config: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -146,9 +145,7 @@ class FindingSpectrum(Base):
     """
 
     __tablename__ = "finding_spectra"
-    __table_args__ = (
-        UniqueConstraint("finding_id", "spectrum_id", name="uq_finding_spectrum"),
-    )
+    __table_args__ = (UniqueConstraint("finding_id", "spectrum_id", name="uq_finding_spectrum"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     finding_id: Mapped[uuid.UUID] = mapped_column(
@@ -165,9 +162,7 @@ class FindingSpectrum(Base):
     # "Treated 24h") without renaming the underlying record, which belongs to
     # its owner and may be cited elsewhere.
     label: Mapped[str | None] = mapped_column(String, nullable=True)
-    created_at: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 # Re-exported for the migration and for tests that assert the constraint

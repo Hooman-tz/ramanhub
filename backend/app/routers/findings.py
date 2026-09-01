@@ -17,6 +17,7 @@ Two rules run through everything here:
    who saw the thread yesterday sees additions rather than a silently
    rewritten argument.
 """
+
 from __future__ import annotations
 
 import hashlib
@@ -79,10 +80,17 @@ def _sniff_image_type(raw: bytes) -> str | None:
 # --------------------------------------------------------------- schemas
 
 
+# A link to the code/analysis repo behind a finding. Not verified — just
+# bounded and required to look like a URL so it renders as a link. An empty
+# string is allowed and clears the field (same ergonomics as `doi`).
+REPO_URL_FIELD = Field(default=None, max_length=2048, pattern=r"^(https?://|$)")
+
+
 class FindingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     abstract_md: str | None = Field(default=None, max_length=20_000)
     tags: list[str] | None = None
+    repo_url: str | None = REPO_URL_FIELD
 
 
 class FindingUpdate(BaseModel):
@@ -90,6 +98,7 @@ class FindingUpdate(BaseModel):
     abstract_md: str | None = Field(default=None, max_length=20_000)
     tags: list[str] | None = None
     doi: str | None = None
+    repo_url: str | None = REPO_URL_FIELD
 
 
 class FindingPublish(BaseModel):
@@ -173,6 +182,7 @@ class FindingOut(BaseModel):
     state: str
     license_id: str | None
     doi: str | None
+    repo_url: str | None
     publication_metadata: dict | None
     tags: list | None
     published_at: datetime | None
@@ -252,7 +262,9 @@ def _images(finding_id: UUID, db: Session) -> list[FindingImage]:
             select(FindingImage)
             .where(FindingImage.finding_id == finding_id)
             .order_by(FindingImage.position, FindingImage.created_at)
-        ).scalars().all()
+        )
+        .scalars()
+        .all()
     )
 
 
@@ -293,6 +305,7 @@ def serialize_finding(finding: Finding, db: Session, include_body: bool = True) 
         state=finding.state.value if hasattr(finding.state, "value") else finding.state,
         license_id=finding.license_id,
         doi=finding.doi,
+        repo_url=finding.repo_url,
         publication_metadata=finding.publication_metadata,
         tags=finding.tags,
         published_at=finding.published_at,
@@ -301,11 +314,15 @@ def serialize_finding(finding: Finding, db: Session, include_body: bool = True) 
     )
 
     if include_body:
-        entries = db.execute(
-            select(FindingEntry)
-            .where(FindingEntry.finding_id == finding.id)
-            .order_by(FindingEntry.position, FindingEntry.created_at)
-        ).scalars().all()
+        entries = (
+            db.execute(
+                select(FindingEntry)
+                .where(FindingEntry.finding_id == finding.id)
+                .order_by(FindingEntry.position, FindingEntry.created_at)
+            )
+            .scalars()
+            .all()
+        )
         out.entries = [EntryOut.model_validate(e) for e in entries]
 
         out.spectra = [
@@ -315,9 +332,7 @@ def serialize_finding(finding: Finding, db: Session, include_body: bool = True) 
                 title=spectrum.title,
                 label=link.label,
                 position=link.position,
-                state=spectrum.state.value
-                if hasattr(spectrum.state, "value")
-                else spectrum.state,
+                state=spectrum.state.value if hasattr(spectrum.state, "value") else spectrum.state,
             )
             for link, spectrum in _members(finding.id, db)
         ]
@@ -325,9 +340,7 @@ def serialize_finding(finding: Finding, db: Session, include_body: bool = True) 
         out.images = [_serialize_image(image) for image in _images(finding.id, db)]
 
     out.vote_count = int(
-        db.execute(
-            select(func.count(Vote.id)).where(Vote.finding_id == finding.id)
-        ).scalar_one()
+        db.execute(select(func.count(Vote.id)).where(Vote.finding_id == finding.id)).scalar_one()
     )
     out.comment_count = int(
         db.execute(
@@ -402,6 +415,7 @@ def create_finding(
         title=body.title,
         abstract_md=body.abstract_md,
         tags=_normalize_tags(body.tags),
+        repo_url=body.repo_url,
         state=FindingState.draft,
     )
     db.add(finding)
@@ -419,13 +433,17 @@ def list_my_findings(
 ) -> list[FindingOut]:
     """The caller's own Findings, in any state — the personal workspace
     view. Public discovery goes through `/v1/feed` and `/search`."""
-    findings = db.execute(
-        select(Finding)
-        .where(Finding.owner_id == user.id)
-        .order_by(Finding.updated_at.desc())
-        .limit(limit)
-        .offset(offset)
-    ).scalars().all()
+    findings = (
+        db.execute(
+            select(Finding)
+            .where(Finding.owner_id == user.id)
+            .order_by(Finding.updated_at.desc())
+            .limit(limit)
+            .offset(offset)
+        )
+        .scalars()
+        .all()
+    )
     return [serialize_finding(f, db, include_body=False) for f in findings]
 
 
@@ -458,6 +476,8 @@ def update_finding(
         finding.tags = _normalize_tags(body.tags)
     if body.doi is not None:
         finding.doi = body.doi or None
+    if body.repo_url is not None:
+        finding.repo_url = body.repo_url or None
     db.add(finding)
     db.commit()
     db.refresh(finding)
@@ -558,9 +578,7 @@ def finding_overlay(
         arrays.append((wavenumbers, intensities))
         members.append(OverlayMemberOut(spectrum_id=spectrum.id, label=link.label))
 
-    grid_wavenumbers, mean, std = compute_overlay(
-        arrays, grid_points=grid, max_points=max_points
-    )
+    grid_wavenumbers, mean, std = compute_overlay(arrays, grid_points=grid, max_points=max_points)
     return FindingOverlayResponse(
         grid_wavenumbers=[float(v) for v in grid_wavenumbers],
         mean=[float(v) for v in mean],
@@ -722,7 +740,9 @@ def detach_spectrum(
         )
     ).scalar_one_or_none()
     if link is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not part of this finding")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Not part of this finding"
+        )
     db.delete(link)
     db.commit()
     db.refresh(finding)
@@ -821,9 +841,11 @@ def reorder_entries(
     partial update would silently leave gaps or duplicate positions.
     """
     finding = _get_finding_for_owner(finding_id, user, db)
-    entries = db.execute(
-        select(FindingEntry).where(FindingEntry.finding_id == finding.id)
-    ).scalars().all()
+    entries = (
+        db.execute(select(FindingEntry).where(FindingEntry.finding_id == finding.id))
+        .scalars()
+        .all()
+    )
 
     by_id = {entry.id: entry for entry in entries}
     if set(body.entry_ids) != set(by_id) or len(body.entry_ids) != len(by_id):
@@ -874,9 +896,7 @@ async def upload_finding_image(
 
     raw = await file.read()
     if not raw:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file"
-        )
+        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="Empty file")
     if len(raw) > MAX_IMAGE_BYTES:
         raise HTTPException(
             status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
@@ -903,9 +923,7 @@ async def upload_finding_image(
         return _serialize_image(existing)
 
     count = db.execute(
-        select(func.count(FindingImage.id)).where(
-            FindingImage.finding_id == finding.id
-        )
+        select(func.count(FindingImage.id)).where(FindingImage.finding_id == finding.id)
     ).scalar_one()
     if count >= MAX_IMAGES_PER_FINDING:
         raise HTTPException(
@@ -944,9 +962,7 @@ async def upload_finding_image(
     return _serialize_image(image)
 
 
-@router.patch(
-    "/findings/{finding_id}/images/{image_id}", response_model=FindingImageOut
-)
+@router.patch("/findings/{finding_id}/images/{image_id}", response_model=FindingImageOut)
 def update_finding_image(
     finding_id: UUID,
     image_id: UUID,
@@ -959,9 +975,7 @@ def update_finding_image(
     finding = _get_finding_for_owner(finding_id, user, db)
     image = db.get(FindingImage, image_id)
     if image is None or image.finding_id != finding.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
 
     if body.caption is not None:
         image.caption = body.caption or None
@@ -996,9 +1010,7 @@ def delete_finding_image(
     finding = _get_finding_for_owner(finding_id, user, db)
     image = db.get(FindingImage, image_id)
     if image is None or image.finding_id != finding.id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Image not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image not found")
     db.delete(image)
     db.flush()
     _renormalize_image_positions(finding.id, db)
@@ -1015,9 +1027,11 @@ def reorder_finding_images(
     """Owner-only. Supply the complete image-id list in the desired order —
     the full set exactly once, same rule as entry reordering."""
     finding = _get_finding_for_owner(finding_id, user, db)
-    images = db.execute(
-        select(FindingImage).where(FindingImage.finding_id == finding.id)
-    ).scalars().all()
+    images = (
+        db.execute(select(FindingImage).where(FindingImage.finding_id == finding.id))
+        .scalars()
+        .all()
+    )
 
     by_id = {image.id: image for image in images}
     if set(body.image_ids) != set(by_id) or len(body.image_ids) != len(by_id):
@@ -1050,9 +1064,7 @@ def get_finding_image_file(
     if image is None or image.finding_id != finding_id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     if not object_exists(image.storage_bucket, image.storage_key):
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Image object missing"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Image object missing")
 
     data = download_bytes(image.storage_bucket, image.storage_key)
     return Response(
