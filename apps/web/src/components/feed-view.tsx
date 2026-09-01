@@ -120,12 +120,12 @@ export function FeedView({
       : null;
 
   return (
-    <main className="mx-auto w-full max-w-3xl px-4 py-8">
+    <main className="mx-auto w-full max-w-2xl px-4 py-8">
       <header className="mb-6">
         <h1 className="text-2xl font-bold tracking-tight">
           Spectra<span className="text-primary">Insight</span>
         </h1>
-        <p className="text-foreground/70 mt-1 text-sm">
+        <p className="text-muted-foreground mt-1 text-sm">
           What researchers are sharing.
         </p>
       </header>
@@ -139,8 +139,9 @@ export function FeedView({
       <form
         role="search"
         onSubmit={submitSearch}
-        className="mb-3 flex items-stretch gap-2"
+        className="border-border bg-card focus-within:border-primary/40 mb-3 flex items-center gap-2 rounded-2xl border px-3 py-1 shadow-sm transition-colors motion-reduce:transition-none"
       >
+        <Search className="text-muted-foreground size-4 shrink-0" aria-hidden />
         <label htmlFor="feed-search" className="sr-only">
           Search the feed
         </label>
@@ -157,12 +158,22 @@ export function FeedView({
             }
           }}
           placeholder="Search the feed — @author or #tag"
-          className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none"
+          className="placeholder:text-muted-foreground w-full bg-transparent py-2 text-sm focus:outline-none"
         />
+        {searchInput && (
+          <button
+            type="button"
+            onClick={clearSearch}
+            aria-label="Clear search"
+            className="bg-muted text-muted-foreground hover:text-foreground flex size-5 shrink-0 items-center justify-center rounded-full"
+          >
+            <X className="size-3" aria-hidden />
+          </button>
+        )}
         <button
           type="submit"
           aria-label="Search the feed"
-          className="bg-primary text-primary-foreground focus-visible:ring-ring/50 inline-flex size-11 shrink-0 items-center justify-center rounded-md transition-opacity hover:opacity-90 focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
+          className="bg-primary text-primary-foreground focus-visible:ring-ring/50 inline-flex size-9 shrink-0 items-center justify-center rounded-xl transition-opacity hover:opacity-90 focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
         >
           <Search className="size-4" aria-hidden />
         </button>
