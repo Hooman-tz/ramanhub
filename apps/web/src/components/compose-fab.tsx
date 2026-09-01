@@ -49,7 +49,8 @@ export function ComposeFab({
           aria-label="New post"
           className={cn(
             "bg-primary text-primary-foreground focus-visible:ring-ring/50 fixed right-6 z-40 flex size-14 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-105 focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none",
-            "bottom-[max(1.5rem,env(safe-area-inset-bottom))]",
+            // Clear the mobile bottom nav (h-14 + safe area); normal offset from md up.
+            "bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-[max(1.5rem,env(safe-area-inset-bottom))]",
           )}
         >
           <Plus className="size-6" aria-hidden />

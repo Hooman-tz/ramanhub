@@ -1,12 +1,12 @@
 import type { Metadata, Viewport } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter, JetBrains_Mono } from "next/font/google";
 
 import { cn } from "@ramanhub/ui";
 import { ThemeProvider, ThemeToggle } from "@ramanhub/ui/theme";
 import { Toaster } from "@ramanhub/ui/toast";
 
 import { Providers } from "~/app/providers";
-import { Nav } from "~/components/nav";
+import { AppShell } from "~/components/app-shell";
 
 import "~/app/styles.css";
 
@@ -30,13 +30,13 @@ export const viewport: Viewport = {
   ],
 };
 
-const geistSans = Geist({
+const fontSans = Inter({
   subsets: ["latin"],
-  variable: "--font-geist-sans",
+  variable: "--font-sans-src",
 });
-const geistMono = Geist_Mono({
+const fontMono = JetBrains_Mono({
   subsets: ["latin"],
-  variable: "--font-geist-mono",
+  variable: "--font-mono-src",
 });
 
 export default function RootLayout(props: { children: React.ReactNode }) {
@@ -45,16 +45,15 @@ export default function RootLayout(props: { children: React.ReactNode }) {
       <body
         className={cn(
           "bg-background text-foreground min-h-screen font-sans antialiased",
-          geistSans.variable,
-          geistMono.variable,
+          fontSans.variable,
+          fontMono.variable,
         )}
       >
         <ThemeProvider>
           <Providers>
-            <Nav />
-            {props.children}
+            <AppShell>{props.children}</AppShell>
           </Providers>
-          <div className="absolute right-4 bottom-4">
+          <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-4 z-30 md:right-4 md:bottom-4 md:left-auto">
             <ThemeToggle />
           </div>
           <Toaster />
