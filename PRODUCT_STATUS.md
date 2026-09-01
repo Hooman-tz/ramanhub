@@ -154,6 +154,45 @@ local stack (`ramanhub_beta` migrated to head): feed, `/findings/[id]` gallery,
 `/u/[handle]` tabs, `/settings` all render; overlay/activity/pins/algorithms/
 routines/library endpoints all 200 through the proxy.
 
+**Figma design-system port (2026-09-01, branch `feature/figma-design-port`
+off `integration/social-forward`, unmerged).** Six commits `e6a1932`…`0c3c9ce`.
+Adopts the "Scientific Spectroscopy UI" Figma Make design (file
+`M0s7AVYMn8VYMwWJCbXCvi`, read via the Figma MCP) as a visual system.
+- **PR 1** — light `:root` tokens in `tooling/tailwind/theme.css` swapped to the
+  warm-stone / teal (`#0d6b6e`) / amber (`#b45309`) palette; dark `@variant`
+  retuned blue→teal, tri-state theme + every token key kept; new
+  `--zone-{home,discover,mylab,viewer}` accents. Fonts Geist→Inter,
+  Geist Mono→JetBrains Mono. `.glass-{nav,sidebar,bar,bottom-nav}` + `.zone-*`
+  utilities in `styles.css`. `nav.tsx` rebuilt as a glass header with a
+  desktop pill nav (Office / Feed / Lab, active pill takes the section accent);
+  new `mobile-nav.tsx` glass bottom nav; `app-shell.tsx` applies the per-route
+  zone wash; `zone.ts` centralises the route→zone map.
+- **PR 2** — `feed-card.tsx` restyled to the Figma PostCard (gradient avatar,
+  bordered author header, framed gallery panel, pill engagement row, "Open
+  finding/spectrum" CTA); `feed-view.tsx` collapsible glass search. Visual only,
+  no query changes; `feed-card-media.tsx` gained a `bare` prop.
+- **PR 3** — new `/office` dashboard (client route, guests → `/login`): reuses
+  `ProfileHeader` + `ContributionGraph`, adds a stat row, `spectrum-projects`
+  (`getMyLibrary`), `recent-activity` (library + findings merged by time),
+  `saved-posts` (`getUserPins`), `collab-network` (follow graph → SVG). All six
+  backing endpoints verified 200 on the local stack.
+- **PR 4** — `/spectra/[id]` restyled in place (stays a server component):
+  chips, "DOI linked" pill, "Open in Toolbox", framed chart, key-facts grid +
+  Acquisition/DOI sidebar from `confirmed_metadata`. QC/Processing tabs deferred
+  (no client-facing endpoint).
+- **PR 5** — `/lab` route now hosts the existing M6.6 `<Workbench>` (was only
+  reachable from the profile tab). Commons / Analysis / Upload deferred — no
+  ingestion / public-search / analysis-compute endpoints exist yet.
+- **PR 6** — this status entry. No Figma raster assets used (CSS-gradient
+  avatars + inline SVG + ECharts).
+
+`pnpm typecheck` 10/10; `pnpm --filter @ramanhub/web build` green; web lint
+unchanged from base (2 pre-existing issues in untouched files). **Backend
+untouched** — 0 files under `backend/`, so pytest / Alembic unaffected. Pixel
+review still owed (Chrome automation was unavailable in the porting session);
+dev stack was up (`:3000` web, `:8000` API) and every touched route returned
+200 with a real session.
+
 **Next action:** M0–M6 are done on `integration/social-forward` and unpushed.
 Owner steps to go live: review the branch, merge to `main`, run `make
 import-journals FILE=<scimagojr.csv>` (download the free SCImago CSV) so journal
@@ -262,3 +301,12 @@ algorithms (M-Algo), Expo mobile app, Python processing worker (M7), Go API (M8)
   (fixes the `/u/[handle]` 404). Backend **423 tests pass**; head
   `c9d2e5f8a1b4`; typecheck 10/10; web build green; live-smoked on the local
   stack. Deferred: direct messages, user-defined algorithms.
+- **2026-09-01** — **Figma design-system port** (branch
+  `feature/figma-design-port`, unmerged; commits `e6a1932`…`0c3c9ce`).
+  Warm-stone/teal/amber tokens + Inter/JetBrains Mono + liquid-glass nav
+  (PR 1); feed restyled to the Figma PostCard (PR 2); new wired `/office`
+  dashboard (PR 3); `/spectra/[id]` restyled (PR 4); `/lab` route hosting the
+  processing workbench (PR 5). Frontend-only — backend untouched. `pnpm
+  typecheck` 10/10, web build green. Deferred (need backend): Commons search,
+  analysis compute, raw-file ingestion / upload wizard, spectrum QC + processing
+  tabs. Pixel review still owed.
