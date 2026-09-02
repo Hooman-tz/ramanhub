@@ -6,6 +6,7 @@ current processed output (or its raw data, if no ledger has been attached
 yet or `?raw=true` is passed), gated by the same owner-or-public visibility
 rule as every other spectrum-derived read.
 """
+
 from __future__ import annotations
 
 from uuid import UUID
@@ -54,21 +55,31 @@ def get_spectrum_data(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
     require_owner_or_public(spectrum, user)
 
-    if spectrum.current_ledger_id is not None and not raw:
-        ledger_row = db.get(ProcessingLedger, spectrum.current_ledger_id)
-        if ledger_row is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-        ledger = Ledger(
-            schema_version=ledger_row.schema_version,
-            raw_file_id=ledger_row.raw_file_id,
-            steps=[LedgerStep.model_validate(step) for step in ledger_row.steps],
-        )
-        wavenumbers, intensities = get_or_compute(spectrum.raw_file_id, ledger, db)
-    else:
-        raw_file = db.get(RawFile, spectrum.raw_file_id)
-        if raw_file is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-        wavenumbers, intensities = load_raw_spectrum(raw_file)
+    try:
+        if spectrum.current_ledger_id is not None and not raw:
+            ledger_row = db.get(ProcessingLedger, spectrum.current_ledger_id)
+            if ledger_row is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+            ledger = Ledger(
+                schema_version=ledger_row.schema_version,
+                raw_file_id=ledger_row.raw_file_id,
+                steps=[LedgerStep.model_validate(step) for step in ledger_row.steps],
+            )
+            wavenumbers, intensities = get_or_compute(spectrum.raw_file_id, ledger, db)
+        else:
+            raw_file = db.get(RawFile, spectrum.raw_file_id)
+            if raw_file is None:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+            wavenumbers, intensities = load_raw_spectrum(raw_file)
+    except RamanDataError as exc:
+        # The upload has a readable header but no chartable trace (header-only
+        # export, unreadable data layout, canonicalization failure). That's a
+        # property of the file, not a server fault — 422, not 500, so the UI
+        # can show "preview unavailable" instead of crashing.
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="This file doesn't contain a readable spectral trace to plot.",
+        ) from exc
 
     total_points = int(wavenumbers.shape[0])
     downsampled = False

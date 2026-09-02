@@ -16,7 +16,6 @@
  * no worker is running the job stays `pending` forever, so this component
  * says so explicitly rather than spinning indefinitely.
  */
-
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import {
@@ -61,25 +60,32 @@ const STALLED_AFTER_MS = 25_000;
 
 type Draft = Record<string, string>;
 
-const TEXT_FIELDS: { key: keyof ExtractedMetadata; label: string; hint?: string }[] =
-  [
-    { key: "instrument_vendor", label: "Instrument vendor" },
-    { key: "instrument_model", label: "Instrument model" },
-    { key: "sample_description", label: "Sample description" },
-    {
-      key: "spectral_range_cm1",
-      label: "Spectral range (cm⁻¹)",
-      hint: "Formatted min-max, e.g. 200-3200",
-    },
-    { key: "acquisition_datetime", label: "Acquired at" },
-  ];
+const TEXT_FIELDS: {
+  key: keyof ExtractedMetadata;
+  label: string;
+  hint?: string;
+}[] = [
+  { key: "instrument_vendor", label: "Instrument vendor" },
+  { key: "instrument_model", label: "Instrument model" },
+  { key: "sample_description", label: "Sample description" },
+  {
+    key: "spectral_range_cm1",
+    label: "Spectral range (cm⁻¹)",
+    hint: "Formatted min-max, e.g. 200-3200",
+  },
+  { key: "acquisition_datetime", label: "Acquired at" },
+];
 
 const NUMBER_FIELDS: {
   key: keyof ExtractedMetadata;
   label: string;
   required?: boolean;
 }[] = [
-  { key: "integration_time_ms", label: "Integration time (ms)", required: true },
+  {
+    key: "integration_time_ms",
+    label: "Integration time (ms)",
+    required: true,
+  },
   { key: "laser_power_mw", label: "Laser power (mW)" },
   { key: "accumulations", label: "Accumulations" },
   { key: "resolution_cm1", label: "Resolution (cm⁻¹)" },
@@ -89,13 +95,16 @@ const NUMBER_FIELDS: {
 
 function asString(value: unknown): string {
   if (value === null || value === undefined) return "";
-  if (typeof value === "string" || typeof value === "number") return String(value);
+  if (typeof value === "string" || typeof value === "number")
+    return String(value);
   return "";
 }
 
 /** Build the confirm payload, omitting blanks so `extra="forbid"` is happy. */
 function toMetadata(draft: Draft): ExtractedMetadata {
-  const out: ExtractedMetadata & Record<string, unknown> = { modality: "raman" };
+  const out: ExtractedMetadata & Record<string, unknown> = {
+    modality: "raman",
+  };
   for (const { key } of TEXT_FIELDS) {
     const v = draft[key as string]?.trim();
     if (v) out[key as string] = v;
@@ -116,6 +125,7 @@ function errorMessage(e: unknown, fallback: string): string {
 export function UploadWizard() {
   const qc = useQueryClient();
   const [jobId, setJobId] = useState<string | null>(null);
+  const [fileName, setFileName] = useState<string | null>(null);
   /** User edits only. Parsed values are derived, so re-parsing can't be lost. */
   const [edits, setEdits] = useState<Draft>({});
   const [pendingSince, setPendingSince] = useState<number | null>(null);
@@ -124,8 +134,9 @@ export function UploadWizard() {
 
   const upload = useMutation({
     mutationFn: (file: File) => uploadRawFile(file),
-    onSuccess: (res) => {
+    onSuccess: (res, file) => {
       setJobId(res.ingestion_job_id);
+      setFileName(file.name);
       setEdits({});
       setPendingSince(Date.now());
       setNow(Date.now());
@@ -173,7 +184,10 @@ export function UploadWizard() {
     return next;
   }, [job.data]);
 
-  const draft = useMemo<Draft>(() => ({ ...parsed, ...edits }), [parsed, edits]);
+  const draft = useMemo<Draft>(
+    () => ({ ...parsed, ...edits }),
+    [parsed, edits],
+  );
 
   const confirm = useMutation({
     mutationFn: (id: string) => confirmIngestionMetadata(id, toMetadata(draft)),
@@ -273,7 +287,10 @@ export function UploadWizard() {
             }}
           >
             {upload.isPending ? (
-              <Loader2 className="text-muted-foreground size-8 animate-spin" aria-hidden />
+              <Loader2
+                className="text-muted-foreground size-8 animate-spin"
+                aria-hidden
+              />
             ) : (
               <FileUp className="text-muted-foreground size-8" aria-hidden />
             )}
@@ -313,8 +330,11 @@ export function UploadWizard() {
         </CardHeader>
         {stalled && (
           <CardContent>
-            <p className="border-amber-500/40 bg-amber-500/10 text-foreground rounded-lg border p-3 text-sm">
-              <AlertTriangle className="mr-1.5 inline size-4 text-amber-600" aria-hidden />
+            <p className="text-foreground rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+              <AlertTriangle
+                className="mr-1.5 inline size-4 text-amber-600"
+                aria-hidden
+              />
               Still queued after {Math.round(STALLED_AFTER_MS / 1000)}s. Parsing
               runs in a separate worker process, not the API — if none is
               running the job never starts. Locally:{" "}
@@ -366,6 +386,12 @@ export function UploadWizard() {
     <Card>
       <CardHeader>
         <CardTitle>Confirm the acquisition metadata</CardTitle>
+        {fileName && (
+          <div className="text-muted-foreground bg-muted/60 mt-1 inline-flex max-w-full items-center gap-1.5 self-start rounded-md px-2 py-1 text-xs">
+            <FileUp className="size-3.5 shrink-0" aria-hidden />
+            <span className="truncate font-mono">{fileName}</span>
+          </div>
+        )}
         <CardDescription>
           {job.data?.parser_used
             ? `Parsed by ${job.data.parser_used}. Check the values — you are the record's author.`
@@ -395,7 +421,10 @@ export function UploadWizard() {
                     variant={active ? "default" : "outline"}
                     aria-pressed={active}
                     onClick={() =>
-                      setEdits((d) => ({ ...d, laser_wavelength_nm: String(nm) }))
+                      setEdits((d) => ({
+                        ...d,
+                        laser_wavelength_nm: String(nm),
+                      }))
                     }
                   >
                     {nm}

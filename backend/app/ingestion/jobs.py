@@ -5,6 +5,7 @@ uploads survive API restarts and duplicate workers cannot process one job at
 the same time. This keeps the deployment small without making request-bound
 FastAPI background tasks responsible for scientific ingestion.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -112,7 +113,9 @@ async def await_with_lease_heartbeats(
                 if task in done:
                     return task.result()
                 if not on_heartbeat():
-                    raise LeaseLostError("Worker lease was lost while awaiting AI metadata extraction.")
+                    raise LeaseLostError(
+                        "Worker lease was lost while awaiting AI metadata extraction."
+                    )
     finally:
         if not task.done():
             task.cancel()
@@ -349,7 +352,9 @@ def run_ingestion_job(
             else:
                 metadata, source = asyncio.run(
                     await_with_lease_heartbeats(
-                        extract_metadata_via_llm(header_text, db),
+                        extract_metadata_via_llm(
+                            header_text, db, filename=raw_file.original_filename
+                        ),
                         on_heartbeat=lambda: _renew_lease(db, job.id, active_lease_token),
                     )
                 )
