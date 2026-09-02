@@ -37,7 +37,7 @@
       "interactive": true
     }
   },
-  "globalEnv": ["API_URL", "NEXT_PUBLIC_API_URL", "PORT"],
+  "globalEnv": ["API_URL", "NEXT_PUBLIC_API_URL", "SITE_URL", "PORT"],
   "globalPassThroughEnv": [
     "NODE_ENV",
     "CI",
