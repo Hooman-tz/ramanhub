@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@legendapp/list": "^2.0.14",
+    "@legendapp/list": "^3.3.9",
     "@ramanhub/api-client": "workspace:*",
     "@tanstack/react-query": "catalog:",
     "expo": "~54.0.20",
