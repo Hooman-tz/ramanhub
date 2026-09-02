@@ -1,10 +1,12 @@
 "use client";
 
 import { Suspense, useEffect } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
 
 import { getSession } from "@ramanhub/api-client";
+import { Button } from "@ramanhub/ui/button";
 import { Skeleton } from "@ramanhub/ui/skeleton";
 
 import { Workbench } from "~/components/profile/workbench";
@@ -34,12 +36,17 @@ export default function LabPage() {
 
   return (
     <div className="mx-auto max-w-[1500px] px-4 py-6">
-      <header className="mb-4">
-        <h1 className="text-xl font-bold tracking-tight">My Lab</h1>
-        <p className="text-muted-foreground mt-1 text-sm">
-          Your SpectraBase and the processing toolbox. The public Commons and
-          the analysis toolbox arrive with their backend endpoints.
-        </p>
+      <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h1 className="text-xl font-bold tracking-tight">My Lab</h1>
+          <p className="text-muted-foreground mt-1 text-sm">
+            Your SpectraBase and the processing toolbox. Hosted analysis
+            compute is not enabled yet — the API rejects hosted runs.
+          </p>
+        </div>
+        <Button asChild>
+          <Link href="/upload">Add a spectrum</Link>
+        </Button>
       </header>
       <Suspense fallback={<Skeleton className="h-[70vh] w-full rounded-2xl" />}>
         <Workbench />

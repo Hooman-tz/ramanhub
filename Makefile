@@ -1,4 +1,4 @@
-.PHONY: up down logs migrate seed seed-demo seed-scenarios import-journals test lint
+.PHONY: up down logs migrate seed seed-demo seed-scenarios import-journals worker test lint
 
 up:
 	docker compose up -d
@@ -26,6 +26,11 @@ seed-scenarios:
 
 import-journals:
 	cd backend && uv run python -m scripts.import_scimago "$(FILE)"
+
+# Ingestion worker. `POST /raw-files` only enqueues a job — nothing parses it
+# until this is running, so the upload flow needs it alongside the API.
+worker:
+	cd backend && uv run python -m app.ingestion.worker
 
 test:
 	cd backend && uv run pytest

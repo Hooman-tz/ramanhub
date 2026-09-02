@@ -112,6 +112,58 @@ services:
       - key: SENTRY_DSN
         sync: false
 
+  # Parsing runs OUT OF PROCESS. `POST /raw-files` only enqueues an
+  # IngestionJob; without this service every upload sits at status=pending
+  # forever and the upload wizard never completes. It serves no HTTP, so it is
+  # a `worker`, not a `web` service, and gets no healthCheckPath.
+  #
+  # Migrations are owned by the API service's preDeployCommand — deliberately
+  # not repeated here, so two services never race to run them.
+  - type: worker
+    name: ramanhub-ingestion-worker
+    runtime: docker
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    dockerCommand: uv run python -m app.ingestion.worker
+    plan: starter
+    autoDeploy: true
+    envVars:
+      # The worker needs the same database, object store and LLM credentials
+      # as the API. `fromService` copies whatever the API service is using so
+      # the two cannot drift apart.
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: ramanhub-db
+          property: connectionString
+      - key: STORAGE_BACKEND
+        value: s3
+      - key: S3_REGION
+        value: auto
+      - key: S3_BUCKET_RAW
+        value: raw-spectra
+      - key: S3_BUCKET_PROCESSED
+        value: processed-spectra
+      - key: S3_BUCKET_FIGURES
+        value: figures
+      - key: S3_ENDPOINT_URL
+        sync: false
+      - key: S3_ACCESS_KEY_ID
+        sync: false
+      - key: S3_SECRET_ACCESS_KEY
+        sync: false
+      # Header parsing falls back to an LLM when no deterministic vendor
+      # parser matches; without a key that fallback is a documented no-op.
+      - key: OPENROUTER_API_KEY
+        sync: false
+      - key: OPENROUTER_MODEL
+        value: openai/gpt-4o-mini
+      - key: JWT_SECRET
+        sync: false
+      - key: SENTRY_DSN
+        sync: false
+
 databases:
   - name: ramanhub-db
     # basic-256mb (~$6/mo) — the `free` Postgres plan is deleted after 30

@@ -716,6 +716,11 @@ export interface LibrarySpectrum {
   metadata_state: string;
   qc_state: string;
   publish_ready: boolean;
+  /**
+   * Drafts have no `published_at`, so this is the only timestamp that orders
+   * the owner's own library. `/library/mine` is already sorted by it, desc.
+   */
+  created_at: string;
 }
 
 export interface LibraryParams {
@@ -1062,4 +1067,163 @@ export function findingImageFileUrl(
   imageId: string,
 ): string {
   return `/api/v1/findings/${encodeURIComponent(findingId)}/images/${encodeURIComponent(imageId)}/file`;
+}
+
+/* --- ingestion: getting a spectrum into the platform ---------------------- */
+
+/**
+ * The typed metadata shape the vendor parsers and the LLM fallback both
+ * produce, and the only thing `PATCH /ingestion-jobs/{id}` accepts. Mirrors
+ * `ExtractedMetadata` in `backend/app/schemas/ingestion.py`, which is
+ * `extra="forbid"` — sending an unknown key is a 422, not a silent drop.
+ */
+export interface ExtractedMetadata {
+  modality: "raman";
+  instrument_vendor?: string | null;
+  instrument_model?: string | null;
+  laser_wavelength_nm?: number | null;
+  laser_power_mw?: number | null;
+  integration_time_ms?: number | null;
+  accumulations?: number | null;
+  /** Formatted "min-max", e.g. "200-3200". */
+  spectral_range_cm1?: string | null;
+  resolution_cm1?: number | null;
+  acquisition_datetime?: string | null;
+  sample_description?: string | null;
+  grating_lines_mm?: number | null;
+  objective_magnification?: number | null;
+  raw_extra_fields?: Record<string, string | number>;
+}
+
+export type IngestionStatus =
+  | "pending"
+  | "running"
+  | "succeeded"
+  | "failed"
+  | "cancelled";
+
+export interface IngestionJob {
+  id: string;
+  raw_file_id: string;
+  status: IngestionStatus;
+  parser_used: string | null;
+  parser_version: string | null;
+  parser_confidence: number | null;
+  canonicalization_version: string | null;
+  header_hash: string | null;
+  extracted_metadata_raw: Record<string, unknown> | null;
+  sanity_check_flags: Record<string, unknown> | null;
+  extracted_metadata_confirmed: Record<string, unknown> | null;
+  error_message: string | null;
+  attempt_count: number;
+  max_attempts: number;
+  draft_spectrum_id: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+  confirmed_at: string | null;
+}
+
+export interface RawFileUploadResult {
+  raw_file_id: string;
+  ingestion_job_id: string;
+  /**
+   * True when this exact content was already uploaded by this user. The
+   * server returns the original job rather than creating a duplicate, so the
+   * caller should resume that job instead of treating it as an error.
+   */
+  deduplicated: boolean;
+}
+
+/**
+ * `POST /raw-files` — upload a vendor spectrum file.
+ *
+ * Returns 202: the file is stored and an ingestion job is queued, but nothing
+ * is parsed yet. A separate worker process (`python -m app.ingestion.worker`)
+ * moves the job pending -> running -> succeeded; poll {@link getIngestionJob}
+ * until it leaves a non-terminal state. If no worker is running the job stays
+ * `pending` forever.
+ */
+export function uploadRawFile(
+  file: File | Blob,
+  opts?: ApiClientOptions,
+): Promise<RawFileUploadResult> {
+  const form = new FormData();
+  form.append("file", file);
+  return apiRequest<RawFileUploadResult>("/raw-files", {
+    ...opts,
+    method: "POST",
+    body: form,
+  });
+}
+
+/** `GET /ingestion-jobs/{id}` — poll parse progress. 404s for non-owners. */
+export function getIngestionJob(
+  jobId: string,
+  opts?: ApiClientOptions,
+): Promise<IngestionJob> {
+  return apiRequest<IngestionJob>(
+    `/ingestion-jobs/${encodeURIComponent(jobId)}`,
+    opts,
+  );
+}
+
+/**
+ * `PATCH /ingestion-jobs/{id}` — confirm the parsed metadata, which
+ * atomically creates (or recovers) the private draft spectrum. Only valid
+ * once the job has succeeded; earlier calls 409. Re-confirming is idempotent
+ * and preserves the draft's title/description and processing work.
+ */
+export function confirmIngestionMetadata(
+  jobId: string,
+  metadata: ExtractedMetadata,
+  opts?: ApiClientOptions,
+): Promise<IngestionJob> {
+  return apiRequest<IngestionJob>(
+    `/ingestion-jobs/${encodeURIComponent(jobId)}`,
+    { ...opts, method: "PATCH", body: { metadata } },
+  );
+}
+
+/** `POST /ingestion-jobs/{id}/retry` — requeue a failed parse. */
+export function retryIngestionJob(
+  jobId: string,
+  opts?: ApiClientOptions,
+): Promise<IngestionJob> {
+  return apiRequest<IngestionJob>(
+    `/ingestion-jobs/${encodeURIComponent(jobId)}/retry`,
+    { ...opts, method: "POST" },
+  );
+}
+
+/* --- licenses + spectrum publishing --------------------------------------- */
+
+export interface LicenseOption {
+  id: string;
+  name: string;
+  url: string | null;
+  is_default: boolean;
+}
+
+/**
+ * `GET /licenses` — the publishable license list. Seeded by
+ * `app.seed.seed_data`; an unseeded database returns [] and nothing can be
+ * published, because publish requires a `license_id`.
+ */
+export function listLicenses(
+  opts?: ApiClientOptions,
+): Promise<LicenseOption[]> {
+  return apiRequest<LicenseOption[]>("/licenses", opts);
+}
+
+/** `POST /spectra/{id}/publish` — move a draft to the public commons. */
+export function publishSpectrum(
+  spectrumId: string,
+  input: { license_id: string },
+  opts?: ApiClientOptions,
+): Promise<Spectrum> {
+  return apiRequest<Spectrum>(
+    `/spectra/${encodeURIComponent(spectrumId)}/publish`,
+    { ...opts, method: "POST", body: input },
+  );
 }

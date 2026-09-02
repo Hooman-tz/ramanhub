@@ -1,6 +1,6 @@
 # Spectra Insight — Product Status
 
-_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-08-30 (M6 shipped — visual feed & rich profile)._
+_Assistant-maintained. Updated at every milestone boundary. Last update: 2026-09-01 (beta prep: CI green, spectrum upload)._
 
 Full plan: `/Users/hooman/.claude/plans/how-is-our-social-gentle-alpaca.md`
 
@@ -192,6 +192,75 @@ untouched** — 0 files under `backend/`, so pytest / Alembic unaffected. Pixel
 review still owed (Chrome automation was unavailable in the porting session);
 dev stack was up (`:3000` web, `:8000` API) and every touched route returned
 200 with a real session.
+
+**Beta prep (2026-09-01, branch `feature/figma-design-port`).** Two commits
+on top of the design port. A live review found the launch further off than
+this file claimed; these corrections matter more than the new work:
+
+- **CI had been red for four consecutive runs on PR #13** — every "typecheck
+  10/10 / build green / N tests pass" claim above was **local-only**. Both
+  jobs failed at *setup*, so the migration + drift steps had never executed
+  even once.
+  - `web`: pnpm 11 replaced pnpm 10's `onlyBuiltDependencies` /
+    `ignoredBuiltDependencies` with an `allowBuilds` map and silently ignores
+    the old keys. `3a9e221` had deleted pnpm's auto-generated `allowBuilds`
+    stub and added the old-style keys — it removed the prompt instead of
+    answering it. Now answered.
+  - `backend`: CI sets no `STORAGE_BACKEND`, so it defaulted to `s3` and 5
+    `test_ingestion_api` tests dialled a MinIO that isn't there. Local passed
+    only because `.env` sets `local`. Pinned in the job.
+  - With those cleared, **`alembic check` ran for the first time and failed**
+    on pre-existing model/migration drift. Migration `af117c4589e4`
+    reconciles it (a genuinely missing unique constraint on
+    `analysis_dataset_spectra`, five nullable-vs-NOT-NULL timestamps, and
+    uniqueness declared as a raw index but modelled as a constraint).
+  - `pnpm lint` is now a CI gate; the two pre-existing issues are fixed.
+- **Correction to the M6/design-port entries:** "no ingestion / public-search
+  / analysis-compute endpoints exist yet" was **wrong**. `POST /raw-files`,
+  the `/ingestion-jobs` loop, `GET /search/spectra` and `/analysis/*` all
+  exist and are registered — what was missing was api-client coverage and UI.
+- **Correction:** the Alembic head was `d1c4b7e2f9a0`, not `c9d2e5f8a1b4`;
+  the suite was 436 (now **448**), not 423.
+- **`/v1` drift:** only 19 of 92 paths are versioned. New M3/M6 work landed
+  un-versioned (`/findings/{id}/{comments,votes,shares}`, `/pins`,
+  `/users/by-handle/{h}`, `/library/mine`). This is the seam M8 depends on.
+
+New work:
+- **Spectrum upload now exists** (`/upload`) — the core loop had no UI, so no
+  beta user could get data in. Drop-zone → `POST /raw-files` → poll the job →
+  confirm metadata → draft spectrum. api-client gained `uploadRawFile`,
+  `getIngestionJob`, `confirmIngestionMetadata`, `retryIngestionJob`,
+  `listLicenses`, `publishSpectrum`. Verified end-to-end against the running
+  stack: parsed by `horiba_labspec` (confidence 1.0), draft created, 1500
+  points chart-ready; dedupe and the MZ-executable rejection both behave.
+- **The ingestion worker is now deployed.** Parsing runs in
+  `python -m app.ingestion.worker`, and `render.yaml` had exactly one service
+  — so on the documented deploy every upload would have sat `pending`
+  forever. Added as a Render `worker`, a compose service, and `make worker`.
+- **Domain unified on `spectra-in.site`** (ADR-014: `raman.` = app, `api.` =
+  API), replacing the leftover `serds.ca` config. That split exposed a real
+  production bug: **every auth cookie was host-only** (no `domain=`), so the
+  API's session cookie would never reach the web origin and the OAuth state
+  cookie is written at one origin and read at the other — sign-in would have
+  failed with "Invalid or expired OAuth state". Unreproducible locally, where
+  both halves are `localhost`. New `app/auth/cookies.py` + `COOKIE_DOMAIN`.
+- **`ORCID_ENV` implemented** — it was in `.env.example` and `render.yaml`
+  but read by no Python, so OPERATIONS §5's "use the sandbox" was not
+  followable. Also fixed `ORCID_REDIRECT_URI`, which pointed at the sign-in
+  callback and sent *linking* users through login.
+- **A fresh production DB could not publish anything**: publish requires a
+  `license_id` and `seed_data` was a README footnote. Now in `preDeploy`.
+  The `figures` bucket is now provisioned (it was set but created nowhere).
+- `/library/mine` gained `created_at`, fixing Office "Recent activity"
+  silently dropping every draft.
+
+Still open before launch: no free-text search anywhere (`/search/spectra` is
+a faceted filter with no `q`); `is_profile_public` is unenforced on the
+endpoints the profile page actually uses; identity linking trusts an
+unverified GitHub email; guest→full migration orphans findings; no error
+tracking and `/health` never touches Postgres; no `error.tsx`/`not-found.tsx`;
+no per-page SEO on the shareable routes and the favicon is still the T3
+default. Full plan: `~/.claude/plans/i-need-you-to-adaptive-glacier.md`.
 
 **Next action:** M0–M6 are done on `integration/social-forward` and unpushed.
 Owner steps to go live: review the branch, merge to `main`, run `make

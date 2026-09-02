@@ -74,7 +74,15 @@ unresolved decisions in
    cd backend && uv run uvicorn app.main:app --reload
    ```
 
-6. Run the web app (a pnpm + Turborepo workspace at the repo root; it
+6. Run the ingestion worker, in its own terminal. `POST /raw-files` only
+   *enqueues* a job — the API never parses. Without this, an upload sits at
+   `status=pending` forever and the `/upload` wizard cannot finish:
+
+   ```bash
+   make worker
+   ```
+
+7. Run the web app (a pnpm + Turborepo workspace at the repo root; it
    proxies `/api/*` to the backend, so start the backend first):
 
    ```bash
@@ -82,7 +90,7 @@ unresolved decisions in
    pnpm dev:web
    ```
 
-7. Run the backend test suite:
+8. Run the backend test suite:
 
    ```bash
    make test

@@ -11,6 +11,8 @@ Mounted with no prefix — `GET /library/mine`.
 """
 from __future__ import annotations
 
+from datetime import datetime
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -32,6 +34,12 @@ class LibrarySpectrumResult(SpectrumSearchResult):
     metadata_state: str
     qc_state: str
     publish_ready: bool
+    # Drafts have no `published_at`, so it is the only timestamp a client can
+    # order the owner's own library by — without it a freshly uploaded
+    # spectrum is indistinguishable from one with no date at all. Added here
+    # rather than on `SpectrumSearchResult` so the public `/search/spectra`
+    # shape is unchanged.
+    created_at: datetime
 
 
 def _serialize_library_result(spectrum: Spectrum, db: Session) -> LibrarySpectrumResult:
@@ -43,6 +51,7 @@ def _serialize_library_result(spectrum: Spectrum, db: Session) -> LibrarySpectru
         metadata_state=readiness["metadata_state"],
         qc_state=readiness["qc_state"],
         publish_ready=readiness["ready"],
+        created_at=spectrum.created_at,
     )
 
 

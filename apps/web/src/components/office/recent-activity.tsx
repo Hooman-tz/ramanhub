@@ -64,7 +64,9 @@ export function RecentActivity() {
           : `Uploaded ${s.title ?? "a spectrum"}`,
       sub:
         [s.material_type, s.modality].filter(Boolean).join(" · ") || "spectrum",
-      at: new Date(s.published_at ?? "").getTime() || 0,
+      // Not `published_at`: drafts don't have one, and filtering them out
+      // here made the "Uploaded …" branch above unreachable.
+      at: new Date(s.published_at ?? s.created_at).getTime() || 0,
     })),
     ...(findings.data ?? []).map((f) => ({
       key: `f-${f.id}`,
