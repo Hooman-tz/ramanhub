@@ -6,8 +6,8 @@ import { ThemeProvider, ThemeToggle } from "@ramanhub/ui/theme";
 import { Toaster } from "@ramanhub/ui/toast";
 
 import { Providers } from "~/app/providers";
-import { env } from "~/env";
 import { AppShell } from "~/components/app-shell";
+import { env } from "~/env";
 
 import "~/app/styles.css";
 
@@ -20,8 +20,11 @@ const SITE_DESCRIPTION =
  * per-route `generateMetadata` return relative canonical/OG URLs and have Next
  * resolve them absolutely; without it Next warns and emits relative OG URLs,
  * which most crawlers drop.
+ *
+ * `env.SITE_URL` is `undefined` when env validation is skipped (CI builds), so
+ * fall back to the canonical origin — `new URL(undefined)` would crash the build.
  */
-const SITE_URL = env.SITE_URL;
+const SITE_URL = env.SITE_URL ?? "https://raman.spectra-in.site";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
