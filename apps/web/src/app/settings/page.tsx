@@ -3,11 +3,9 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, X } from "lucide-react";
+import { X } from "lucide-react";
 
-import type { HandleAvailability } from "@ramanhub/api-client";
 import {
-  checkHandle,
   deleteMe,
   exportMe,
   getSession,
@@ -36,18 +34,8 @@ import {
 import { Input } from "@ramanhub/ui/input";
 import { Label } from "@ramanhub/ui/label";
 
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return debounced;
-}
-
 interface ProfileForm {
   display_name: string;
-  profile_handle: string;
   affiliation: string;
   bio: string;
   is_profile_public: boolean;
@@ -55,7 +43,6 @@ interface ProfileForm {
 
 const BLANK: ProfileForm = {
   display_name: "",
-  profile_handle: "",
   affiliation: "",
   bio: "",
   is_profile_public: true,
@@ -104,7 +91,6 @@ export default function SettingsPage() {
     setHydratedFor(uid);
     setForm({
       display_name: session.data.display_name ?? "",
-      profile_handle: session.data.profile_handle ?? "",
       affiliation: profile.data?.affiliation ?? "",
       bio: profile.data?.bio ?? "",
       is_profile_public: session.data.is_profile_public ?? true,
@@ -112,21 +98,10 @@ export default function SettingsPage() {
     setInterests(profile.data?.research_interests ?? []);
   }
 
-  const debouncedHandle = useDebounced(form.profile_handle.trim(), 400);
-  const handleChanged = debouncedHandle !== (currentHandle ?? "");
-  const availability = useQuery<HandleAvailability | null>({
-    queryKey: ["handle-available", debouncedHandle],
-    queryFn: () =>
-      debouncedHandle.length >= 3 ? checkHandle(debouncedHandle) : null,
-    enabled: handleChanged && debouncedHandle.length >= 3,
-  });
-  const handleOk = !handleChanged || availability.data?.available === true;
-
   const save = useMutation({
     mutationFn: () =>
       updateMe({
         display_name: form.display_name.trim() || undefined,
-        profile_handle: handleChanged ? debouncedHandle : undefined,
         affiliation: form.affiliation.trim(),
         bio: form.bio.trim(),
         research_interests: interests,
@@ -181,12 +156,7 @@ export default function SettingsPage() {
 
   if (!session.data || session.data.is_guest) return null;
 
-  const handleTooShort = handleChanged && debouncedHandle.length < 3;
-  const canSave =
-    handleOk &&
-    !handleTooShort &&
-    form.display_name.trim().length > 0 &&
-    !save.isPending;
+  const canSave = form.display_name.trim().length > 0 && !save.isPending;
 
   return (
     <main className="mx-auto w-full max-w-lg space-y-6 px-4 py-10">
@@ -223,40 +193,15 @@ export default function SettingsPage() {
               <Label htmlFor="handle">Handle</Label>
               <Input
                 id="handle"
-                value={form.profile_handle}
-                onChange={(e) =>
-                  setForm({ ...form, profile_handle: e.target.value })
-                }
+                value={currentHandle ? `@${currentHandle}` : "—"}
+                readOnly
+                disabled
+                className="opacity-70"
               />
-              {handleChanged && debouncedHandle.length >= 3 && (
-                <p
-                  className={
-                    handleOk
-                      ? "inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400"
-                      : "text-destructive inline-flex items-center gap-1 text-xs"
-                  }
-                >
-                  {availability.isLoading ? (
-                    "Checking…"
-                  ) : handleOk ? (
-                    <>
-                      <Check className="size-3.5" aria-hidden />@
-                      {availability.data?.normalized ?? debouncedHandle} is
-                      available
-                    </>
-                  ) : (
-                    <>
-                      <X className="size-3.5" aria-hidden />
-                      {availability.data?.reason ?? "Not available"}
-                    </>
-                  )}
-                </p>
-              )}
-              {handleTooShort && (
-                <p className="text-destructive text-xs">
-                  Handle must be at least 3 characters.
-                </p>
-              )}
+              <p className="text-muted-foreground text-xs">
+                Your handle is permanent — it&apos;s how your work is cited and
+                linked. Contact support if it must change.
+              </p>
             </div>
 
             <div className="space-y-1.5">
