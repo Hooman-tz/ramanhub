@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { FindingComment } from "@ramanhub/api-client";
@@ -23,6 +23,41 @@ function timeAgo(iso: string): string {
   return `${Math.round(hrs / 24)}d`;
 }
 
+function CommentMeta({ c }: { c: FindingComment }) {
+  return (
+    <div className="mb-1.5 flex items-center gap-2 text-xs">
+      {c.author.avatar_url ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img
+          src={c.author.avatar_url}
+          alt=""
+          className="size-5 rounded-full object-cover"
+        />
+      ) : (
+        <span
+          aria-hidden
+          className="bg-muted text-foreground/70 flex size-5 items-center justify-center rounded-full text-[10px] font-semibold"
+        >
+          {c.author.display_name.trim().charAt(0).toUpperCase() || "?"}
+        </span>
+      )}
+      {c.author.profile_path ? (
+        <a
+          href={c.author.profile_path}
+          className="text-foreground hover:text-primary focus-visible:ring-ring/50 rounded font-medium transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
+        >
+          {c.author.display_name}
+        </a>
+      ) : (
+        <span className="text-foreground font-medium">
+          {c.author.display_name}
+        </span>
+      )}
+      <span className="text-foreground/60">· {timeAgo(c.created_at)}</span>
+    </div>
+  );
+}
+
 export function FindingComments({
   id,
   initial,
@@ -33,6 +68,9 @@ export function FindingComments({
   const qc = useQueryClient();
   const [body, setBody] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** Which top-level comment's reply box is open, and its draft text. */
+  const [replyTo, setReplyTo] = useState<number | null>(null);
+  const [replyText, setReplyText] = useState("");
 
   const session = useQuery({
     queryKey: ["session"],
@@ -46,11 +84,20 @@ export function FindingComments({
     initialData: initial,
   });
 
-  const mutation = useMutation({
-    mutationFn: () => postFindingComment(id, { body: body.trim() }),
-    onSuccess: () => {
-      setBody("");
+  const post = useMutation({
+    mutationFn: (vars: { text: string; parentId: number | null }) =>
+      postFindingComment(id, {
+        body: vars.text.trim(),
+        parent_id: vars.parentId ?? undefined,
+      }),
+    onSuccess: (_data, vars) => {
       setError(null);
+      if (vars.parentId === null) {
+        setBody("");
+      } else {
+        setReplyText("");
+        setReplyTo(null);
+      }
       void qc.invalidateQueries({ queryKey: ["finding-comments", id] });
     },
     onError: (e) =>
@@ -58,6 +105,24 @@ export function FindingComments({
   });
 
   const list = comments.data ?? [];
+
+  // The API returns a flat list; group one level of replies under their parent.
+  const { roots, repliesByParent } = useMemo(() => {
+    const repliesByParent = new Map<number, FindingComment[]>();
+    const roots: FindingComment[] = [];
+    for (const c of list) {
+      if (c.parent_id == null) {
+        roots.push(c);
+      } else {
+        const arr = repliesByParent.get(c.parent_id) ?? [];
+        arr.push(c);
+        repliesByParent.set(c.parent_id, arr);
+      }
+    }
+    return { roots, repliesByParent };
+  }, [list]);
+
+  const busy = post.isPending;
 
   return (
     <section className="mt-10">
@@ -78,61 +143,95 @@ export function FindingComments({
       )}
 
       <ul className="mt-4 space-y-3">
-        {list.map((c) => (
-          <li
-            key={c.id}
-            className="border-border rounded-lg border p-3.5 text-sm"
-          >
-            <div className="mb-1.5 flex items-center gap-2 text-xs">
-              {c.author.avatar_url ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={c.author.avatar_url}
-                  alt=""
-                  className="size-5 rounded-full object-cover"
-                />
-              ) : (
-                <span
-                  aria-hidden
-                  className="bg-muted text-foreground/70 flex size-5 items-center justify-center rounded-full text-[10px] font-semibold"
+        {roots.map((c) => {
+          const replies = repliesByParent.get(c.id) ?? [];
+          return (
+            <li
+              key={c.id}
+              className="border-border rounded-lg border p-3.5 text-sm"
+            >
+              <CommentMeta c={c} />
+              <p className="text-foreground/90 leading-relaxed whitespace-pre-wrap">
+                {c.body}
+              </p>
+
+              {signedIn && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReplyTo(replyTo === c.id ? null : c.id);
+                    setReplyText("");
+                  }}
+                  className="text-foreground/60 hover:text-foreground mt-2 text-xs font-medium"
                 >
-                  {c.author.display_name.trim().charAt(0).toUpperCase() || "?"}
-                </span>
+                  {replyTo === c.id ? "Cancel" : "Reply"}
+                </button>
               )}
-              {c.author.profile_path ? (
-                <a
-                  href={c.author.profile_path}
-                  className="text-foreground hover:text-primary focus-visible:ring-ring/50 rounded font-medium transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
-                >
-                  {c.author.display_name}
-                </a>
-              ) : (
-                <span className="text-foreground font-medium">
-                  {c.author.display_name}
-                </span>
+
+              {(replies.length > 0 || replyTo === c.id) && (
+                <div className="border-border/70 mt-3 space-y-3 border-l-2 pl-3">
+                  {replies.map((r) => (
+                    <div key={r.id}>
+                      <CommentMeta c={r} />
+                      <p className="text-foreground/90 leading-relaxed whitespace-pre-wrap">
+                        {r.body}
+                      </p>
+                    </div>
+                  ))}
+
+                  {replyTo === c.id && (
+                    <form
+                      className="space-y-2"
+                      onSubmit={(e) => {
+                        e.preventDefault();
+                        if (replyText.trim() && !busy)
+                          post.mutate({ text: replyText, parentId: c.id });
+                      }}
+                    >
+                      <textarea
+                        value={replyText}
+                        onChange={(e) => setReplyText(e.target.value)}
+                        placeholder="Write a reply…"
+                        rows={2}
+                        autoFocus
+                        className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm leading-relaxed focus-visible:ring-[3px] focus-visible:outline-none"
+                      />
+                      <div className="flex justify-end">
+                        <Button
+                          type="submit"
+                          size="sm"
+                          disabled={!replyText.trim() || busy}
+                        >
+                          {busy ? "Posting…" : "Reply"}
+                        </Button>
+                      </div>
+                    </form>
+                  )}
+                </div>
               )}
-              <span className="text-foreground/60">
-                · {timeAgo(c.created_at)}
-              </span>
-            </div>
-            <p className="text-foreground/90 leading-relaxed whitespace-pre-wrap">
-              {c.body}
-            </p>
-          </li>
-        ))}
-        {list.length === 0 && !comments.isLoading && (
+            </li>
+          );
+        })}
+        {roots.length === 0 && !comments.isLoading && (
           <li className="text-foreground/70 rounded-lg border border-dashed p-4 text-center text-sm">
             No comments yet — start the discussion.
           </li>
         )}
       </ul>
 
+      {error && (
+        <p className="text-destructive mt-2 text-xs" role="alert">
+          {error}
+        </p>
+      )}
+
       {signedIn ? (
         <form
           className="mt-4 space-y-2"
           onSubmit={(e) => {
             e.preventDefault();
-            if (body.trim()) mutation.mutate();
+            if (body.trim() && !busy)
+              post.mutate({ text: body, parentId: null });
           }}
         >
           <label htmlFor="comment-body" className="sr-only">
@@ -146,18 +245,9 @@ export function FindingComments({
             rows={3}
             className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm leading-relaxed focus-visible:ring-[3px] focus-visible:outline-none"
           />
-          {error && (
-            <p className="text-destructive text-xs" role="alert">
-              {error}
-            </p>
-          )}
           <div className="flex justify-end">
-            <Button
-              type="submit"
-              size="sm"
-              disabled={!body.trim() || mutation.isPending}
-            >
-              {mutation.isPending ? "Posting…" : "Comment"}
+            <Button type="submit" size="sm" disabled={!body.trim() || busy}>
+              {busy ? "Posting…" : "Comment"}
             </Button>
           </div>
         </form>
