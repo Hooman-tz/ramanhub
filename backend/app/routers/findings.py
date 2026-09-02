@@ -24,11 +24,23 @@ import hashlib
 from datetime import UTC, datetime
 from uuid import UUID, uuid4
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    UploadFile,
+    status,
+)
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from app import idempotency
 from app.analysis.engine import load_spectrum_arrays
 from app.auth.deps import get_current_full_user, get_current_user, get_current_user_optional
 from app.config import settings
@@ -404,11 +416,19 @@ def _assert_publishable(finding: Finding, db: Session) -> None:
 @router.post("/findings", response_model=FindingOut, status_code=status.HTTP_201_CREATED)
 def create_finding(
     body: FindingCreate,
+    request: Request,
     db: Session = Depends(get_db),
     # Guests may draft a Finding, same try-before-login rule as uploading.
     # Publishing is what requires a real account.
     user: User = Depends(get_current_user),
-) -> FindingOut:
+):
+    # A retried/replayed POST (slow backend + proxy retry or HTTP/2 reset)
+    # carries the same client `Idempotency-Key` — return the first run's
+    # response instead of creating a second draft. No header -> None.
+    hit = idempotency.check(db, user.id, request)
+    if hit is not None:
+        return JSONResponse(hit["body"], status_code=hit["status"])
+
     finding = Finding(
         accession=next_finding_accession(db),
         owner_id=user.id,
@@ -421,7 +441,9 @@ def create_finding(
     db.add(finding)
     db.commit()
     db.refresh(finding)
-    return serialize_finding(finding, db)
+    result = serialize_finding(finding, db)
+    idempotency.record(db, user.id, request, status.HTTP_201_CREATED, result)
+    return result
 
 
 @router.get("/findings", response_model=list[FindingOut])

@@ -77,6 +77,22 @@ export interface RequestOptions extends ApiClientOptions {
   signal?: AbortSignal;
 }
 
+/**
+ * RFC-4122 v4 UUID. Prefers the platform `crypto.randomUUID`; falls back to
+ * a `Math.random`-based generator on runtimes that don't expose it (older
+ * RN / JSC). Not cryptographically strong in the fallback path — it only
+ * needs to be collision-free enough to key one idempotent request.
+ */
+function generateUuid(): string {
+  const fromCrypto = globalThis.crypto?.randomUUID?.();
+  if (fromCrypto) return fromCrypto;
+  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
+    const r = (Math.random() * 16) | 0;
+    const v = c === "x" ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
+
 export async function apiRequest<T>(
   path: string,
   opts: RequestOptions = {},
@@ -95,8 +111,18 @@ export async function apiRequest<T>(
   const isFormBody =
     typeof FormData !== "undefined" && opts.body instanceof FormData;
 
+  const method = opts.method ?? "GET";
+
+  // Generated once per `apiRequest` call, BEFORE `fetch`. A transparent
+  // HTTP replay by a proxy (Vercel rewrite) or an HTTP/2 stream reset
+  // resends the exact same request, carrying this same key — which is how
+  // the backend (see `app/idempotency.py`) recognises the retry and returns
+  // the first response instead of creating a duplicate draft / post / vote.
+  const idempotencyHeader: Record<string, string> =
+    method === "GET" ? {} : { "Idempotency-Key": generateUuid() };
+
   const res = await fetch(`${base}${rel}${qs}`, {
-    method: opts.method ?? "GET",
+    method,
     credentials: "include",
     signal: opts.signal,
     headers: {
@@ -104,6 +130,7 @@ export async function apiRequest<T>(
         ? { "content-type": "application/json" }
         : {}),
       ...(opts.token ? { authorization: `Bearer ${opts.token}` } : {}),
+      ...idempotencyHeader,
       ...opts.headers,
     },
     body:
