@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import idempotency
 from app.auth.deps import get_current_full_user, get_current_user_optional
 from app.db.session import get_db
 from app.models.finding import Finding
@@ -58,10 +60,18 @@ def _vote_count(spectrum_id: UUID, db: Session) -> int:
 @router.post("/spectra/{spectrum_id}/votes", response_model=VoteToggleResponse)
 def toggle_vote(
     spectrum_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_full_user),
     _: None = Depends(rate_limit_votes),
-) -> VoteToggleResponse:
+):
+    # A replayed POST (proxy retry / HTTP/2 reset carrying the same client
+    # `Idempotency-Key`) must not flip the toggle a second time — return the
+    # first run's answer. No header -> None, behaviour unchanged.
+    hit = idempotency.check(db, user.id, request)
+    if hit is not None:
+        return JSONResponse(hit["body"], status_code=hit["status"])
+
     spectrum = _get_visible_spectrum_or_404(spectrum_id, user, db)
 
     try:
@@ -84,10 +94,14 @@ def toggle_vote(
         if existing is not None:
             db.delete(existing)
             db.commit()
-        return VoteToggleResponse(voted=False, count=_vote_count(spectrum.id, db))
+        off = VoteToggleResponse(voted=False, count=_vote_count(spectrum.id, db))
+        idempotency.record(db, user.id, request, status.HTTP_200_OK, off)
+        return off
 
     db.commit()
-    return VoteToggleResponse(voted=True, count=_vote_count(spectrum.id, db))
+    on = VoteToggleResponse(voted=True, count=_vote_count(spectrum.id, db))
+    idempotency.record(db, user.id, request, status.HTTP_200_OK, on)
+    return on
 
 
 def _finding_vote_count(finding_id: UUID, db: Session) -> int:
@@ -107,13 +121,18 @@ def _get_visible_finding_or_404(finding_id: UUID, user: User | None, db: Session
 @router.post("/findings/{finding_id}/votes", response_model=VoteToggleResponse)
 def toggle_finding_vote(
     finding_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_full_user),
     _: None = Depends(rate_limit_votes),
-) -> VoteToggleResponse:
+):
     """Same insert-first, treat-conflict-as-toggle-off pattern as the
     spectrum route above — see its comments for why that ordering is
     race-safe."""
+    hit = idempotency.check(db, user.id, request)
+    if hit is not None:
+        return JSONResponse(hit["body"], status_code=hit["status"])
+
     finding = _get_visible_finding_or_404(finding_id, user, db)
 
     try:
@@ -127,10 +146,14 @@ def toggle_finding_vote(
         if existing is not None:
             db.delete(existing)
             db.commit()
-        return VoteToggleResponse(voted=False, count=_finding_vote_count(finding.id, db))
+        off = VoteToggleResponse(voted=False, count=_finding_vote_count(finding.id, db))
+        idempotency.record(db, user.id, request, status.HTTP_200_OK, off)
+        return off
 
     db.commit()
-    return VoteToggleResponse(voted=True, count=_finding_vote_count(finding.id, db))
+    on = VoteToggleResponse(voted=True, count=_finding_vote_count(finding.id, db))
+    idempotency.record(db, user.id, request, status.HTTP_200_OK, on)
+    return on
 
 
 @router.get("/findings/{finding_id}/votes", response_model=VoteStatusResponse)

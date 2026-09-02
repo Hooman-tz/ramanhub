@@ -14,12 +14,14 @@ from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
+from app import idempotency
 from app.auth.deps import get_current_full_user, get_current_user_optional
 from app.db.session import get_db
 from app.models.finding import Finding
@@ -65,11 +67,18 @@ def _finding_share_count(finding_id: UUID, db: Session) -> int:
 @router.post("/spectra/{spectrum_id}/shares", response_model=ShareToggleResponse)
 def toggle_spectrum_share(
     spectrum_id: UUID,
+    request: Request,
     body: ShareRequest | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_full_user),
     _: None = Depends(rate_limit_shares),
-) -> ShareToggleResponse:
+):
+    # A replayed POST carrying the same client `Idempotency-Key` must not
+    # flip the toggle again — replay the first run's answer. No header -> None.
+    hit = idempotency.check(db, user.id, request)
+    if hit is not None:
+        return JSONResponse(hit["body"], status_code=hit["status"])
+
     spectrum = db.get(Spectrum, spectrum_id)
     if spectrum is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
@@ -95,20 +104,29 @@ def toggle_spectrum_share(
         if existing is not None:
             db.delete(existing)
             db.commit()
-        return ShareToggleResponse(shared=False, count=_spectrum_share_count(spectrum.id, db))
+        off = ShareToggleResponse(shared=False, count=_spectrum_share_count(spectrum.id, db))
+        idempotency.record(db, user.id, request, status.HTTP_200_OK, off)
+        return off
 
     db.commit()
-    return ShareToggleResponse(shared=True, count=_spectrum_share_count(spectrum.id, db))
+    on = ShareToggleResponse(shared=True, count=_spectrum_share_count(spectrum.id, db))
+    idempotency.record(db, user.id, request, status.HTTP_200_OK, on)
+    return on
 
 
 @router.post("/findings/{finding_id}/shares", response_model=ShareToggleResponse)
 def toggle_finding_share(
     finding_id: UUID,
+    request: Request,
     body: ShareRequest | None = None,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_full_user),
     _: None = Depends(rate_limit_shares),
-) -> ShareToggleResponse:
+):
+    hit = idempotency.check(db, user.id, request)
+    if hit is not None:
+        return JSONResponse(hit["body"], status_code=hit["status"])
+
     finding = db.get(Finding, finding_id)
     if finding is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
@@ -131,10 +149,14 @@ def toggle_finding_share(
         if existing is not None:
             db.delete(existing)
             db.commit()
-        return ShareToggleResponse(shared=False, count=_finding_share_count(finding.id, db))
+        off = ShareToggleResponse(shared=False, count=_finding_share_count(finding.id, db))
+        idempotency.record(db, user.id, request, status.HTTP_200_OK, off)
+        return off
 
     db.commit()
-    return ShareToggleResponse(shared=True, count=_finding_share_count(finding.id, db))
+    on = ShareToggleResponse(shared=True, count=_finding_share_count(finding.id, db))
+    idempotency.record(db, user.id, request, status.HTTP_200_OK, on)
+    return on
 
 
 @router.get("/spectra/{spectrum_id}/shares", response_model=ShareStatusResponse)
