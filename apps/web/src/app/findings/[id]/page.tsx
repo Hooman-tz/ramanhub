@@ -19,6 +19,7 @@ import { AbstractSummary } from "~/components/abstract-summary";
 import { BackLink } from "~/components/back-link";
 import { FindingActions } from "~/components/finding-actions";
 import { FindingComments } from "~/components/finding-comments";
+import { FindingEditor } from "~/components/finding-editor";
 import { FindingImageUploader } from "~/components/finding-image-uploader";
 import { JournalCard } from "~/components/journal-card";
 import { Markdown } from "~/components/markdown";
@@ -99,27 +100,38 @@ export default async function FindingPage({
         </span>
       </div>
 
-      <h1 className="mt-2 text-2xl font-bold tracking-tight">
-        {finding.title}
-      </h1>
+      {isOwner && finding.state === "draft" ? (
+        <FindingEditor
+          id={finding.id}
+          initialTitle={finding.title}
+          initialAbstract={finding.abstract_md}
+          initialTags={finding.tags}
+        />
+      ) : (
+        <>
+          <h1 className="mt-2 text-2xl font-bold tracking-tight">
+            {finding.title}
+          </h1>
 
-      {finding.abstract_md && (
-        <div className="mt-3">
-          <Markdown>{finding.abstract_md}</Markdown>
-        </div>
-      )}
+          {finding.abstract_md && (
+            <div className="mt-3">
+              <Markdown>{finding.abstract_md}</Markdown>
+            </div>
+          )}
 
-      {finding.tags && finding.tags.length > 0 && (
-        <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
-          {finding.tags.map((t) => (
-            <span
-              key={t}
-              className="bg-muted text-foreground/80 rounded px-1.5 py-0.5"
-            >
-              #{t}
-            </span>
-          ))}
-        </div>
+          {finding.tags && finding.tags.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-1.5 text-xs">
+              {finding.tags.map((t) => (
+                <span
+                  key={t}
+                  className="bg-muted text-foreground/80 rounded px-1.5 py-0.5"
+                >
+                  #{t}
+                </span>
+              ))}
+            </div>
+          )}
+        </>
       )}
 
       {finding.doi && !finding.publication_metadata && (
