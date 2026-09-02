@@ -84,7 +84,12 @@ export interface RequestOptions extends ApiClientOptions {
  * needs to be collision-free enough to key one idempotent request.
  */
 function generateUuid(): string {
-  const fromCrypto = globalThis.crypto?.randomUUID?.();
+  // Typed as always-present in lib.dom, but genuinely absent on some older
+  // RN/JSC runtimes — hence the cast so the guards below aren't "unnecessary".
+  const platformCrypto = globalThis.crypto as
+    | { randomUUID?: () => string }
+    | undefined;
+  const fromCrypto = platformCrypto?.randomUUID?.();
   if (fromCrypto) return fromCrypto;
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
     const r = (Math.random() * 16) | 0;
