@@ -84,16 +84,31 @@ export function FindingComments({
             className="border-border rounded-lg border p-3.5 text-sm"
           >
             <div className="mb-1.5 flex items-center gap-2 text-xs">
-              {c.author_handle ? (
+              {c.author.avatar_url ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={c.author.avatar_url}
+                  alt=""
+                  className="size-5 rounded-full object-cover"
+                />
+              ) : (
+                <span
+                  aria-hidden
+                  className="bg-muted text-foreground/70 flex size-5 items-center justify-center rounded-full text-[10px] font-semibold"
+                >
+                  {c.author.display_name.trim().charAt(0).toUpperCase() || "?"}
+                </span>
+              )}
+              {c.author.profile_path ? (
                 <a
-                  href={`/u/${c.author_handle}`}
+                  href={c.author.profile_path}
                   className="text-foreground hover:text-primary focus-visible:ring-ring/50 rounded font-medium transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
                 >
-                  {c.author_display_name ?? `@${c.author_handle}`}
+                  {c.author.display_name}
                 </a>
               ) : (
                 <span className="text-foreground font-medium">
-                  {c.author_display_name ?? "Someone"}
+                  {c.author.display_name}
                 </span>
               )}
               <span className="text-foreground/60">

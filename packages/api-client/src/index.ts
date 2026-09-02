@@ -537,16 +537,22 @@ export function toggleFindingShare(
 
 /* --- social: finding comments ----------------------------------------- */
 
+export interface CommentAuthor {
+  display_name: string;
+  avatar_url: string | null;
+  orcid_id: string | null;
+  /** In-app path to the author's profile, or null if it isn't public. */
+  profile_path: string | null;
+}
+
 export interface FindingComment {
   id: number;
   spectrum_id: string | null;
   finding_id: string | null;
   parent_id: number | null;
-  user_id: string;
   body: string;
   created_at: string;
-  author_handle: string | null;
-  author_display_name: string | null;
+  author: CommentAuthor;
 }
 
 /** `GET /findings/{id}/comments` — oldest → newest. */
