@@ -14,9 +14,7 @@ def _create_and_publish(client, raw_file, title: str = "Public Raman spectrum") 
     response = client.post("/spectra", json={"raw_file_id": str(raw_file.id), "title": title})
     assert response.status_code == 201, response.text
     spectrum = response.json()
-    response = client.post(
-        f"/spectra/{spectrum['id']}/publish", json={"license_id": "CC-BY-4.0"}
-    )
+    response = client.post(f"/spectra/{spectrum['id']}/publish", json={"license_id": "CC-BY-4.0"})
     assert response.status_code == 200, response.text
     return spectrum
 
@@ -39,7 +37,7 @@ def test_public_record_and_profile_expose_only_intentional_identity(
     assert record.status_code == 200, record.text
     body = record.json()
     assert body["author"]["display_name"] == "Test User"
-    assert body["author"]["profile_path"] == "/profiles/raman-researcher"
+    assert body["author"]["profile_path"] == "/u/raman-researcher"
     assert "researcher@example.com" not in str(body)
     assert "owner_id" not in body
     assert body["download_url"] == f"/spectra/{spectrum['id']}/data"

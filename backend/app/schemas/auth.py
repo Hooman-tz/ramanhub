@@ -1,4 +1,5 @@
 """Pydantic schemas for auth/user/license responses."""
+
 from __future__ import annotations
 
 import re
@@ -102,8 +103,10 @@ class UserUpdate(BaseModel):
         if v is None:
             return None
         handle = v.strip().lower()
-        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{1,62}[a-z0-9])?", handle):
-            raise ValueError("profile_handle may use lowercase letters, numbers, and hyphens")
+        if not re.fullmatch(r"[a-z0-9](?:[a-z0-9]|[._-](?![._-])){1,28}[a-z0-9]", handle):
+            raise ValueError(
+                "profile_handle may use lowercase letters, numbers, dots, underscores and hyphens"
+            )
         return handle
 
     @field_validator("research_interests")

@@ -1,4 +1,5 @@
 """Current-user profile endpoints. Mounted at prefix `/users`."""
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -46,10 +47,12 @@ def patch_me(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="That ORCID iD is already linked to another account.",
             )
+    # `profile_handle` is deliberately NOT settable here: a handle is a stable,
+    # citable identifier set once at onboarding. Changing it self-serve breaks
+    # inbound links and citations. `PATCH /users/me` silently ignores it.
     for field in (
         "display_name",
         "orcid_id",
-        "profile_handle",
         "bio",
         "affiliation",
         "research_interests",
@@ -57,10 +60,7 @@ def patch_me(
     ):
         if field in payload.model_fields_set:
             setattr(current_user, field, getattr(payload, field))
-    if (
-        "orcid_id" in payload.model_fields_set
-        and payload.orcid_id != previous_orcid_id
-    ):
+    if "orcid_id" in payload.model_fields_set and payload.orcid_id != previous_orcid_id:
         current_user.orcid_verified_at = None
         current_user.orcid_name = None
 
@@ -70,16 +70,15 @@ def patch_me(
     except IntegrityError as exc:
         db.rollback()
         raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT, detail="That public profile handle is unavailable."
+            status_code=status.HTTP_409_CONFLICT,
+            detail="That public profile handle is unavailable.",
         ) from exc
     db.refresh(current_user)
     return current_user
 
 
 @router.get("/by-handle/{handle}", response_model=PublicProfileOut)
-def get_public_profile(
-    handle: str, db: Session = Depends(get_db)
-) -> PublicProfileOut:
+def get_public_profile(handle: str, db: Session = Depends(get_db)) -> PublicProfileOut:
     """A contributor's public profile. No auth required — this is what a DOI
     or a citation points at.
 
@@ -88,13 +87,9 @@ def get_public_profile(
     split exists to keep private. See `app.profile_stats` for what each
     engagement figure counts and deliberately excludes.
     """
-    user = db.scalar(
-        select(User).where(User.profile_handle == normalize_handle(handle))
-    )
+    user = db.scalar(select(User).where(User.profile_handle == normalize_handle(handle)))
     if user is None or not user.is_active or user.is_guest:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
 
     stats = compute_profile_stats(user.id, db)
 
@@ -128,13 +123,9 @@ def get_public_activity(
     Public, and published-events-only — see `app.activity` for what each kind
     counts and why the series are kept separate rather than summed.
     """
-    user = db.scalar(
-        select(User).where(User.profile_handle == normalize_handle(handle))
-    )
+    user = db.scalar(select(User).where(User.profile_handle == normalize_handle(handle)))
     if user is None or not user.is_active or user.is_guest:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Profile not found")
     return compute_activity(user.id, db, days=days)
 
 

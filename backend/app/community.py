@@ -1,4 +1,5 @@
 """Shared public-community policy and serialization helpers."""
+
 from __future__ import annotations
 
 from typing import Any
@@ -25,9 +26,7 @@ def public_author(user: User | None) -> dict[str, Any]:
         }
 
     profile_path = (
-        f"/profiles/{user.profile_handle}"
-        if user.is_profile_public and user.profile_handle
-        else None
+        f"/u/{user.profile_handle}" if user.is_profile_public and user.profile_handle else None
     )
     return {
         "display_name": user.display_name or "Spectra Insight researcher",

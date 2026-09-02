@@ -6,6 +6,7 @@ gate that flips `onboarded_at`, and it records a `HandleHistory` row when it
 changes a handle the user already had so old `/u/<handle>` links keep
 resolving.
 """
+
 from __future__ import annotations
 
 from datetime import UTC, datetime
@@ -69,9 +70,7 @@ def suggested_users(
     """Public, active, non-guest profiles ordered by follower count, minus the
     caller and anyone they already follow."""
     follower_count = (
-        select(Follow.followee_id, func.count().label("n"))
-        .group_by(Follow.followee_id)
-        .subquery()
+        select(Follow.followee_id, func.count().label("n")).group_by(Follow.followee_id).subquery()
     )
     stmt = (
         select(User, func.coalesce(follower_count.c.n, 0).label("follower_count"))
@@ -115,6 +114,19 @@ def complete_onboarding(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
+
+    # The handle is permanent once onboarding has set it. Re-running this
+    # endpoint may still update the display name / interests, but it can't be
+    # used as a back door to rename a profile.
+    if (
+        current_user.onboarded_at is not None
+        and current_user.profile_handle
+        and handle != current_user.profile_handle
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Your handle is permanent and can't be changed.",
+        )
 
     owner = _handle_owner_id(db, handle)
     if owner is not None and str(owner[1]) != str(current_user.id):

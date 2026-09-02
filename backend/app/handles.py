@@ -20,11 +20,16 @@ Rules, and why:
   Sign-in must never dead-end because someone else already took your email's
   local part.
 """
+
 from __future__ import annotations
 
 import re
 
-HANDLE_REGEX = re.compile(r"^[a-z0-9](?:[a-z0-9-]{1,28}[a-z0-9])$")
+# Lowercase letters/digits, plus `.` `_` `-` as internal separators. Must
+# start and end alphanumeric; no two separators in a row (blocks `..`, `__`,
+# `._`, `--`, …). Length is enforced separately (MIN/MAX_LENGTH).
+HANDLE_REGEX = re.compile(r"^[a-z0-9](?:[a-z0-9]|[._-](?![._-])){1,28}[a-z0-9]$")
+_SEPARATOR_RUN_RE = re.compile(r"[._-]{2}")
 MIN_LENGTH = 3
 MAX_LENGTH = 30
 
@@ -36,14 +41,51 @@ MAX_LENGTH = 30
 # dead weight that hides typos — a test asserts this list stays live.
 RESERVED_HANDLES = frozenset(
     {
-        "about", "admin", "api", "auth", "callback", "comments", "compare",
-        "contact", "dashboard", "docs", "explore", "export", "feed",
-        "findings", "health", "help", "home", "library", "license", "licenses",
-        "login", "logout", "new", "null", "privacy", "profile",
-        "processing", "ramanhub", "routines", "search", "settings",
-        "signin", "signout", "signup", "spectra", "spectrum", "static",
-        "support", "terms", "trending", "undefined", "upload", "user",
-        "users", "v1",
+        "about",
+        "admin",
+        "api",
+        "auth",
+        "callback",
+        "comments",
+        "compare",
+        "contact",
+        "dashboard",
+        "docs",
+        "explore",
+        "export",
+        "feed",
+        "findings",
+        "health",
+        "help",
+        "home",
+        "library",
+        "license",
+        "licenses",
+        "login",
+        "logout",
+        "new",
+        "null",
+        "privacy",
+        "profile",
+        "processing",
+        "ramanhub",
+        "routines",
+        "search",
+        "settings",
+        "signin",
+        "signout",
+        "signup",
+        "spectra",
+        "spectrum",
+        "static",
+        "support",
+        "terms",
+        "trending",
+        "undefined",
+        "upload",
+        "user",
+        "users",
+        "v1",
     }
 )
 
@@ -61,16 +103,14 @@ def validate_handle(raw: str) -> str:
     """Return the normalized handle, or raise `InvalidHandleError`."""
     handle = normalize_handle(raw)
     if len(handle) < MIN_LENGTH or len(handle) > MAX_LENGTH:
-        raise InvalidHandleError(
-            f"Handles must be {MIN_LENGTH}-{MAX_LENGTH} characters long."
-        )
+        raise InvalidHandleError(f"Handles must be {MIN_LENGTH}-{MAX_LENGTH} characters long.")
     if not HANDLE_REGEX.match(handle):
         raise InvalidHandleError(
-            "Handles may use lowercase letters, numbers and dashes, and must start "
-            "and end with a letter or number."
+            "Handles may use lowercase letters, numbers, dots, underscores and "
+            "dashes, and must start and end with a letter or number."
         )
-    if "--" in handle:
-        raise InvalidHandleError("Handles may not contain two dashes in a row.")
+    if _SEPARATOR_RUN_RE.search(handle):
+        raise InvalidHandleError("Handles may not contain two dots/underscores/dashes in a row.")
     if handle in RESERVED_HANDLES:
         raise InvalidHandleError(f"'{handle}' is reserved and can't be used as a handle.")
     return handle
@@ -107,10 +147,7 @@ def assign_handle(db, email: str, display_name: str | None = None) -> str:
     from app.models.user import User
 
     def exists(candidate: str) -> bool:
-        return (
-            db.query(User.id).filter(User.profile_handle == candidate).first()
-            is not None
-        )
+        return db.query(User.id).filter(User.profile_handle == candidate).first() is not None
 
     return uniquify_handle(suggest_handle(email, display_name), exists)
 
