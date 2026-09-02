@@ -1,0 +1,16 @@
+# Reverse proxy + automatic HTTPS for the RamanHub API.
+#
+# Caddy fetches and renews a Let's Encrypt certificate on its own, provided:
+#   - {$API_DOMAIN} resolves (A record) to this VM's public IP, and
+#   - ports 80 and 443 are reachable from the internet.
+#
+# ACME_EMAIL and API_DOMAIN come from the repo .env (caddy service env_file).
+
+{
+	email {$ACME_EMAIL}
+}
+
+{$API_DOMAIN:api.spectra-in.site} {
+	encode zstd gzip
+	reverse_proxy backend:8000
+}

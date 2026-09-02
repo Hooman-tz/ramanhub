@@ -1,0 +1,76 @@
+# Production stack for a small always-on VM (Oracle Cloud "Always Free"
+# VM.Standard.E2.1.Micro — 1 GB RAM). Tuned for that constraint:
+#
+#   * Postgres is NOT here — it runs on Neon (free managed PG). Set
+#     DATABASE_URL in .env to the Neon pooled connection string.
+#   * The backend image is NOT built on the box (a 1 GB VM can't `uv sync`
+#     scipy/numpy). It is built by .github/workflows/backend-image.yml and
+#     pulled from GHCR. Override the tag with BACKEND_IMAGE in .env.
+#   * Object storage is Cloudflare R2 (free tier) — the S3_* vars in .env.
+#
+# So this box only runs: backend (API) + ingestion-worker + caddy (TLS).
+#
+# Full runbook: infra/prod/README.md
+#
+#   docker compose -f docker-compose.prod.yml --env-file .env pull
+#   docker compose -f docker-compose.prod.yml --env-file .env up -d
+#
+services:
+  backend:
+    image: ${BACKEND_IMAGE:-ghcr.io/hooman-tz/ramanhub-backend:latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: production
+      # DATABASE_URL comes straight from .env (Neon). app/config.py
+      # normalises a bare postgresql:// scheme to postgresql+psycopg://.
+    # No --reload; trust Caddy's X-Forwarded-* so the app serves https URLs.
+    command:
+      - uv
+      - run
+      - uvicorn
+      - app.main:app
+      - --host
+      - 0.0.0.0
+      - --port
+      - "8000"
+      - --proxy-headers
+      - --forwarded-allow-ips
+      - "*"
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health').status==200 else 1)\""]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  ingestion-worker:
+    image: ${BACKEND_IMAGE:-ghcr.io/hooman-tz/ramanhub-backend:latest}
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      ENVIRONMENT: production
+    command: ["uv", "run", "python", "-m", "app.ingestion.worker"]
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    env_file:
+      - .env
+    volumes:
+      - ./infra/prod/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:
