@@ -33,6 +33,30 @@ export function isApiError(e: unknown): e is ApiError {
   return typeof e === "object" && e !== null && "status" in e && "message" in e;
 }
 
+/**
+ * Collapse any error response body into one short sentence safe to show a
+ * user. Backend 4xx `detail` strings are written to be read by humans, so
+ * those pass through; a FastAPI 422 `detail` array, a 5xx reason, or a
+ * missing/'{}' body all become a generic line. The untouched body is still
+ * on `ApiError.body` and is logged by `apiRequest`.
+ */
+function userFacingMessage(status: number, body: unknown): string {
+  if (status >= 500)
+    return "Something went wrong on our end. Please try again.";
+  if (status === 429)
+    return "You're doing that too fast — wait a moment and try again.";
+  const detail = (body as { detail?: unknown; message?: unknown } | null)
+    ?.detail;
+  if (typeof detail === "string" && detail.trim()) return detail;
+  if (Array.isArray(detail))
+    return "Please check the information you entered and try again.";
+  const msg = (body as { message?: unknown } | null)?.message;
+  if (typeof msg === "string" && msg.trim()) return msg;
+  if (status === 404) return "Not found.";
+  if (status === 401 || status === 403) return "You don't have access to that.";
+  return `Request failed (${status}).`;
+}
+
 export interface ApiClientOptions {
   /** Override the resolved base URL. */
   baseUrl?: string;
@@ -91,16 +115,24 @@ export async function apiRequest<T>(
   });
 
   if (!res.ok) {
-    let message = `API error ${res.status}`;
     let body: unknown;
     try {
       body = await res.json();
-      const b = body as { detail?: string; message?: string };
-      message = b.detail ?? b.message ?? message;
     } catch {
       /* non-JSON error body */
     }
+    // `message` is what a component may show a user directly, so it must
+    // always be a short, safe string — never a raw stack, a FastAPI 422
+    // `detail` array, or an internal 5xx reason. The full response stays on
+    // `.body` for callers that want it, and is logged below for debugging.
+    const message = userFacingMessage(res.status, body);
     const err: ApiError = { status: res.status, message, body };
+    if (typeof console !== "undefined") {
+      console.error(
+        `[api] ${opts.method ?? "GET"} ${rel}${qs} -> ${res.status}`,
+        body ?? "(no body)",
+      );
+    }
     // Deliberately a plain structured value, not an Error subclass — callers
     // discriminate it with `isApiError`, and RN/Next both preserve the shape.
     // eslint-disable-next-line @typescript-eslint/only-throw-error

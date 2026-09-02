@@ -43,20 +43,27 @@ export default async function SpectrumPage({
   const opts = await serverApiOpts();
 
   let meta: Spectrum;
-  let data: SpectrumData;
   try {
-    [meta, data] = await Promise.all([
-      getSpectrum(id, opts),
-      getSpectrumData(id, {}, opts),
-    ]);
+    meta = await getSpectrum(id, opts);
   } catch (e) {
     notFoundOn4xx(e);
   }
 
-  if (!data.wavenumbers.length) notFound();
+  // The chart data is a separate, best-effort fetch. A file with a readable
+  // header but no chartable signal (header-only export, unreadable layout,
+  // canonicalization failure) makes `/data` fail — the spectrum still exists
+  // and its metadata is worth showing, so render the page without the trace
+  // rather than 404-ing or crashing. The real error is logged server-side.
+  let fetched: SpectrumData | null = null;
+  try {
+    fetched = await getSpectrumData(id, {}, opts);
+  } catch {
+    fetched = null;
+  }
 
-  const lo = Math.round(Math.min(...data.wavenumbers));
-  const hi = Math.round(Math.max(...data.wavenumbers));
+  const trace = fetched && fetched.wavenumbers.length > 0 ? fetched : null;
+  const lo = trace ? Math.round(Math.min(...trace.wavenumbers)) : 0;
+  const hi = trace ? Math.round(Math.max(...trace.wavenumbers)) : 0;
   const cm = meta.confirmed_metadata ?? {};
   const laser = asText(cm.laser_wavelength_nm);
   const technique =
@@ -70,13 +77,19 @@ export default async function SpectrumPage({
   });
 
   const keyFacts: [string, string][] = [
-    ["Range", `${lo}–${hi} cm⁻¹`],
-    [
-      "Data points",
-      `${data.wavenumbers.length.toLocaleString()}${
-        data.downsampled ? ` of ${data.total_points.toLocaleString()}` : ""
-      }`,
-    ],
+    ...(trace
+      ? ([
+          ["Range", `${lo}–${hi} cm⁻¹`],
+          [
+            "Data points",
+            `${trace.wavenumbers.length.toLocaleString()}${
+              trace.downsampled
+                ? ` of ${trace.total_points.toLocaleString()}`
+                : ""
+            }`,
+          ],
+        ] as [string, string][])
+      : []),
     ...(laser ? ([["Excitation", `${laser} nm`]] as [string, string][]) : []),
     ...(meta.license_id
       ? ([["License", meta.license_id]] as [string, string][])
@@ -157,13 +170,23 @@ export default async function SpectrumPage({
 
       {/* Chart */}
       <Card className="mt-6 p-2 sm:p-3">
-        <SpectrumChart
-          mode="trace"
-          wavenumbers={data.wavenumbers}
-          intensities={data.intensities}
-          height={340}
-          ariaLabel={`Raman spectrum of ${meta.title ?? "sample"}: intensity versus wavenumber`}
-        />
+        {trace ? (
+          <SpectrumChart
+            mode="trace"
+            wavenumbers={trace.wavenumbers}
+            intensities={trace.intensities}
+            height={340}
+            ariaLabel={`Raman spectrum of ${meta.title ?? "sample"}: intensity versus wavenumber`}
+          />
+        ) : (
+          <div className="text-muted-foreground flex h-[340px] flex-col items-center justify-center gap-1 px-4 text-center text-sm">
+            <span className="font-medium">Spectrum preview unavailable</span>
+            <span className="text-xs">
+              We couldn&apos;t read a chartable trace from this file. Its
+              metadata is still shown below.
+            </span>
+          </div>
+        )}
       </Card>
 
       {/* Two-column: facts + sidebar */}

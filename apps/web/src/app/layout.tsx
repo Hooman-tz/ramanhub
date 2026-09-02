@@ -24,7 +24,10 @@ const SITE_DESCRIPTION =
  * `env.SITE_URL` is `undefined` when env validation is skipped (CI builds), so
  * fall back to the canonical origin — `new URL(undefined)` would crash the build.
  */
-const SITE_URL = env.SITE_URL ?? "https://raman.spectra-in.site";
+// `env.SITE_URL` is typed as a required string, but env validation is skipped
+// on CI builds so it is `undefined` there in practice — hence the cast + fallback.
+const SITE_URL =
+  (env.SITE_URL as string | undefined) ?? "https://raman.spectra-in.site";
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
