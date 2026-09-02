@@ -16,10 +16,14 @@ services:
     # --reload, and trust the proxy's X-Forwarded-* headers so the app
     # knows it's serving https.
     dockerCommand: uv run uvicorn app.main:app --host 0.0.0.0 --port $PORT --proxy-headers --forwarded-allow-ips '*'
-    # Migrations run before each deploy goes live. NOTE: preDeployCommand
-    # requires a paid instance type; on the free tier, remove this and run
-    # `uv run alembic upgrade head` from the service Shell after deploys.
-    preDeployCommand: uv run alembic upgrade head
+    # Migrations + reference data run before each deploy goes live.
+    # `seed_data` is idempotent (check-exists-first) and is NOT optional: it
+    # creates the licenses, metadata field definitions and ledger step
+    # definitions the app requires. Without it `GET /licenses` is empty and
+    # publishing a finding 422s, because publish requires a license_id.
+    # NOTE: preDeployCommand requires a paid instance type; on the free tier,
+    # remove this and run both commands from the service Shell after deploys.
+    preDeployCommand: uv run alembic upgrade head && uv run python -m app.seed.seed_data
     healthCheckPath: /health
     # starter = always-on (~$7/mo). `free` exists but spins down after
     # idle (first request after sleep takes ~1 min) and disallows
@@ -29,21 +33,36 @@ services:
     envVars:
       - key: ENVIRONMENT
         value: production
+      # Domain layout per ADR-014: spectra-in.site = product identity,
+      # raman.spectra-in.site = this application, api.spectra-in.site = the API.
       - key: FRONTEND_URL
-        value: https://serds.ca
+        value: https://raman.spectra-in.site
       - key: BACKEND_URL
-        value: https://api.serds.ca
+        value: https://api.spectra-in.site
+      # The app and the API are sibling subdomains, so auth cookies MUST carry
+      # the shared registrable parent — a host-only cookie set by the API is
+      # never sent to the web origin and sign-in silently fails to stick.
+      # This is invisible in local dev, where both halves are `localhost`.
+      - key: COOKIE_DOMAIN
+        value: .spectra-in.site
       - key: GOOGLE_REDIRECT_URI
-        value: https://api.serds.ca/auth/callback
+        value: https://api.spectra-in.site/auth/callback
       # GitHub + ORCID sign-in (M3). Keep the host in lock-step with
-      # BACKEND_URL / GOOGLE_REDIRECT_URI above — change all four together
-      # when the domain is finalised. docs/OPERATIONS.md section 5.
+      # BACKEND_URL / GOOGLE_REDIRECT_URI above — change them together
+      # if the domain changes. docs/OPERATIONS.md section 5.
       - key: GITHUB_REDIRECT_URI
-        value: https://api.serds.ca/auth/github/callback
+        value: https://api.spectra-in.site/auth/github/callback
+      # ORCID has two distinct flows and they must stay on DIFFERENT paths:
+      # ORCID_REDIRECT_URI is the proof-of-control *link* flow (an existing
+      # signed-in user attaching their ORCID); ORCID_LOGIN_REDIRECT_URI is the
+      # *sign-in* flow. Pointing both at the sign-in callback — as this file
+      # previously did — sends linking users through login instead.
       - key: ORCID_REDIRECT_URI
-        value: https://api.serds.ca/auth/orcid/callback
+        value: https://api.spectra-in.site/users/me/orcid/callback
       - key: ORCID_LOGIN_REDIRECT_URI
-        value: https://api.serds.ca/auth/orcid/callback
+        value: https://api.spectra-in.site/auth/orcid/callback
+      # "production" (orcid.org) or "sandbox" (sandbox.orcid.org). Switch to
+      # sandbox while production ORCID credentials are still pending approval.
       - key: ORCID_ENV
         value: production
       - key: STORAGE_BACKEND

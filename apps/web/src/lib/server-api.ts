@@ -1,5 +1,7 @@
 import { cookies } from "next/headers";
 
+import { env } from "~/env";
+
 /**
  * Options for `@ramanhub/api-client` calls made from a Server Component:
  * forwards the browser's session cookie so owner-only reads (draft findings,
@@ -12,7 +14,7 @@ export async function serverApiOpts() {
     .map((c) => `${c.name}=${c.value}`)
     .join("; ");
   return {
-    baseUrl: process.env.API_URL ?? "http://127.0.0.1:8000",
+    baseUrl: env.API_URL,
     headers: cookie ? { cookie } : undefined,
   };
 }

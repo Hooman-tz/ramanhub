@@ -36,8 +36,13 @@ jobs:
 
     env:
       DATABASE_URL: postgresql+psycopg://raman:changeme@localhost:5432/ramanhub
-      # Object storage is stubbed in tests (see the `fake_s3` fixture), so no
-      # MinIO service is needed here.
+      # Most tests stub object storage (the `fake_s3` fixture), but the
+      # ingestion-API tests don't patch `object_exists`, which `POST /raw-files`
+      # calls before uploading. With the default STORAGE_BACKEND=s3 that dials
+      # MinIO on localhost:9000 and 5 tests fail with EndpointConnectionError.
+      # The filesystem backend needs no service container.
+      STORAGE_BACKEND: local
+      STORAGE_LOCAL_DIR: /tmp/ci-storage
       JWT_SECRET: ci-only-not-a-real-secret
 
     defaults:
@@ -97,6 +102,12 @@ jobs:
 
       - name: Type-check
         run: pnpm typecheck
+
+      # next.config.js sets `typescript.ignoreBuildErrors`, so the build alone
+      # is not a type gate — the Type-check step above is. Lint is a gate too:
+      # `no-restricted-properties` (raw process.env) is error-severity here.
+      - name: Lint
+        run: pnpm --filter @ramanhub/web lint
 
       - name: Build web
         run: pnpm --filter @ramanhub/web build

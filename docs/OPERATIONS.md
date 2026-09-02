@@ -151,7 +151,7 @@ match `<BACKEND_URL>` exactly, per environment.
 | --- | --- | --- | --- | --- |
 | Google | <https://console.cloud.google.com/apis/credentials> → OAuth client ID (Web) | `https://api.spectra-in.site/auth/callback` | `http://localhost:8000/auth/callback` | `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, `GOOGLE_REDIRECT_URI` |
 | GitHub | <https://github.com/settings/developers> → New OAuth App (scopes: `read:user`, `user:email`) | `https://api.spectra-in.site/auth/github/callback` | `http://localhost:8000/auth/github/callback` | `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `GITHUB_REDIRECT_URI` |
-| ORCID | <https://orcid.org/developer-tools> (use the **sandbox** — <https://sandbox.orcid.org> — until production is approved) | `https://api.spectra-in.site/auth/orcid/callback` | `http://localhost:8000/auth/orcid/callback` | `ORCID_CLIENT_ID`, `ORCID_CLIENT_SECRET`, `ORCID_REDIRECT_URI`, `ORCID_LOGIN_REDIRECT_URI`, `ORCID_ENV` |
+| ORCID | <https://orcid.org/developer-tools> (use the **sandbox** — <https://sandbox.orcid.org> — until production is approved; select it with `ORCID_ENV=sandbox`) | `https://api.spectra-in.site/auth/orcid/callback` | `http://localhost:8000/auth/orcid/callback` | `ORCID_CLIENT_ID`, `ORCID_CLIENT_SECRET`, `ORCID_REDIRECT_URI`, `ORCID_LOGIN_REDIRECT_URI`, `ORCID_ENV` |
 
 Notes:
 
@@ -159,7 +159,15 @@ Notes:
   flow; `ORCID_LOGIN_REDIRECT_URI` is the **sign-in** flow added in M3. Both
   must be listed as allowed redirect URIs in the ORCID app.
 - After sign-in the backend 302s to `FRONTEND_URL`. Set `FRONTEND_URL` to the
-  web origin (`https://spectra-in.site`), not the API origin.
+  web origin (`https://raman.spectra-in.site`), not the API origin.
+- **`COOKIE_DOMAIN` is required whenever the app and API are on different
+  hosts.** Auth cookies are host-only by default, so with the app on
+  `raman.spectra-in.site` and the API on `api.spectra-in.site`, the OAuth state
+  cookie is written for one origin and read at the other (callback 400s
+  "Invalid or expired OAuth state"), and the session cookie never reaches the
+  web origin. Set `COOKIE_DOMAIN=.spectra-in.site`. Leave it empty locally —
+  `localhost:3000` and `localhost:8000` share a host, which is why this class
+  of bug cannot reproduce in dev.
 - A provider that isn't configured (`configured()` returns false) makes its
   `/auth/<provider>/login` endpoint return 400 — the other providers still work.
 - The JWT session secret is `JWT_SECRET` (min 32 bytes). Rotating it logs

@@ -15,6 +15,12 @@ export const env = createEnv({
    */
   server: {
     API_URL: z.url().default("http://127.0.0.1:8000"),
+    /**
+     * This app's own public origin, used for `metadataBase` so per-route
+     * canonical/OpenGraph URLs resolve absolutely. Per ADR-014 the Raman app
+     * lives at `raman.spectra-in.site`; `spectra-in.site` is the product site.
+     */
+    SITE_URL: z.url().default("https://raman.spectra-in.site"),
   },
   /**
    * Client-side env. Prefix with `NEXT_PUBLIC_`. Kept optional so the browser

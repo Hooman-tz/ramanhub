@@ -7,5 +7,7 @@ set -eu
 mc alias set local http://minio:9000 minioadmin minioadmin
 mc mb --ignore-existing local/raw-spectra
 mc mb --ignore-existing local/processed-spectra
+# Finding figures / graphical abstracts (M6.2, S3_BUCKET_FIGURES).
+mc mb --ignore-existing local/figures
 
-echo "MinIO buckets ready: raw-spectra, processed-spectra"
+echo "MinIO buckets ready: raw-spectra, processed-spectra, figures"

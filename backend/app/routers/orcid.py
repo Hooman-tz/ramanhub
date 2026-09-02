@@ -11,6 +11,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth import orcid_oauth
+from app.auth.cookies import clear_cookie, set_state_cookie
 from app.auth.deps import get_current_full_user
 from app.config import settings
 from app.db.session import get_db
@@ -18,10 +19,6 @@ from app.models.user import User
 from app.schemas.auth import ORCID_REGEX
 
 router = APIRouter(prefix="/users/me/orcid", tags=["orcid"])
-
-
-def _cookie_secure() -> bool:
-    return settings.ENVIRONMENT.lower() not in {"development", "test"}
 
 
 @router.get("/link")
@@ -33,13 +30,10 @@ def begin_orcid_link(user: User = Depends(get_current_full_user)) -> RedirectRes
         )
     state = orcid_oauth.generate_state()
     response = RedirectResponse(orcid_oauth.build_authorization_url(state), status_code=302)
-    response.set_cookie(
+    set_state_cookie(
+        response,
         orcid_oauth.ORCID_STATE_COOKIE,
         orcid_oauth.encode_state_cookie(state, str(user.id)),
-        httponly=True,
-        secure=_cookie_secure(),
-        samesite="lax",
-        max_age=600,
     )
     return response
 
@@ -89,5 +83,5 @@ async def complete_orcid_link(
             detail="That ORCID iD is already linked to another account.",
         ) from exc
     response = RedirectResponse(f"{settings.FRONTEND_URL.rstrip('/')}/account?orcid=linked", status_code=302)
-    response.delete_cookie(orcid_oauth.ORCID_STATE_COOKIE)
+    clear_cookie(response, orcid_oauth.ORCID_STATE_COOKIE)
     return response

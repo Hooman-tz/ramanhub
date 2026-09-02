@@ -420,6 +420,9 @@ export function SpectrumChart(props: SpectrumChartProps) {
     wavenumbers,
     intensities,
     overlay,
+    // Read inside the effect (`compact = height <= 200`) to pick the axis /
+    // label density, so a height change must re-render the chart.
+    height,
   ]);
 
   return (

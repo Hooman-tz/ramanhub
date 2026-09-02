@@ -10,8 +10,27 @@ import jwt as pyjwt
 
 from app.config import settings
 
-ORCID_AUTH_ENDPOINT = "https://orcid.org/oauth/authorize"
-ORCID_TOKEN_ENDPOINT = "https://orcid.org/oauth/token"
+# ORCID runs a separate sandbox tenant with its own credentials and its own
+# user records. Production ORCID credentials require approval, so `sandbox` is
+# the only way to exercise the flow before that lands — selected via
+# `ORCID_ENV`, which was previously documented but read by nothing.
+_ORCID_HOSTS = {
+    "production": "https://orcid.org",
+    "sandbox": "https://sandbox.orcid.org",
+}
+
+
+def _orcid_base() -> str:
+    return _ORCID_HOSTS.get(settings.ORCID_ENV.strip().lower(), _ORCID_HOSTS["production"])
+
+
+def auth_endpoint() -> str:
+    return f"{_orcid_base()}/oauth/authorize"
+
+
+def token_endpoint() -> str:
+    return f"{_orcid_base()}/oauth/token"
+
 ORCID_STATE_COOKIE = "orcid_link_state"
 LOGIN_STATE_COOKIE = "orcid_login_state"
 _STATE_TTL_MINUTES = 10
@@ -33,7 +52,7 @@ def build_authorization_url(state: str) -> str:
         "redirect_uri": settings.ORCID_REDIRECT_URI,
         "state": state,
     }
-    return f"{ORCID_AUTH_ENDPOINT}?{httpx.QueryParams(params)}"
+    return f"{auth_endpoint()}?{httpx.QueryParams(params)}"
 
 
 def encode_state_cookie(state: str, user_id: str) -> str:
@@ -71,7 +90,7 @@ async def exchange_code(code: str, *, redirect_uri: str | None = None) -> dict[s
     }
     async with httpx.AsyncClient(timeout=10.0) as client:
         response = await client.post(
-            ORCID_TOKEN_ENDPOINT,
+            token_endpoint(),
             data=data,
             headers={"Accept": "application/json"},
         )
@@ -96,7 +115,7 @@ def build_login_authorization_url(state: str) -> str:
         "redirect_uri": settings.ORCID_LOGIN_REDIRECT_URI,
         "state": state,
     }
-    return f"{ORCID_AUTH_ENDPOINT}?{httpx.QueryParams(params)}"
+    return f"{auth_endpoint()}?{httpx.QueryParams(params)}"
 
 
 def encode_login_state_cookie(state: str) -> str:

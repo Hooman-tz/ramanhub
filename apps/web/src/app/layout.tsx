@@ -6,20 +6,42 @@ import { ThemeProvider, ThemeToggle } from "@ramanhub/ui/theme";
 import { Toaster } from "@ramanhub/ui/toast";
 
 import { Providers } from "~/app/providers";
+import { env } from "~/env";
 import { AppShell } from "~/components/app-shell";
 
 import "~/app/styles.css";
 
+const SITE_DESCRIPTION =
+  "The reproducible workspace and trusted commons for spectral data — Raman first.";
+
+/**
+ * The Raman application's own origin (ADR-014: `spectra-in.site` is the product
+ * site, `raman.spectra-in.site` is this app). `metadataBase` is what lets
+ * per-route `generateMetadata` return relative canonical/OG URLs and have Next
+ * resolve them absolutely; without it Next warns and emits relative OG URLs,
+ * which most crawlers drop.
+ */
+const SITE_URL = env.SITE_URL;
+
 export const metadata: Metadata = {
-  title: "Spectra Insight",
-  description:
-    "The reproducible workspace and trusted commons for spectral data — Raman first.",
+  metadataBase: new URL(SITE_URL),
+  title: {
+    default: "Spectra Insight",
+    template: "%s · Spectra Insight",
+  },
+  description: SITE_DESCRIPTION,
+  alternates: { canonical: "/" },
   openGraph: {
+    type: "website",
     title: "Spectra Insight",
-    description:
-      "The reproducible workspace and trusted commons for spectral data — Raman first.",
-    url: "https://spectra-in.site",
+    description: SITE_DESCRIPTION,
+    url: SITE_URL,
     siteName: "Spectra Insight",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "Spectra Insight",
+    description: SITE_DESCRIPTION,
   },
 };
 

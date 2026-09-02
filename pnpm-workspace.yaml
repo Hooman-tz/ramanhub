@@ -37,19 +37,19 @@ linkWorkspacePackages: true
 # (sharp, bufferutil, …) are un-run; warn instead.
 verifyDepsBeforeRun: warn
 
-# Native builds we DO want to run.
-onlyBuiltDependencies:
-  - "@tailwindcss/oxide"
-  - esbuild
-  - sharp
-  - bufferutil
-
-# Packages whose (postinstall) build script we deliberately skip — declaring
-# them here stops `pnpm install --frozen-lockfile` failing with
-# ERR_PNPM_IGNORED_BUILDS in CI. `core-js-pure`'s only script is a funding
-# notice; nothing needs to run.
-ignoredBuiltDependencies:
-  - core-js-pure
+# Per-dependency decision on whether to run its install/postinstall script.
+# pnpm 11 replaced pnpm 10's `onlyBuiltDependencies` / `ignoredBuiltDependencies`
+# lists with this map, and refuses to install (ERR_PNPM_IGNORED_BUILDS) until
+# every package that ships a build script has an explicit true/false here.
+# pnpm appends a stub with "set this to true or false" placeholders when a
+# decision is missing: answer it, don't delete it — deleting the stub and
+# using the old list keys (which pnpm 11 silently ignores) is what kept CI red.
+allowBuilds:
+  "@tailwindcss/oxide": true # Tailwind v4 native engine
+  esbuild: true # native binary shim
+  sharp: true # Next.js image optimisation
+  bufferutil: true # optional native WebSocket speedup
+  core-js-pure: false # script only prints a funding notice
 
 overrides:
   "@types/minimatch": 5.1.2

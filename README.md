@@ -139,12 +139,14 @@ schema restated in two places.
 
 ## Deployment (production)
 
-> **Brand/domain migration note:** the checked-in deployment configuration
-> still contains older RamanHub/`serds.ca` URLs. The target public topology is
-> `spectra-in.site` for product pages, `raman.spectra-in.site` for the Raman
-> application, and `api.spectra-in.site` for the shared API. Update deployment
-> configuration, OAuth redirects, CORS, canonical URLs, and redirects together
-> before launch; do not mix old and new domains.
+> **Domain layout (ADR-014):** `spectra-in.site` for product pages,
+> `raman.spectra-in.site` for the Raman application, and `api.spectra-in.site`
+> for the shared API. `render.yaml` is set to this topology. Because the app
+> and the API are sibling subdomains, `COOKIE_DOMAIN` must be set to the shared
+> parent (`.spectra-in.site`) — auth cookies default to host-only, and a
+> host-only cookie set by the API is never sent to the web origin, so sign-in
+> silently fails to stick. Local dev needs no value: both halves are
+> `localhost`, which is exactly why this cannot be caught locally.
 
 Target topology: a Vercel-hosted Next.js app (`apps/web`) serves the
 public/product applications; a FastAPI service plus managed PostgreSQL runs
@@ -154,8 +156,9 @@ starting point, not the completed Spectra Insight launch setup.
 
 One-time setup:
 
-1. **Cloudflare R2** — create buckets `raw-spectra` and `processed-spectra`
-   and an API token. Endpoint is
+1. **Cloudflare R2** — create buckets `raw-spectra`, `processed-spectra` and
+   `figures` (the last holds finding figures / graphical abstracts, M6.2 —
+   `S3_BUCKET_FIGURES`; uploads fail without it) and an API token. Endpoint is
    `https://<account-id>.r2.cloudflarestorage.com`, region `auto`.
 2. **Backend host** — Create the API service from this repo. Paste the
    `sync: false` secrets: `JWT_SECRET` (generate:
@@ -175,9 +178,20 @@ One-time setup:
     `https://api.spectra-in.site/auth/callback` to the OAuth client's
     Authorized redirect URIs; move the consent screen out of Testing (or add
     testers).
-6. **Seed** — from the backend service shell:
-   `uv run python -m app.seed.seed_data` (required reference data), and
-   optionally `uv run python -m app.seed.demo_data` (demo spectra).
+6. **Seed** — reference data (licenses, metadata field definitions, ledger
+   step definitions) is applied automatically by `render.yaml`'s
+   `preDeployCommand`; it is idempotent. Publishing requires a `license_id`,
+   so an unseeded database cannot publish anything. To run it by hand (free
+   tier, which disallows `preDeployCommand`), from the backend service shell:
+   `uv run python -m app.seed.seed_data`.
+   Optional demo content: `uv run python -m app.seed.demo_data` (3 spectra), or
+   `uv run python -m app.seed.scenarios_data` (20 personas with a full follow /
+   vote / comment graph, so Discover isn't empty on day one). The personas are
+   synthetic but are **not** labelled as such in the UI — decide whether that is
+   acceptable before pointing real researchers at them.
+7. **Journals** — `make import-journals FILE=<scimagojr.csv>` (download the
+   free SCImago CSV; it is gitignored and not in the repo). Without it journal
+   cards render no quartile or SJR.
 
 The selected backend host must run database migrations as an explicit,
 verified pre-deploy step. `render.yaml` includes an older implementation of

@@ -18,6 +18,7 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from sqlalchemy.orm import Session
 
 from app.auth import github_oauth, google_oauth, orcid_oauth
+from app.auth.cookies import clear_cookie, set_session_cookie, set_state_cookie
 from app.auth.deps import SESSION_COOKIE_NAME, get_current_user_optional
 from app.auth.guest_migration import migrate_guest_data
 from app.auth.identities import resolve_or_create_user
@@ -36,12 +37,6 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 logger = logging.getLogger(__name__)
 
 
-def _cookie_secure() -> bool:
-    # Allow non-Secure cookies in local dev (plain http://localhost), require
-    # Secure everywhere else.
-    return settings.ENVIRONMENT != "development"
-
-
 def _constant_time_eq(a: str, b: str) -> bool:
     return hmac.compare_digest(a, b)
 
@@ -49,14 +44,7 @@ def _constant_time_eq(a: str, b: str) -> bool:
 def _issue_session(user: User) -> RedirectResponse:
     """Redirect to the frontend with the `session` cookie set for `user`."""
     response = RedirectResponse(url=settings.FRONTEND_URL, status_code=status.HTTP_302_FOUND)
-    response.set_cookie(
-        SESSION_COOKIE_NAME,
-        encode_session_token(user),
-        httponly=True,
-        secure=_cookie_secure(),
-        samesite="lax",
-        max_age=settings.JWT_EXPIRES_HOURS * 3600,
-    )
+    set_session_cookie(response, SESSION_COOKIE_NAME, encode_session_token(user))
     return response
 
 
@@ -100,14 +88,7 @@ async def start_guest_session(
     log_event(logger, "auth.guest.created", user_id=str(guest.id))
 
     response = JSONResponse(UserOut.model_validate(guest).model_dump(mode="json"))
-    response.set_cookie(
-        SESSION_COOKIE_NAME,
-        encode_session_token(guest),
-        httponly=True,
-        secure=_cookie_secure(),
-        samesite="lax",
-        max_age=settings.JWT_EXPIRES_HOURS * 3600,
-    )
+    set_session_cookie(response, SESSION_COOKIE_NAME, encode_session_token(guest))
     return response
 
 
@@ -152,14 +133,7 @@ async def login() -> RedirectResponse:
     authorization_url = google_oauth.build_authorization_url(state, nonce)
 
     response = RedirectResponse(url=authorization_url, status_code=status.HTTP_302_FOUND)
-    response.set_cookie(
-        google_oauth.OAUTH_STATE_COOKIE,
-        google_oauth.encode_oauth_state_cookie(state, nonce),
-        httponly=True,
-        secure=_cookie_secure(),
-        samesite="lax",
-        max_age=600,
-    )
+    set_state_cookie(response, google_oauth.OAUTH_STATE_COOKIE, google_oauth.encode_oauth_state_cookie(state, nonce))
     return response
 
 
@@ -245,7 +219,7 @@ async def callback(
     log_event(logger, "auth.login.success", user_id=str(user.id), provider="google")
 
     response = _issue_session(user)
-    response.delete_cookie(google_oauth.OAUTH_STATE_COOKIE)
+    clear_cookie(response, google_oauth.OAUTH_STATE_COOKIE)
     return response
 
 
@@ -263,14 +237,7 @@ async def github_login() -> RedirectResponse:
     response = RedirectResponse(
         url=github_oauth.build_authorization_url(state), status_code=status.HTTP_302_FOUND
     )
-    response.set_cookie(
-        github_oauth.STATE_COOKIE,
-        github_oauth.encode_state_cookie(state),
-        httponly=True,
-        secure=_cookie_secure(),
-        samesite="lax",
-        max_age=600,
-    )
+    set_state_cookie(response, github_oauth.STATE_COOKIE, github_oauth.encode_state_cookie(state))
     return response
 
 
@@ -332,7 +299,7 @@ async def github_callback(
     log_event(logger, "auth.login.success", user_id=str(user.id), provider="github")
 
     response = _issue_session(user)
-    response.delete_cookie(github_oauth.STATE_COOKIE)
+    clear_cookie(response, github_oauth.STATE_COOKIE)
     return response
 
 
@@ -350,14 +317,7 @@ async def orcid_login() -> RedirectResponse:
     response = RedirectResponse(
         url=orcid_oauth.build_login_authorization_url(state), status_code=status.HTTP_302_FOUND
     )
-    response.set_cookie(
-        orcid_oauth.LOGIN_STATE_COOKIE,
-        orcid_oauth.encode_login_state_cookie(state),
-        httponly=True,
-        secure=_cookie_secure(),
-        samesite="lax",
-        max_age=600,
-    )
+    set_state_cookie(response, orcid_oauth.LOGIN_STATE_COOKIE, orcid_oauth.encode_login_state_cookie(state))
     return response
 
 
@@ -423,7 +383,7 @@ async def orcid_callback(
     log_event(logger, "auth.login.success", user_id=str(user.id), provider="orcid")
 
     response = _issue_session(user)
-    response.delete_cookie(orcid_oauth.LOGIN_STATE_COOKIE)
+    clear_cookie(response, orcid_oauth.LOGIN_STATE_COOKIE)
     return response
 
 
@@ -431,5 +391,5 @@ async def orcid_callback(
 async def logout() -> JSONResponse:
     """Clear the `session` cookie."""
     response = JSONResponse({"status": "ok"})
-    response.delete_cookie(SESSION_COOKIE_NAME)
+    clear_cookie(response, SESSION_COOKIE_NAME)
     return response

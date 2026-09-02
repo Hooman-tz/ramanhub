@@ -92,6 +92,10 @@ class Settings(BaseSettings):
     ORCID_CLIENT_SECRET: str = ""
     ORCID_REDIRECT_URI: str = "http://localhost:8000/users/me/orcid/callback"
     ORCID_LOGIN_REDIRECT_URI: str = "http://localhost:8000/auth/orcid/callback"
+    # "production" (orcid.org) or "sandbox" (sandbox.orcid.org). ORCID issues
+    # sandbox credentials immediately; production credentials need approval, so
+    # the sandbox is the only way to exercise the flow before then.
+    ORCID_ENV: str = "production"
 
     # JWT / auth
     JWT_SECRET: str = DEFAULT_JWT_SECRET
@@ -112,8 +116,17 @@ class Settings(BaseSettings):
     OPENROUTER_INGESTION_MODEL: str = ""
     OPENROUTER_ENRICHMENT_MODEL: str = ""
 
+    # Cookie domain shared by the web app and the API. Empty means host-only,
+    # which is right for local dev (both halves are `localhost`). In any
+    # environment where the two run on different hosts — the production
+    # `raman.spectra-in.site` / `api.spectra-in.site` split — set this to the
+    # common registrable parent, e.g. `.spectra-in.site`, or the session cookie
+    # the API sets will never be sent to the web origin. See app/auth/cookies.py.
+    COOKIE_DOMAIN: str = ""
+
     # URLs
-    FRONTEND_URL: str = "http://localhost:5173"
+    # Local Next.js dev server. (Was :5173 — the retired Vite frontend's port.)
+    FRONTEND_URL: str = "http://localhost:3000"
     BACKEND_URL: str = "http://localhost:8000"
     # Leave empty until spectra-in.site (or a future modality domain) is
     # configured with OAuth/CORS/redirects. APIs still return canonical paths.
