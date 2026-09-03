@@ -1,8 +1,9 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useQuery } from "@tanstack/react-query";
-import { Search, X } from "lucide-react";
+import { X } from "lucide-react";
 
 import { getFeed, getSession } from "@ramanhub/api-client";
 import { cn } from "@ramanhub/ui";
@@ -76,10 +77,16 @@ export function FeedView({
   showExpandedComposer?: boolean;
 }) {
   const [tab, setTab] = useState<Tab>("discover");
-  const [searchInput, setSearchInput] = useState("");
-  const [query, setQuery] = useState<FeedQuery>({});
-  const [multiWordNote, setMultiWordNote] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  // The search term lives in the URL because the input that sets it is in the
+  // header, not on this page. That also makes a filtered feed shareable.
+  const rawSearch = searchParams.get("q") ?? "";
+  const { query, multiWord: multiWordNote } = useMemo(
+    () => parseSearch(rawSearch),
+    [rawSearch],
+  );
 
   const session = useQuery({
     queryKey: ["session"],
@@ -99,18 +106,11 @@ export function FeedView({
       }),
   });
 
-  function submitSearch(e?: React.FormEvent) {
-    e?.preventDefault();
-    const { query: parsed, multiWord } = parseSearch(searchInput);
-    setQuery(parsed);
-    setMultiWordNote(multiWord);
-  }
-
   function clearSearch() {
-    setSearchInput("");
-    setQuery({});
-    setMultiWordNote(false);
-    inputRef.current?.focus();
+    const params = new URLSearchParams(searchParams.toString());
+    params.delete("q");
+    const qs = params.toString();
+    router.replace(qs ? `/?${qs}` : "/", { scroll: false });
   }
 
   const activeChip = query.author
@@ -135,49 +135,6 @@ export function FeedView({
           <Composer session={session.data ?? null} variant="expanded" />
         </div>
       )}
-
-      <form
-        role="search"
-        onSubmit={submitSearch}
-        className="border-border bg-card focus-within:border-primary/40 mb-3 flex items-center gap-2 rounded-2xl border px-3 py-1 shadow-sm transition-colors motion-reduce:transition-none"
-      >
-        <Search className="text-muted-foreground size-4 shrink-0" aria-hidden />
-        <label htmlFor="feed-search" className="sr-only">
-          Search the feed
-        </label>
-        <input
-          id="feed-search"
-          ref={inputRef}
-          type="text"
-          value={searchInput}
-          onChange={(e) => setSearchInput(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") {
-              e.preventDefault();
-              clearSearch();
-            }
-          }}
-          placeholder="Search the feed — @author or #tag"
-          className="placeholder:text-muted-foreground w-full bg-transparent py-2 text-sm focus:outline-none"
-        />
-        {searchInput && (
-          <button
-            type="button"
-            onClick={clearSearch}
-            aria-label="Clear search"
-            className="bg-muted text-muted-foreground hover:text-foreground flex size-5 shrink-0 items-center justify-center rounded-full"
-          >
-            <X className="size-3" aria-hidden />
-          </button>
-        )}
-        <button
-          type="submit"
-          aria-label="Search the feed"
-          className="bg-primary text-primary-foreground focus-visible:ring-ring/50 inline-flex size-9 shrink-0 items-center justify-center rounded-xl transition-opacity hover:opacity-90 focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
-        >
-          <Search className="size-4" aria-hidden />
-        </button>
-      </form>
 
       {multiWordNote && (
         <p className="text-foreground/60 mb-2 text-xs">

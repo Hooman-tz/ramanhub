@@ -66,19 +66,16 @@ const menuTriggerClass =
 /* New dataset                                                                */
 /* -------------------------------------------------------------------------- */
 
-/**
- * Creates an empty dataset. Empty is deliberate and matches the API: a dataset
- * is a project folder, and the "at least two spectra" rule belongs to an
- * analysis run, not to the container. So you can make the folder first and
- * fill it as scans arrive.
- */
-export function NewDatasetButton({
+export function NewDatasetDialog({
+  open,
+  onOpenChange,
   onCreated,
 }: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
   onCreated?: (dataset: Dataset) => void;
 }) {
   const qc = useQueryClient();
-  const [open, setOpen] = useState(false);
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -91,7 +88,7 @@ export function NewDatasetButton({
       }),
     onSuccess: async (dataset) => {
       await qc.invalidateQueries({ queryKey: ["datasets"] });
-      setOpen(false);
+      onOpenChange(false);
       setName("");
       setDescription("");
       setError(null);
@@ -103,6 +100,89 @@ export function NewDatasetButton({
   });
 
   return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        onOpenChange(next);
+        if (!next) setError(null);
+      }}
+    >
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>New dataset</DialogTitle>
+          <DialogDescription>
+            A folder for one project&apos;s spectra. It can start empty — add
+            spectra to it from the list as you go.
+          </DialogDescription>
+        </DialogHeader>
+
+        <form
+          className="space-y-3"
+          onSubmit={(e) => {
+            e.preventDefault();
+            if (name.trim() && !create.isPending) create.mutate();
+          }}
+        >
+          <div className="space-y-1">
+            <Label htmlFor="ds-name">Name</Label>
+            <Input
+              id="ds-name"
+              value={name}
+              autoFocus
+              maxLength={160}
+              placeholder="e.g. Perovskite ageing series"
+              onChange={(e) => setName(e.target.value)}
+            />
+          </div>
+          <div className="space-y-1">
+            <Label htmlFor="ds-desc">Description (optional)</Label>
+            <Input
+              id="ds-desc"
+              value={description}
+              maxLength={2000}
+              onChange={(e) => setDescription(e.target.value)}
+            />
+          </div>
+
+          {error && (
+            <p className="text-destructive text-sm" role="alert">
+              {error}
+            </p>
+          )}
+
+          <DialogFooter>
+            <DialogClose asChild>
+              <Button type="button" variant="outline" size="sm">
+                Cancel
+              </Button>
+            </DialogClose>
+            <Button
+              type="submit"
+              size="sm"
+              disabled={!name.trim() || create.isPending}
+            >
+              {create.isPending ? "Creating…" : "Create"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+/**
+ * Creates an empty dataset. Empty is deliberate and matches the API: a dataset
+ * is a project folder, and the "at least two spectra" rule belongs to an
+ * analysis run, not to the container. So you can make the folder first and
+ * fill it as scans arrive.
+ */
+export function NewDatasetButton({
+  onCreated,
+}: {
+  onCreated?: (dataset: Dataset) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
     <>
       <button
         type="button"
@@ -112,74 +192,11 @@ export function NewDatasetButton({
       >
         <Plus className="size-4" aria-hidden />
       </button>
-
-      <Dialog
+      <NewDatasetDialog
         open={open}
-        onOpenChange={(next) => {
-          setOpen(next);
-          if (!next) setError(null);
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>New dataset</DialogTitle>
-            <DialogDescription>
-              A folder for one project&apos;s spectra. It can start empty — add
-              spectra to it from the list as you go.
-            </DialogDescription>
-          </DialogHeader>
-
-          <form
-            className="space-y-3"
-            onSubmit={(e) => {
-              e.preventDefault();
-              if (name.trim() && !create.isPending) create.mutate();
-            }}
-          >
-            <div className="space-y-1">
-              <Label htmlFor="ds-name">Name</Label>
-              <Input
-                id="ds-name"
-                value={name}
-                autoFocus
-                maxLength={160}
-                placeholder="e.g. Perovskite ageing series"
-                onChange={(e) => setName(e.target.value)}
-              />
-            </div>
-            <div className="space-y-1">
-              <Label htmlFor="ds-desc">Description (optional)</Label>
-              <Input
-                id="ds-desc"
-                value={description}
-                maxLength={2000}
-                onChange={(e) => setDescription(e.target.value)}
-              />
-            </div>
-
-            {error && (
-              <p className="text-destructive text-sm" role="alert">
-                {error}
-              </p>
-            )}
-
-            <DialogFooter>
-              <DialogClose asChild>
-                <Button type="button" variant="outline" size="sm">
-                  Cancel
-                </Button>
-              </DialogClose>
-              <Button
-                type="submit"
-                size="sm"
-                disabled={!name.trim() || create.isPending}
-              >
-                {create.isPending ? "Creating…" : "Create"}
-              </Button>
-            </DialogFooter>
-          </form>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setOpen}
+        onCreated={onCreated}
+      />
     </>
   );
 }

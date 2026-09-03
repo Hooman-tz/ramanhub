@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { ImageIcon, LineChart } from "lucide-react";
+import { ImageIcon, LineChart, Plus } from "lucide-react";
 
 import type { SessionUser } from "@ramanhub/api-client";
 import { createFinding, isApiError, postNote } from "@ramanhub/api-client";
@@ -13,9 +13,13 @@ import { Button } from "@ramanhub/ui/button";
 /**
  * `dialog`   — bare form, no card chrome; used inside the compose dialog
  *              (FAB / nav "+"). Renders the form directly (no click-to-expand).
- * `expanded` — always-open form with a card, avatar header, tag helper, and a
- *              secondary row that spins up a real Finding draft so "post with
- *              visuals" leads to the gallery editor.
+ * `expanded` — the feed's inline composer. Collapsed to a single line until
+ *              the "+" is pressed: the feed is for reading, and a three-field
+ *              form sitting permanently above it pushed the actual posts down
+ *              for everyone who wasn't writing one. Once open it has a card,
+ *              avatar header, tag helper, and a secondary row that spins up a
+ *              real Finding draft so "post with visuals" leads to the gallery
+ *              editor.
  */
 export type ComposerVariant = "dialog" | "expanded";
 
@@ -46,6 +50,8 @@ export function Composer({
   const [body, setBody] = useState("");
   const [tags, setTags] = useState("");
   const [error, setError] = useState<string | null>(null);
+  /** Only meaningful for `expanded`; the dialog variant is already open. */
+  const [open, setOpen] = useState(false);
 
   const parseTags = () =>
     tags
@@ -100,6 +106,37 @@ export function Composer({
   const hasTitle = !!title.trim();
   const busy = post.isPending || draft.isPending;
   const expanded = variant === "expanded";
+
+  if (expanded && !open) {
+    return (
+      <div className="border-border bg-card flex items-center gap-3 rounded-xl border p-3 shadow-sm">
+        <Avatar>
+          {session.avatar_url ? (
+            <AvatarImage
+              src={session.avatar_url}
+              alt={session.display_name ?? "You"}
+            />
+          ) : null}
+          <AvatarFallback>{initials(session.display_name)}</AvatarFallback>
+        </Avatar>
+        <button
+          type="button"
+          onClick={() => setOpen(true)}
+          className="text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 min-w-0 flex-1 cursor-pointer rounded-md px-1 py-1.5 text-left text-sm transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
+        >
+          Share a note or a finding…
+        </button>
+        <Button
+          type="button"
+          size="icon"
+          aria-label="Write a post"
+          onClick={() => setOpen(true)}
+        >
+          <Plus className="size-4" aria-hidden />
+        </Button>
+      </div>
+    );
+  }
 
   return (
     <form
@@ -205,11 +242,19 @@ export function Composer({
             Attach figure
           </Button>
           <Button
-            type="submit"
+            type="button"
+            variant="ghost"
             size="sm"
             className="ml-auto"
-            disabled={!hasTitle || busy}
+            disabled={busy}
+            onClick={() => {
+              setOpen(false);
+              setError(null);
+            }}
           >
+            Cancel
+          </Button>
+          <Button type="submit" size="sm" disabled={!hasTitle || busy}>
             {post.isPending ? "Posting…" : "Post"}
           </Button>
         </div>

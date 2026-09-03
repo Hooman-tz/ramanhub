@@ -48,9 +48,13 @@ export function ComposeFab({
           onClick={() => setOpen(true)}
           aria-label="New post"
           className={cn(
-            "bg-primary text-primary-foreground focus-visible:ring-ring/50 fixed right-6 z-40 flex size-14 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-105 focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none",
+            "bg-primary text-primary-foreground focus-visible:ring-ring/50 fixed z-40 flex size-14 items-center justify-center rounded-full shadow-lg transition-transform hover:scale-105 focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none",
             // Clear the mobile bottom nav (h-14 + safe area); normal offset from md up.
             "bottom-[calc(4.5rem+env(safe-area-inset-bottom))] md:bottom-[max(1.5rem,env(safe-area-inset-bottom))]",
+            // The theme toggle is bottom-left on mobile and bottom-right from
+            // md up, so the FAB has to swap sides to avoid sitting on top of
+            // it — which it did on desktop.
+            "right-6 md:right-auto md:left-6",
           )}
         >
           <Plus className="size-6" aria-hidden />

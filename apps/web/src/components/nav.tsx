@@ -1,5 +1,6 @@
 "use client";
 
+import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,7 +16,7 @@ import {
   DropdownMenuTrigger,
 } from "@ramanhub/ui/dropdown-menu";
 
-import { ComposeFab } from "./compose-fab";
+import { NavAction } from "./nav-action";
 import { NAV_LINKS, zoneForPath } from "./zone";
 
 function initials(name: string | null, email: string | null): string {
@@ -108,10 +109,17 @@ export function Nav() {
           })}
         </nav>
 
-        <div className="ml-auto flex items-center gap-1">
+        <div className="ml-auto flex min-w-0 flex-1 items-center justify-end gap-1">
+          {/* The primary action depends on the route — search on the feed, a
+              new dataset in the lab, a new post elsewhere. It reads the URL,
+              so it needs a Suspense boundary to keep pages statically
+              renderable. */}
+          <Suspense fallback={null}>
+            <NavAction isFullUser={isFullUser} />
+          </Suspense>
+
           {isFullUser ? (
             <>
-              <ComposeFab variant="nav-button" />
               <DropdownMenu>
                 <DropdownMenuTrigger
                   aria-label="Account menu"
