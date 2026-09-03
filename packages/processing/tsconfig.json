@@ -1,0 +1,11 @@
+{
+  "extends": "@ramanhub/tsconfig/compiled-package.json",
+  "include": [
+    "src",
+    "test/**/*.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    "dist"
+  ]
+}

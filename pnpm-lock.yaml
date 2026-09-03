@@ -189,6 +189,9 @@ importers:
       '@ramanhub/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
+      '@ramanhub/processing':
+        specifier: workspace:*
+        version: link:../../packages/processing
       '@ramanhub/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -271,6 +274,30 @@ importers:
       zod:
         specifier: 'catalog:'
         version: 4.1.12
+    devDependencies:
+      '@ramanhub/eslint-config':
+        specifier: workspace:*
+        version: link:../../tooling/eslint
+      '@ramanhub/prettier-config':
+        specifier: workspace:*
+        version: link:../../tooling/prettier
+      '@ramanhub/tsconfig':
+        specifier: workspace:*
+        version: link:../../tooling/typescript
+      '@types/node':
+        specifier: 'catalog:'
+        version: 22.18.12
+      eslint:
+        specifier: 'catalog:'
+        version: 9.38.0(jiti@2.6.1)(supports-color@8.1.1)
+      prettier:
+        specifier: 'catalog:'
+        version: 3.6.2
+      typescript:
+        specifier: 'catalog:'
+        version: 5.9.3
+
+  packages/processing:
     devDependencies:
       '@ramanhub/eslint-config':
         specifier: workspace:*
