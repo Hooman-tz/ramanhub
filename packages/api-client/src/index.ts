@@ -346,6 +346,15 @@ export interface FindingImage {
   created_at: string;
 }
 
+/** A registered user credited on a finding. Order is meaningful. */
+export interface FindingCoAuthor {
+  user_id: string;
+  handle: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  position: number;
+}
+
 export interface Finding {
   id: string;
   accession: string | null;
@@ -355,6 +364,8 @@ export interface Finding {
   owner_orcid: string | null;
   title: string;
   abstract_md: string | null;
+  /** What the author thinks should happen next — open questions, help wanted. */
+  next_steps_md: string | null;
   state: "draft" | "published";
   license_id: string | null;
   doi: string | null;
@@ -365,6 +376,7 @@ export interface Finding {
   published_at: string | null;
   created_at: string;
   updated_at: string;
+  co_authors: FindingCoAuthor[];
   entries: FindingEntry[];
   spectra: MemberSpectrum[];
   images: FindingImage[];
@@ -387,8 +399,16 @@ export function createFinding(
   body: {
     title: string;
     abstract_md?: string;
+    next_steps_md?: string;
     tags?: string[];
     repo_url?: string;
+    /**
+     * Handles of registered users to credit, in order. An unknown handle
+     * fails the whole request with 422 rather than being dropped — sending
+     * the list is how you set it, and a silently-ignored typo would credit
+     * nobody while looking like it worked.
+     */
+    co_author_handles?: string[];
   },
   opts?: ApiClientOptions,
 ): Promise<Finding> {
@@ -401,9 +421,12 @@ export function updateFinding(
   body: {
     title?: string;
     abstract_md?: string;
+    next_steps_md?: string;
     tags?: string[];
     doi?: string;
     repo_url?: string;
+    /** Replaces the credit list wholesale; omit to leave it alone, `[]` clears it. */
+    co_author_handles?: string[];
   },
   opts?: ApiClientOptions,
 ): Promise<Finding> {
@@ -412,6 +435,61 @@ export function updateFinding(
     method: "PATCH",
     body,
   });
+}
+
+/**
+ * `POST /v1/findings/{id}/link-doi` — attach a published paper.
+ *
+ * The server resolves the DOI against Crossref at link time and caches the
+ * result in `publication_metadata`, so rendering a feed doesn't make an
+ * outbound call per card. An unresolvable DOI is still stored, flagged
+ * `resolved: false` — a brand-new DOI may simply not be indexed yet. Pass an
+ * empty string to unlink.
+ */
+export function linkFindingDoi(
+  id: string,
+  doi: string,
+  opts?: ApiClientOptions,
+): Promise<Finding> {
+  return apiRequest<Finding>(`/v1/findings/${encodeURIComponent(id)}/link-doi`, {
+    ...opts,
+    method: "POST",
+    body: { doi },
+  });
+}
+
+/**
+ * `POST /v1/findings/{id}/spectra` — attach a spectrum the caller can read.
+ *
+ * Someone else's *published* spectrum is allowed: that is how a finding
+ * compares your data against a published reference. Their draft is not.
+ */
+export function attachFindingSpectrum(
+  findingId: string,
+  spectrumId: string,
+  label?: string,
+  opts?: ApiClientOptions,
+): Promise<Finding> {
+  return apiRequest<Finding>(
+    `/v1/findings/${encodeURIComponent(findingId)}/spectra`,
+    {
+      ...opts,
+      method: "POST",
+      body: { spectrum_id: spectrumId, ...(label ? { label } : {}) },
+    },
+  );
+}
+
+/** `DELETE /v1/findings/{id}/spectra/{spectrumId}` — detach; returns the finding. */
+export function detachFindingSpectrum(
+  findingId: string,
+  spectrumId: string,
+  opts?: ApiClientOptions,
+): Promise<Finding> {
+  return apiRequest<Finding>(
+    `/v1/findings/${encodeURIComponent(findingId)}/spectra/${encodeURIComponent(spectrumId)}`,
+    { ...opts, method: "DELETE" },
+  );
 }
 
 export function publishFinding(

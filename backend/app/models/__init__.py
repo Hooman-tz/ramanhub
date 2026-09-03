@@ -20,7 +20,12 @@ from app.models.enums import (
     UploadStatus,
 )
 from app.models.field_registry import LedgerStepDefinition, MetadataFieldDefinition
-from app.models.finding import Finding, FindingEntry, FindingSpectrum
+from app.models.finding import (
+    Finding,
+    FindingCoAuthor,
+    FindingEntry,
+    FindingSpectrum,
+)
 from app.models.finding_image import FindingImage
 from app.models.graph import Follow, HandleHistory
 from app.models.idempotency import IdempotencyRecord
@@ -58,6 +63,7 @@ __all__ = [
     "CommunityPostSpectrum",
     "FieldDataType",
     "Finding",
+    "FindingCoAuthor",
     "FindingEntry",
     "FindingEntryKind",
     "FindingImage",

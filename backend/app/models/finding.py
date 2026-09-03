@@ -93,6 +93,13 @@ class Finding(Base):
     # yet of needing to query or rename them at scale (Scaling Posture:
     # don't build ahead of evidence).
     tags: Mapped[list | None] = mapped_column(JSONB, nullable=True)
+    # What the author thinks should happen next: open questions, the
+    # experiment they'd run with more beam time, the collaborator they need.
+    # Kept as its own column rather than folded into `abstract_md` because a
+    # reader scanning for "can I help with this" should not have to read the
+    # whole write-up to find it, and because it is the field that makes a
+    # negative or incomplete result worth posting at all.
+    next_steps_md: Mapped[str | None] = mapped_column(Text, nullable=True)
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )
@@ -100,6 +107,41 @@ class Finding(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
     )
+
+
+class FindingCoAuthor(Base):
+    """A registered co-author credited on a Finding.
+
+    A join table rather than free-text names, because a credit is only worth
+    recording if it points at the person: it links to their profile, and it is
+    the basis for ever showing someone the work they were credited on. That
+    means only registered users can be credited — an external collaborator
+    belongs in the write-up or the linked paper's author list, which Crossref
+    already gives us.
+
+    Ordered by `position` since author order is meaningful in this field.
+    """
+
+    __tablename__ = "finding_co_authors"
+    __table_args__ = (
+        # One credit per person per finding, and the natural lookup is
+        # "everyone on this finding, in order".
+        UniqueConstraint("finding_id", "user_id", name="uq_finding_co_author"),
+        Index("ix_finding_co_authors_finding_position", "finding_id", "position"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    finding_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("findings.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    position: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
 class FindingEntry(Base):

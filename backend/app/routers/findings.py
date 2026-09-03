@@ -51,7 +51,12 @@ from app.journals import match_journal
 from app.llm import llm_configured
 from app.models.accession import next_finding_accession
 from app.models.enums import FindingEntryKind, FindingState, SpectrumState
-from app.models.finding import Finding, FindingEntry, FindingSpectrum
+from app.models.finding import (
+    Finding,
+    FindingCoAuthor,
+    FindingEntry,
+    FindingSpectrum,
+)
 from app.models.finding_image import FINDING_IMAGE_KINDS, FindingImage
 from app.models.social import Comment, Vote
 from app.models.spectrum import Spectrum
@@ -98,19 +103,30 @@ def _sniff_image_type(raw: bytes) -> str | None:
 REPO_URL_FIELD = Field(default=None, max_length=2048, pattern=r"^(https?://|$)")
 
 
+# Credits point at registered users, addressed by handle so a client can send
+# what the author typed. Capped because an author list is a credit, not a
+# mailing list; anything longer belongs in the linked paper.
+MAX_CO_AUTHORS = 20
+CO_AUTHOR_FIELD = Field(default=None, max_length=MAX_CO_AUTHORS)
+
+
 class FindingCreate(BaseModel):
     title: str = Field(min_length=1, max_length=300)
     abstract_md: str | None = Field(default=None, max_length=20_000)
+    next_steps_md: str | None = Field(default=None, max_length=4_000)
     tags: list[str] | None = None
     repo_url: str | None = REPO_URL_FIELD
+    co_author_handles: list[str] | None = CO_AUTHOR_FIELD
 
 
 class FindingUpdate(BaseModel):
     title: str | None = Field(default=None, min_length=1, max_length=300)
     abstract_md: str | None = Field(default=None, max_length=20_000)
+    next_steps_md: str | None = Field(default=None, max_length=4_000)
     tags: list[str] | None = None
     doi: str | None = None
     repo_url: str | None = REPO_URL_FIELD
+    co_author_handles: list[str] | None = CO_AUTHOR_FIELD
 
 
 class FindingPublish(BaseModel):
@@ -182,6 +198,14 @@ class FindingImageOut(BaseModel):
     created_at: datetime
 
 
+class CoAuthorOut(BaseModel):
+    user_id: UUID
+    handle: str | None
+    display_name: str | None
+    avatar_url: str | None
+    position: int
+
+
 class FindingOut(BaseModel):
     id: UUID
     accession: str | None
@@ -191,6 +215,7 @@ class FindingOut(BaseModel):
     owner_orcid: str | None = None
     title: str
     abstract_md: str | None
+    next_steps_md: str | None = None
     state: str
     license_id: str | None
     doi: str | None
@@ -200,6 +225,7 @@ class FindingOut(BaseModel):
     published_at: datetime | None
     created_at: datetime
     updated_at: datetime
+    co_authors: list[CoAuthorOut] = []
     entries: list[EntryOut] = []
     spectra: list[MemberSpectrumOut] = []
     images: list[FindingImageOut] = []
@@ -303,6 +329,80 @@ def _renormalize_image_positions(finding_id: UUID, db: Session) -> None:
             db.add(image)
 
 
+def _co_authors(finding_id: UUID, db: Session) -> list[CoAuthorOut]:
+    rows = (
+        db.execute(
+            select(FindingCoAuthor, User)
+            .join(User, User.id == FindingCoAuthor.user_id)
+            .where(FindingCoAuthor.finding_id == finding_id)
+            .order_by(FindingCoAuthor.position, FindingCoAuthor.id)
+        )
+        .tuples()
+        .all()
+    )
+    return [
+        CoAuthorOut(
+            user_id=user.id,
+            handle=user.profile_handle,
+            display_name=user.display_name,
+            avatar_url=user.avatar_url,
+            position=credit.position,
+        )
+        for credit, user in rows
+    ]
+
+
+def _resolve_co_authors(handles: list[str], db: Session) -> list[User]:
+    """Turn handles into users, in the order given, or raise 422.
+
+    Resolution is separated from persistence so a caller can validate the
+    author list *before* creating anything. An unknown handle is refused
+    rather than dropped: a silently-ignored typo credits nobody while looking
+    like it worked, and a credit is exactly the kind of thing an author will
+    not go back and re-check.
+    """
+    # Preserve order while removing repeats, so a doubled handle isn't an error.
+    seen: dict[str, None] = {}
+    for raw in handles:
+        handle = raw.strip().lstrip("@")
+        if handle:
+            seen.setdefault(handle.lower(), None)
+    ordered = list(seen.keys())
+    if not ordered:
+        return []
+
+    found = (
+        db.execute(select(User).where(func.lower(User.profile_handle).in_(ordered)))
+        .scalars()
+        .all()
+    )
+    by_handle = {(u.profile_handle or "").lower(): u for u in found if u.profile_handle}
+    missing = [h for h in ordered if h not in by_handle]
+    if missing:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=f"No account with handle: {', '.join('@' + h for h in missing)}",
+        )
+    return [by_handle[h] for h in ordered]
+
+
+def _apply_co_authors(finding: Finding, users: list[User], db: Session) -> None:
+    """Replace the finding's credits with `users`, in order.
+
+    Replace rather than merge: the client sends the author list it wants, and
+    a merge-only update would make removing someone impossible.
+    """
+    # The owner is already the author; crediting them twice reads as an error.
+    credited = [u for u in users if u.id != finding.owner_id]
+    db.execute(
+        FindingCoAuthor.__table__.delete().where(
+            FindingCoAuthor.finding_id == finding.id
+        )
+    )
+    for position, user in enumerate(credited):
+        db.add(FindingCoAuthor(finding_id=finding.id, user_id=user.id, position=position))
+
+
 def serialize_finding(finding: Finding, db: Session, include_body: bool = True) -> FindingOut:
     owner = db.get(User, finding.owner_id)
     out = FindingOut(
@@ -314,6 +414,7 @@ def serialize_finding(finding: Finding, db: Session, include_body: bool = True) 
         owner_orcid=owner.orcid_id if owner else None,
         title=finding.title,
         abstract_md=finding.abstract_md,
+        next_steps_md=finding.next_steps_md,
         state=finding.state.value if hasattr(finding.state, "value") else finding.state,
         license_id=finding.license_id,
         doi=finding.doi,
@@ -323,6 +424,7 @@ def serialize_finding(finding: Finding, db: Session, include_body: bool = True) 
         published_at=finding.published_at,
         created_at=finding.created_at,
         updated_at=finding.updated_at,
+        co_authors=_co_authors(finding.id, db),
     )
 
     if include_body:
@@ -429,16 +531,29 @@ def create_finding(
     if hit is not None:
         return JSONResponse(hit["body"], status_code=hit["status"])
 
+    # Resolve credits first: a bad handle must not consume an accession number
+    # or leave a half-made draft behind.
+    co_authors = (
+        _resolve_co_authors(body.co_author_handles, db)
+        if body.co_author_handles is not None
+        else []
+    )
+
     finding = Finding(
         accession=next_finding_accession(db),
         owner_id=user.id,
         title=body.title,
         abstract_md=body.abstract_md,
+        next_steps_md=body.next_steps_md,
         tags=_normalize_tags(body.tags),
         repo_url=body.repo_url,
         state=FindingState.draft,
     )
     db.add(finding)
+    # Flush so the credits below have a finding id to point at.
+    db.flush()
+    if co_authors:
+        _apply_co_authors(finding, co_authors, db)
     db.commit()
     db.refresh(finding)
     result = serialize_finding(finding, db)
@@ -500,6 +615,12 @@ def update_finding(
         finding.doi = body.doi or None
     if body.repo_url is not None:
         finding.repo_url = body.repo_url or None
+    if body.next_steps_md is not None:
+        finding.next_steps_md = body.next_steps_md or None
+    if body.co_author_handles is not None:
+        _apply_co_authors(
+            finding, _resolve_co_authors(body.co_author_handles, db), db
+        )
     db.add(finding)
     db.commit()
     db.refresh(finding)
