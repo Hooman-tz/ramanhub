@@ -10,8 +10,6 @@ import {
   LineChart,
   Link2,
   Plus,
-  Users,
-  X,
 } from "lucide-react";
 
 import type { SessionUser } from "@ramanhub/api-client";
@@ -27,6 +25,8 @@ import { Avatar, AvatarFallback, AvatarImage } from "@ramanhub/ui/avatar";
 import { Button } from "@ramanhub/ui/button";
 import { Label } from "@ramanhub/ui/label";
 
+import { AttachedSpectraPreview } from "./attached-spectra-preview";
+import { CoAuthorField } from "./co-author-field";
 import { MarkdownEditor } from "./markdown-editor";
 import { SpectrumPickerDialog } from "./spectrum-picker";
 
@@ -64,74 +64,6 @@ function initials(name: string | null): string {
 
 const fieldClass =
   "border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm focus-visible:ring-[3px] focus-visible:outline-none";
-
-/** Handle chips — co-authors are addressed by handle and validated server-side. */
-function CoAuthorField({
-  handles,
-  onChange,
-}: {
-  handles: string[];
-  onChange: (next: string[]) => void;
-}) {
-  const [draft, setDraft] = useState("");
-
-  const commit = () => {
-    const handle = draft.trim().replace(/^@/, "");
-    if (!handle) return;
-    if (!handles.some((h) => h.toLowerCase() === handle.toLowerCase())) {
-      onChange([...handles, handle]);
-    }
-    setDraft("");
-  };
-
-  return (
-    <div className="space-y-1">
-      <Label htmlFor="composer-coauthors" className="text-xs">
-        <Users className="mr-1 inline size-3.5" aria-hidden />
-        Co-authors
-      </Label>
-      <div className="border-input bg-background focus-within:border-ring flex flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5">
-        {handles.map((handle) => (
-          <span
-            key={handle}
-            className="bg-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
-          >
-            @{handle}
-            <button
-              type="button"
-              aria-label={`Remove @${handle}`}
-              onClick={() => onChange(handles.filter((h) => h !== handle))}
-              className="text-muted-foreground hover:text-foreground cursor-pointer"
-            >
-              <X className="size-3" aria-hidden />
-            </button>
-          </span>
-        ))}
-        <input
-          id="composer-coauthors"
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            // Enter must not submit the form — it commits a chip.
-            if (e.key === "Enter" || e.key === ",") {
-              e.preventDefault();
-              commit();
-            } else if (e.key === "Backspace" && !draft && handles.length) {
-              onChange(handles.slice(0, -1));
-            }
-          }}
-          onBlur={commit}
-          placeholder={handles.length ? "" : "@handle"}
-          className="min-w-24 flex-1 bg-transparent py-0.5 text-sm focus:outline-none"
-        />
-      </div>
-      <p className="text-foreground/60 text-xs">
-        Handles of people with an account here — they&apos;ll link to their
-        profiles.
-      </p>
-    </div>
-  );
-}
 
 export function Composer({
   session,
@@ -367,6 +299,13 @@ export function Composer({
         )}
       </div>
 
+      <AttachedSpectraPreview
+        spectrumIds={spectrumIds}
+        onRemove={(id) =>
+          setSpectrumIds((prev) => prev.filter((s) => s !== id))
+        }
+      />
+
       <button
         type="button"
         onClick={() => setShowMore((v) => !v)}
@@ -417,7 +356,11 @@ export function Composer({
             />
           </div>
 
-          <CoAuthorField handles={coAuthors} onChange={setCoAuthors} />
+          <CoAuthorField
+            handles={coAuthors}
+            onChange={setCoAuthors}
+            viewerHandle={session.profile_handle ?? null}
+          />
 
           <div className="space-y-1">
             <Label className="text-xs">Next steps</Label>
