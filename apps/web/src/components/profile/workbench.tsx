@@ -63,6 +63,7 @@ import {
   listRoutines,
   updateSpectrum,
 } from "@ramanhub/api-client";
+import { previewPipeline } from "@ramanhub/processing";
 import { cn } from "@ramanhub/ui";
 import { Badge } from "@ramanhub/ui/badge";
 import { Button } from "@ramanhub/ui/button";
@@ -91,6 +92,11 @@ import { toast } from "@ramanhub/ui/toast";
 
 import { SpectrumChart } from "~/components/charts/spectrum-chart";
 import { ReadinessBadge } from "~/components/profile/profile-tabs";
+import {
+  BUFFER_MAX_POINTS,
+  useAlgorithmVersions,
+  useSpectrumBuffer,
+} from "~/lib/spectra-buffer";
 
 /* --- catalog visual maps --------------------------------------------- */
 
@@ -247,15 +253,10 @@ export function Workbench() {
     enabled: !!selectedId,
   });
 
-  const wantRaw = view === "raw";
-  const data = useQuery({
-    queryKey: ["spectrum-data", selectedId, wantRaw],
-    queryFn: () => {
-      if (!selectedId) throw new Error("No spectrum selected.");
-      return getSpectrumData(selectedId, { raw: wantRaw, maxPoints: 4000 });
-    },
-    enabled: !!selectedId,
-  });
+  // The raw arrays, fetched once and then resident in memory. Everything the
+  // user does while tuning is computed against this buffer locally.
+  const buffer = useSpectrumBuffer(selectedId);
+  const algorithmVersions = useAlgorithmVersions();
 
   /* right pane — pipeline */
   const catalog = useQuery({
@@ -279,6 +280,75 @@ export function Workbench() {
       })),
     [pipeline],
   );
+
+  /* --- local preview ----------------------------------------------------- */
+
+  // Replay the staged pipeline in the browser. This is the whole point of the
+  // buffer: it costs a couple of milliseconds, so it can run on every
+  // parameter change, and it writes nothing anywhere.
+  const preview = useMemo(() => {
+    if (!buffer.data || steps.length === 0) return null;
+    return previewPipeline(buffer.data, steps, algorithmVersions);
+  }, [buffer.data, steps, algorithmVersions]);
+
+  // A spectrum processed in an earlier session has a stored ledger but no
+  // staged pipeline, so there is nothing to replay locally. That is the one
+  // case that still needs the server's curve — fetched lazily, only when the
+  // user actually switches to the processed view.
+  const storedProcessed = useQuery({
+    queryKey: ["spectrum-data", selectedId, "processed"],
+    queryFn: () => {
+      if (!selectedId) throw new Error("No spectrum selected.");
+      return getSpectrumData(selectedId, {
+        raw: false,
+        maxPoints: BUFFER_MAX_POINTS,
+      });
+    },
+    enabled: !!selectedId && view === "processed" && steps.length === 0,
+    staleTime: Infinity,
+  });
+
+  /**
+   * What the chart draws. ECharts wants plain arrays, so the typed buffers are
+   * converted here — once per distinct curve rather than once per render.
+   */
+  const chart = useMemo((): {
+    wavenumbers: number[];
+    intensities: number[];
+    note: string | null;
+  } | null => {
+    if (view === "processed") {
+      if (preview?.status === "ok") {
+        return {
+          wavenumbers: Array.from(preview.spectrum.wavenumbers),
+          intensities: Array.from(preview.spectrum.intensities),
+          note: `computed on your machine in ${preview.elapsedMs < 1 ? "<1" : Math.round(preview.elapsedMs)} ms`,
+        };
+      }
+      if (steps.length === 0 && storedProcessed.data) {
+        return {
+          wavenumbers: storedProcessed.data.wavenumbers,
+          intensities: storedProcessed.data.intensities,
+          note: "stored result",
+        };
+      }
+      return null;
+    }
+    if (!buffer.data) return null;
+    return {
+      wavenumbers: Array.from(buffer.data.wavenumbers),
+      intensities: Array.from(buffer.data.intensities),
+      note: null,
+    };
+  }, [view, preview, steps.length, storedProcessed.data, buffer.data]);
+
+  /** Why the processed view can't be drawn, if it can't. */
+  const previewProblem =
+    view === "processed" && preview && preview.status !== "ok"
+      ? preview.status === "unsupported"
+        ? `Preview unavailable — ${preview.reason}. Apply to compute it on the server.`
+        : preview.reason
+      : null;
 
   const applyMut = useMutation({
     mutationFn: async () => {
@@ -476,7 +546,7 @@ export function Workbench() {
     }
   }
 
-  const wn = data.data?.wavenumbers;
+  const wn = chart?.wavenumbers;
   const range =
     wn && wn.length > 0
       ? (() => {
@@ -653,7 +723,7 @@ export function Workbench() {
                   <button
                     type="button"
                     aria-pressed={view === "processed"}
-                    disabled={appliedCount == null}
+                    disabled={appliedCount == null && steps.length === 0}
                     onClick={() => setView("processed")}
                     className={cn(
                       "min-h-9 cursor-pointer border-l px-3 text-xs font-medium transition-colors duration-150 outline-none",
@@ -664,36 +734,48 @@ export function Workbench() {
                         : "bg-background hover:bg-muted",
                     )}
                   >
-                    Processed{appliedCount != null ? ` (${appliedCount})` : ""}
+                    Processed
+                    {steps.length > 0
+                      ? ` (${steps.length})`
+                      : appliedCount != null
+                        ? ` (${appliedCount})`
+                        : ""}
                   </button>
                 </div>
               </div>
 
               <div className="rounded-lg border p-2">
-                {!data.data && data.isLoading ? (
+                {!buffer.data && buffer.isLoading ? (
                   <Skeleton className="h-[360px] w-full" />
-                ) : data.data ? (
+                ) : chart ? (
                   <SpectrumChart
                     mode="trace"
-                    wavenumbers={data.data.wavenumbers}
-                    intensities={data.data.intensities}
+                    wavenumbers={chart.wavenumbers}
+                    intensities={chart.intensities}
                     height={360}
-                    loading={data.isFetching}
+                    loading={storedProcessed.isFetching}
                     ariaLabel={`${view} spectrum trace`}
                   />
                 ) : (
                   <p className="text-muted-foreground p-4 text-center text-sm">
-                    Could not load spectrum data.
+                    {previewProblem ?? "Could not load spectrum data."}
                   </p>
                 )}
               </div>
 
-              {data.data && (
+              {previewProblem && chart && (
+                <p className="text-muted-foreground text-xs" role="status">
+                  {previewProblem}
+                </p>
+              )}
+
+              {buffer.data && (
                 <p className="text-muted-foreground text-xs">
-                  {data.data.wavenumbers.length.toLocaleString()} of{" "}
-                  {data.data.total_points.toLocaleString()} points
-                  {data.data.downsampled ? " · downsampled for display" : ""}
+                  {(chart?.wavenumbers.length ?? 0).toLocaleString()} of{" "}
+                  {buffer.data.totalPoints.toLocaleString()} points
+                  {buffer.data.downsampled ? " · downsampled for display" : ""}
                   {range ? ` · ${range}` : ""}
+                  {chart?.note ? ` · ${chart.note}` : ""}
                 </p>
               )}
             </>
