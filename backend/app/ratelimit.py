@@ -67,6 +67,11 @@ _share_limiter = RateLimiter(max_calls=60, window_seconds=3600)  # 60 shares / h
 # for a legitimate user (who at most retries a handful of times) but tight
 # enough to blunt scripted brute-forcing of the callback endpoint.
 _login_limiter = RateLimiter(max_calls=10, window_seconds=3600)  # 10 login attempts / hour / IP
+# LLM-backed endpoints (the "lab consultant" advice endpoint) fan out to a paid
+# model per call, so they get their own, tighter ceiling than the social
+# actions above — well clear of a human clicking "get advice" a few times while
+# iterating on a pipeline, tight enough that a script can't rack up model spend.
+_llm_consult_limiter = RateLimiter(max_calls=15, window_seconds=3600)  # 15 LLM consults / hour
 
 
 def rate_limit_uploads(user: User = Depends(get_current_user)) -> None:
@@ -95,6 +100,10 @@ def rate_limit_shares(user: User = Depends(get_current_user)) -> None:
 
 def rate_limit_reports(user: User = Depends(get_current_user)) -> None:
     _report_limiter.check(str(user.id))
+
+
+def rate_limit_llm_consult(user: User = Depends(get_current_user)) -> None:
+    _llm_consult_limiter.check(str(user.id))
 
 
 def rate_limit_login(request: Request) -> None:

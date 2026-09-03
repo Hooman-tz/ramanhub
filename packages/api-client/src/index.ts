@@ -1453,3 +1453,55 @@ export function publishSpectrum(
     { ...opts, method: "POST", body: input },
   );
 }
+
+/* --- lab consultant (read-only processing advice) ----------------------- */
+
+export interface LabConsultBody {
+  /** An analysis dataset (project folder) owned by the caller. */
+  dataset_id?: string;
+  /** Individual spectrum ids owned by the caller. Combined with the
+   *  dataset's members when both are given. */
+  spectrum_ids?: string[];
+  /** Optional free-text question (max 500 chars). Only answered when it's
+   *  about processing the caller's own spectra. */
+  question?: string;
+}
+
+export interface SuggestedPreprocessing {
+  /** One of the 13 registered algorithm step types, e.g. `raman.snv`. */
+  step_type: string;
+  /** Params already coerced/validated against the algorithm's schema
+   *  server-side; unknown/invalid keys are stripped before you see them. */
+  params: Record<string, unknown>;
+  rationale: string;
+}
+
+export interface SuggestedAnalysis {
+  /** A supported analysis type, e.g. `pca` or `pca_kmeans`. */
+  analysis_type: string;
+  rationale: string;
+}
+
+export interface LabConsultResult {
+  observations: string[];
+  suggested_preprocessing: SuggestedPreprocessing[];
+  suggested_analyses: SuggestedAnalysis[];
+  caveats: string[];
+}
+
+/**
+ * `POST /v1/lab/consult` — full account only. Read-only: sends the model a
+ * compact statistical summary of the caller's own spectra and returns
+ * processing advice. Never mutates anything. 503 when no LLM is configured;
+ * 404 for any spectrum/dataset the caller doesn't own.
+ */
+export function labConsult(
+  body: LabConsultBody,
+  opts?: ApiClientOptions,
+): Promise<LabConsultResult> {
+  return apiRequest<LabConsultResult>("/v1/lab/consult", {
+    ...opts,
+    method: "POST",
+    body,
+  });
+}
