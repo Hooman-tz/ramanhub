@@ -290,6 +290,22 @@ def _retry_or_fail(
     db.commit()
 
 
+def _fallback_provenance(source: str) -> tuple[str, str, float]:
+    """Map an `extract_metadata_via_llm` source to `(parser_used, version,
+    confidence)`.
+
+    `parser_used` is written to `RawFile.vendor_format` and
+    `IngestionJob.parser_used`, so it is a provenance claim about how a
+    spectrum's metadata came to exist. It must not say an LLM read the file
+    when none did: `"filename-only"` is the no-key path, where nothing but the
+    upload's filename informed those fields, and it is scored well below a
+    real header parse to say so.
+    """
+    if source == "filename-only":
+        return "filename-only", source, 0.2
+    return f"llm:{source}", source, 0.7 if source == "cache" else 0.55
+
+
 def run_ingestion_job(
     job_id: uuid.UUID,
     *,
@@ -350,6 +366,12 @@ def run_ingestion_job(
                 parser_used = parser.vendor_format
                 parser_version = parser.version
                 parser_confidence = 1.0
+                # Deterministic filename overlay: fill only fields the vendor
+                # parser left null, from regex hints in the upload's original
+                # filename. Never overwrites a file-derived value. The LLM
+                # fallback below already applies this to its own result, so
+                # this belongs on the parser branch only.
+                metadata = filename_overlay.apply(metadata, raw_file.original_filename)
             else:
                 metadata, source = asyncio.run(
                     await_with_lease_heartbeats(
@@ -359,14 +381,7 @@ def run_ingestion_job(
                         on_heartbeat=lambda: _renew_lease(db, job.id, active_lease_token),
                     )
                 )
-                parser_used = f"llm:{source}"
-                parser_version = source
-                parser_confidence = 0.7 if source == "cache" else 0.55
-
-            # Deterministic filename overlay: fill only fields the parser (or
-            # the LLM fallback) left null from regex hints in the upload's
-            # original filename. Never overwrites a file-derived value.
-            metadata = filename_overlay.apply(metadata, raw_file.original_filename)
+                parser_used, parser_version, parser_confidence = _fallback_provenance(source)
 
             flags = run_sanity_check(metadata, metadata.modality, db)
             flags.update(_quality_flags_for_arrays(raw_bytes))

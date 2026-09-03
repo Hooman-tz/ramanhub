@@ -24,6 +24,7 @@ import pytest
 
 from app.ingestion import jobs as jobs_module
 from app.ingestion.header_hash import compute_header_hash
+from app.ingestion.jobs import _fallback_provenance
 from app.ingestion.llm_fallback import (
     MAX_HEADER_CHARS,
     MAX_OUTPUT_TOKENS,
@@ -350,3 +351,29 @@ def test_no_ingestion_call_site_passes_whole_file_to_the_llm():
         if "extract_metadata_via_llm(" in text:
             callers.append(path.name)
     assert callers == ["jobs.py"], callers
+
+
+def test_filename_only_ingestion_is_not_recorded_as_an_llm_parse():
+    """A no-key ingestion must not claim an LLM read the file.
+
+    `parser_used` lands in `RawFile.vendor_format`, which is provenance: it is
+    the platform's own record of how a spectrum's metadata came to exist. The
+    no-key path derives fields from the filename alone, so labelling it
+    `llm:...` would be a false claim about a published record.
+    """
+    parser_used, version, confidence = _fallback_provenance("filename-only")
+    assert parser_used == "filename-only"
+    assert not parser_used.startswith("llm")
+    assert version == "filename-only"
+    # Scored below both real fallback paths — a filename guess is the weakest
+    # evidence the pipeline can produce.
+    assert confidence < _fallback_provenance("llm")[2]
+    assert confidence < _fallback_provenance("cache")[2]
+
+
+def test_llm_and_cache_sources_keep_their_llm_provenance_label():
+    assert _fallback_provenance("llm")[0] == "llm:llm"
+    assert _fallback_provenance("cache")[0] == "llm:cache"
+    # A cache hit replays a parse the model already did on this exact header
+    # template, so it is at least as trustworthy as a fresh call.
+    assert _fallback_provenance("cache")[2] >= _fallback_provenance("llm")[2]
