@@ -1,8 +1,29 @@
 "use client";
 
+import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
 import { useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import {
+  closestCenter,
+  DndContext,
+  DragOverlay,
+  KeyboardSensor,
+  PointerSensor,
+  useDraggable,
+  useDroppable,
+  useSensor,
+  useSensors,
+} from "@dnd-kit/core";
+import {
+  arrayMove,
+  SortableContext,
+  sortableKeyboardCoordinates,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   useInfiniteQuery,
   useMutation,
@@ -12,9 +33,9 @@ import {
 import {
   ChevronDown,
   ChevronUp,
+  GripVertical,
   ListPlus,
   Play,
-  Plus,
   RotateCcw,
   Ruler,
   Save,
@@ -378,6 +399,83 @@ export function Workbench() {
     setPipeline(next);
   }
 
+  function insertStep(spec: AlgorithmInfo, index: number) {
+    setPipeline((p) => {
+      const next = [...p];
+      const at = Math.max(0, Math.min(index, next.length));
+      next.splice(at, 0, {
+        uid: nextUid(),
+        spec,
+        params: defaultsFor(spec.param_schema),
+      });
+      return next;
+    });
+  }
+
+  /* drag-and-drop: palette -> pipeline, plus reorder within the pipeline */
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 4 } }),
+    useSensor(KeyboardSensor, {
+      coordinateGetter: sortableKeyboardCoordinates,
+    }),
+  );
+  const [activeDrag, setActiveDrag] = useState<{
+    kind: "tool" | "step";
+    label: string;
+    category: string;
+  } | null>(null);
+
+  type DragData =
+    | { kind: "tool"; spec: AlgorithmInfo }
+    | { kind: "step"; uid: string }
+    | undefined;
+
+  function onDragStart(event: DragStartEvent) {
+    const d = event.active.data.current as DragData;
+    if (d?.kind === "tool") {
+      setActiveDrag({
+        kind: "tool",
+        label: d.spec.label,
+        category: d.spec.category,
+      });
+    } else if (d?.kind === "step") {
+      const s = pipeline.find((p) => p.uid === d.uid);
+      if (s)
+        setActiveDrag({
+          kind: "step",
+          label: s.spec.label,
+          category: s.spec.category,
+        });
+    }
+  }
+
+  function onDragEnd(event: DragEndEvent) {
+    setActiveDrag(null);
+    const { active, over } = event;
+    if (!over) return;
+    const a = active.data.current as DragData;
+    const o = over.data.current as { kind?: "step" | "zone" } | undefined;
+
+    if (a?.kind === "tool") {
+      if (o?.kind === "step") {
+        const idx = pipeline.findIndex((p) => p.uid === over.id);
+        insertStep(a.spec, idx < 0 ? pipeline.length : idx);
+      } else {
+        addStep(a.spec);
+      }
+      return;
+    }
+
+    if (a?.kind === "step" && o?.kind === "step" && active.id !== over.id) {
+      setPipeline((p) => {
+        const from = p.findIndex((s) => s.uid === active.id);
+        const to = p.findIndex((s) => s.uid === over.id);
+        if (from < 0 || to < 0) return p;
+        return arrayMove(p, from, to);
+      });
+    }
+  }
+
   const wn = data.data?.wavenumbers;
   const range =
     wn && wn.length > 0
@@ -504,286 +602,289 @@ export function Workbench() {
         </ScrollArea>
       </Card>
 
-      {/* -------- Center: Spectrum -------- */}
-      <Card className="min-w-0 flex-1 gap-3 p-3">
-        {!selectedId ? (
-          <div className="flex h-[360px] flex-col items-center justify-center gap-2 text-center">
-            <SlidersHorizontal
-              className="text-muted-foreground size-8"
-              aria-hidden
-            />
-            <p className="text-muted-foreground text-sm">
-              Select a spectrum from the left to preview and process it.
-            </p>
-          </div>
-        ) : (
-          <>
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div className="min-w-0">
-                <h3 className="truncate text-sm font-semibold">
-                  {spectrum.data?.title ?? selectedRow?.title ?? "Spectrum"}
-                </h3>
-                <p className="text-muted-foreground text-xs">
-                  {spectrum.data?.material_type ??
-                    selectedRow?.material_type ??
-                    "—"}
-                  {spectrum.data?.doi ? ` · DOI ${spectrum.data.doi}` : ""}
-                </p>
-              </div>
-
-              <div
-                className="flex overflow-hidden rounded-md border"
-                role="group"
-                aria-label="Curve view"
-              >
-                <button
-                  type="button"
-                  aria-pressed={view === "raw"}
-                  onClick={() => setView("raw")}
-                  className={cn(
-                    "min-h-9 cursor-pointer px-3 text-xs font-medium transition-colors duration-150 outline-none",
-                    "focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
-                    view === "raw"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-background hover:bg-muted",
-                  )}
-                >
-                  Raw
-                </button>
-                <button
-                  type="button"
-                  aria-pressed={view === "processed"}
-                  disabled={appliedCount == null}
-                  onClick={() => setView("processed")}
-                  className={cn(
-                    "min-h-9 cursor-pointer border-l px-3 text-xs font-medium transition-colors duration-150 outline-none",
-                    "focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
-                    "disabled:cursor-not-allowed disabled:opacity-50",
-                    view === "processed"
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-background hover:bg-muted",
-                  )}
-                >
-                  Processed{appliedCount != null ? ` (${appliedCount})` : ""}
-                </button>
-              </div>
-            </div>
-
-            <div className="rounded-lg border p-2">
-              {!data.data && data.isLoading ? (
-                <Skeleton className="h-[360px] w-full" />
-              ) : data.data ? (
-                <SpectrumChart
-                  mode="trace"
-                  wavenumbers={data.data.wavenumbers}
-                  intensities={data.data.intensities}
-                  height={360}
-                  loading={data.isFetching}
-                  ariaLabel={`${view} spectrum trace`}
-                />
-              ) : (
-                <p className="text-muted-foreground p-4 text-center text-sm">
-                  Could not load spectrum data.
-                </p>
-              )}
-            </div>
-
-            {data.data && (
-              <p className="text-muted-foreground text-xs">
-                {data.data.wavenumbers.length.toLocaleString()} of{" "}
-                {data.data.total_points.toLocaleString()} points
-                {data.data.downsampled ? " · downsampled for display" : ""}
-                {range ? ` · ${range}` : ""}
+      {/* -------- Main column: spectrum preview + processing toolbox -------- */}
+      <div className="flex min-w-0 flex-1 flex-col gap-3">
+        {/* -------- Spectrum preview -------- */}
+        <Card className="min-w-0 gap-3 p-3">
+          {!selectedId ? (
+            <div className="flex h-[360px] flex-col items-center justify-center gap-2 text-center">
+              <SlidersHorizontal
+                className="text-muted-foreground size-8"
+                aria-hidden
+              />
+              <p className="text-muted-foreground text-sm">
+                Select a spectrum from the left to preview and process it.
               </p>
-            )}
-          </>
-        )}
-      </Card>
-
-      {/* -------- Right: Pipeline -------- */}
-      <Card className="flex max-h-[75vh] flex-col gap-0 overflow-hidden p-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:w-[320px] lg:shrink-0">
-        <ScrollArea className="min-h-0 flex-1">
-          <div className="space-y-3 p-3">
-            {/* Tool palette */}
-            <div>
-              <h3 className="mb-2 text-sm font-semibold">Tools</h3>
-              {catalog.isLoading && (
-                <div className="space-y-2">
-                  {[0, 1, 2].map((i) => (
-                    <Skeleton key={i} className="h-12 w-full rounded-lg" />
-                  ))}
+            </div>
+          ) : (
+            <>
+              <div className="flex flex-wrap items-start justify-between gap-2">
+                <div className="min-w-0">
+                  <h3 className="truncate text-sm font-semibold">
+                    {spectrum.data?.title ?? selectedRow?.title ?? "Spectrum"}
+                  </h3>
+                  <p className="text-muted-foreground text-xs">
+                    {spectrum.data?.material_type ??
+                      selectedRow?.material_type ??
+                      "—"}
+                    {spectrum.data?.doi ? ` · DOI ${spectrum.data.doi}` : ""}
+                  </p>
                 </div>
-              )}
-              {catalog.data && (
-                <PaletteGroups
-                  categories={catalog.data.categories}
-                  algorithms={catalog.data.algorithms}
-                  onAdd={addStep}
-                />
-              )}
-            </div>
 
-            {/* Pipeline */}
-            <div className="border-t pt-3">
-              <h3 className="mb-2 text-sm font-semibold">
-                Pipeline{pipeline.length > 0 ? ` (${pipeline.length})` : ""}
-              </h3>
-              {pipeline.length === 0 ? (
-                <p className="text-muted-foreground rounded-lg border border-dashed p-3 text-center text-xs">
-                  Add tools above to build a processing pipeline.
-                </p>
-              ) : (
-                <ol className="space-y-2">
-                  {pipeline.map((step, i) => (
-                    <li key={step.uid} className="rounded-lg border">
-                      <div className="flex items-stretch gap-2">
-                        <span
-                          className={cn(
-                            "w-1 shrink-0 rounded-l-lg",
-                            CATEGORY_ACCENT[step.spec.category] ?? "bg-muted",
-                          )}
-                          aria-hidden
-                        />
-                        <div className="min-w-0 flex-1 py-2 pr-2">
-                          <div className="flex items-center gap-1">
-                            <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                              {i + 1}. {step.spec.label}
-                            </span>
-                            <button
-                              type="button"
-                              aria-label={`Move ${step.spec.label} up`}
-                              disabled={i === 0}
-                              onClick={() => move(step.uid, -1)}
-                              className={iconBtn}
-                            >
-                              <ChevronUp className="size-3.5" aria-hidden />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Move ${step.spec.label} down`}
-                              disabled={i === pipeline.length - 1}
-                              onClick={() => move(step.uid, 1)}
-                              className={iconBtn}
-                            >
-                              <ChevronDown className="size-3.5" aria-hidden />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={`Remove ${step.spec.label}`}
-                              onClick={() => removeStep(step.uid)}
-                              className={iconBtn}
-                            >
-                              <X className="size-3.5" aria-hidden />
-                            </button>
-                          </div>
-                          <ParamForm
-                            uid={step.uid}
-                            schema={step.spec.param_schema}
-                            values={step.params}
-                            onChange={setParam}
-                          />
-                        </div>
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </div>
-          </div>
-        </ScrollArea>
-
-        {/* Actions */}
-        <div className="bg-card flex flex-wrap gap-2 border-t p-2">
-          <Button
-            size="sm"
-            disabled={pipeline.length === 0 || !rawFileId || applyMut.isPending}
-            onClick={() => applyMut.mutate()}
-          >
-            <Play className="size-4" aria-hidden />
-            {applyMut.isPending ? "Applying…" : "Apply"}
-          </Button>
-
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={!selectedId || resetMut.isPending}
-            onClick={() => resetMut.mutate()}
-          >
-            <RotateCcw className="size-4" aria-hidden />
-            Reset to raw
-          </Button>
-
-          <Dialog>
-            <DialogTrigger asChild>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={pipeline.length === 0}
-              >
-                <Save className="size-4" aria-hidden />
-                Save as routine
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Save pipeline as routine</DialogTitle>
-                <DialogDescription>
-                  Store the current {pipeline.length}-step pipeline so you can
-                  re-apply it to other spectra.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="space-y-2">
-                <Label htmlFor="wb-routine-name">Routine name</Label>
-                <Input
-                  id="wb-routine-name"
-                  value={routineName}
-                  onChange={(e) => setRoutineName(e.target.value)}
-                  placeholder="e.g. Baseline + SNV"
-                />
-              </div>
-              <DialogFooter>
-                <DialogClose asChild>
-                  <Button variant="outline" size="sm">
-                    Cancel
-                  </Button>
-                </DialogClose>
-                <DialogClose asChild>
-                  <Button
-                    size="sm"
-                    disabled={!routineName.trim() || saveMut.isPending}
-                    onClick={() => saveMut.mutate()}
-                  >
-                    Save
-                  </Button>
-                </DialogClose>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-
-          <DropdownMenu>
-            <DropdownMenuTrigger asChild>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={(routines.data?.length ?? 0) === 0}
-              >
-                <ListPlus className="size-4" aria-hidden />
-                Load routine
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              {(routines.data ?? []).map((r) => (
-                <DropdownMenuItem
-                  key={r.id}
-                  onSelect={() => loadRoutine(r.steps_template)}
+                <div
+                  className="flex overflow-hidden rounded-md border"
+                  role="group"
+                  aria-label="Curve view"
                 >
-                  {r.name}
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-        </div>
-      </Card>
+                  <button
+                    type="button"
+                    aria-pressed={view === "raw"}
+                    onClick={() => setView("raw")}
+                    className={cn(
+                      "min-h-9 cursor-pointer px-3 text-xs font-medium transition-colors duration-150 outline-none",
+                      "focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
+                      view === "raw"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background hover:bg-muted",
+                    )}
+                  >
+                    Raw
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={view === "processed"}
+                    disabled={appliedCount == null}
+                    onClick={() => setView("processed")}
+                    className={cn(
+                      "min-h-9 cursor-pointer border-l px-3 text-xs font-medium transition-colors duration-150 outline-none",
+                      "focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
+                      "disabled:cursor-not-allowed disabled:opacity-50",
+                      view === "processed"
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-background hover:bg-muted",
+                    )}
+                  >
+                    Processed{appliedCount != null ? ` (${appliedCount})` : ""}
+                  </button>
+                </div>
+              </div>
+
+              <div className="rounded-lg border p-2">
+                {!data.data && data.isLoading ? (
+                  <Skeleton className="h-[360px] w-full" />
+                ) : data.data ? (
+                  <SpectrumChart
+                    mode="trace"
+                    wavenumbers={data.data.wavenumbers}
+                    intensities={data.data.intensities}
+                    height={360}
+                    loading={data.isFetching}
+                    ariaLabel={`${view} spectrum trace`}
+                  />
+                ) : (
+                  <p className="text-muted-foreground p-4 text-center text-sm">
+                    Could not load spectrum data.
+                  </p>
+                )}
+              </div>
+
+              {data.data && (
+                <p className="text-muted-foreground text-xs">
+                  {data.data.wavenumbers.length.toLocaleString()} of{" "}
+                  {data.data.total_points.toLocaleString()} points
+                  {data.data.downsampled ? " · downsampled for display" : ""}
+                  {range ? ` · ${range}` : ""}
+                </p>
+              )}
+            </>
+          )}
+        </Card>
+
+        {/* -------- Processing toolbox: Available tools + Your pipeline -------- */}
+        <DndContext
+          sensors={sensors}
+          collisionDetection={closestCenter}
+          onDragStart={onDragStart}
+          onDragEnd={onDragEnd}
+          onDragCancel={() => setActiveDrag(null)}
+        >
+          <div className="grid gap-4 md:grid-cols-2">
+            {/* Available tools */}
+            <Card className="gap-0 p-0">
+              <div className="bg-card border-b px-3 py-2">
+                <h3 className="text-sm font-semibold">Available tools</h3>
+              </div>
+              <div className="p-3">
+                {catalog.isLoading && (
+                  <div className="space-y-3">
+                    {[0, 1, 2].map((i) => (
+                      <Skeleton key={i} className="h-14 w-full rounded-lg" />
+                    ))}
+                  </div>
+                )}
+                {catalog.isError && (
+                  <p className="text-muted-foreground text-xs">
+                    Could not load the algorithm catalog.
+                  </p>
+                )}
+                {catalog.data && (
+                  <PaletteGroups
+                    categories={catalog.data.categories}
+                    algorithms={catalog.data.algorithms}
+                    onAdd={addStep}
+                  />
+                )}
+              </div>
+            </Card>
+
+            {/* Your pipeline */}
+            <Card className="gap-0 p-0">
+              <div className="bg-card border-b px-3 py-2">
+                <h3 className="text-sm font-semibold">
+                  Your pipeline
+                  {pipeline.length > 0 ? ` (${pipeline.length})` : ""}
+                </h3>
+              </div>
+
+              <PipelineDropZone>
+                {pipeline.length === 0 ? (
+                  <p className="text-muted-foreground rounded-lg border border-dashed p-6 text-center text-xs">
+                    Drag a tool here, or click one on the left.
+                  </p>
+                ) : (
+                  <SortableContext
+                    items={pipeline.map((p) => p.uid)}
+                    strategy={verticalListSortingStrategy}
+                  >
+                    <ol className="space-y-2">
+                      {pipeline.map((step, i) => (
+                        <SortableStep
+                          key={step.uid}
+                          step={step}
+                          index={i}
+                          total={pipeline.length}
+                          onMove={move}
+                          onRemove={removeStep}
+                          onParam={setParam}
+                        />
+                      ))}
+                    </ol>
+                  </SortableContext>
+                )}
+              </PipelineDropZone>
+
+              {/* Actions */}
+              <div className="bg-card flex flex-wrap gap-2 border-t p-2">
+                <Button
+                  size="sm"
+                  disabled={
+                    pipeline.length === 0 || !rawFileId || applyMut.isPending
+                  }
+                  onClick={() => applyMut.mutate()}
+                >
+                  <Play className="size-4" aria-hidden />
+                  {applyMut.isPending ? "Applying…" : "Apply"}
+                </Button>
+
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={!selectedId || resetMut.isPending}
+                  onClick={() => resetMut.mutate()}
+                >
+                  <RotateCcw className="size-4" aria-hidden />
+                  Reset to raw
+                </Button>
+
+                <Dialog>
+                  <DialogTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={pipeline.length === 0}
+                    >
+                      <Save className="size-4" aria-hidden />
+                      Save as routine
+                    </Button>
+                  </DialogTrigger>
+                  <DialogContent>
+                    <DialogHeader>
+                      <DialogTitle>Save pipeline as routine</DialogTitle>
+                      <DialogDescription>
+                        Store the current {pipeline.length}-step pipeline so you
+                        can re-apply it to other spectra.
+                      </DialogDescription>
+                    </DialogHeader>
+                    <div className="space-y-2">
+                      <Label htmlFor="wb-routine-name">Routine name</Label>
+                      <Input
+                        id="wb-routine-name"
+                        value={routineName}
+                        onChange={(e) => setRoutineName(e.target.value)}
+                        placeholder="e.g. Baseline + SNV"
+                      />
+                    </div>
+                    <DialogFooter>
+                      <DialogClose asChild>
+                        <Button variant="outline" size="sm">
+                          Cancel
+                        </Button>
+                      </DialogClose>
+                      <DialogClose asChild>
+                        <Button
+                          size="sm"
+                          disabled={!routineName.trim() || saveMut.isPending}
+                          onClick={() => saveMut.mutate()}
+                        >
+                          Save
+                        </Button>
+                      </DialogClose>
+                    </DialogFooter>
+                  </DialogContent>
+                </Dialog>
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={(routines.data?.length ?? 0) === 0}
+                    >
+                      <ListPlus className="size-4" aria-hidden />
+                      Load routine
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {(routines.data ?? []).map((r) => (
+                      <DropdownMenuItem
+                        key={r.id}
+                        onSelect={() => loadRoutine(r.steps_template)}
+                      >
+                        {r.name}
+                      </DropdownMenuItem>
+                    ))}
+                  </DropdownMenuContent>
+                </DropdownMenu>
+              </div>
+            </Card>
+          </div>
+
+          <DragOverlay>
+            {activeDrag ? (
+              <span className="border-primary/50 bg-card inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-medium shadow-lg">
+                <span
+                  className={cn(
+                    "size-2 shrink-0 rounded-full",
+                    CATEGORY_ACCENT[activeDrag.category] ?? "bg-muted",
+                  )}
+                  aria-hidden
+                />
+                {activeDrag.label}
+              </span>
+            ) : null}
+          </DragOverlay>
+        </DndContext>
+      </div>
     </div>
   );
 }
@@ -807,56 +908,187 @@ function PaletteGroups({
         const Icon = CATEGORY_ICON[cat] ?? SlidersHorizontal;
         return (
           <div key={cat}>
-            <p className="text-muted-foreground mb-1 text-[0.7rem] font-medium tracking-wide uppercase">
+            <p className="text-muted-foreground mb-1.5 flex items-center gap-1.5 text-[0.7rem] font-medium tracking-wide uppercase">
+              <Icon className="size-3.5 shrink-0" aria-hidden />
               {cat}
             </p>
-            <div className="space-y-1.5">
+            <div className="flex flex-wrap gap-1.5">
               {algs.map((a) => (
-                <button
-                  key={a.step_type}
-                  type="button"
-                  onClick={() => onAdd(a)}
-                  className={cn(
-                    "group flex w-full cursor-pointer items-start gap-2 rounded-lg border p-2 text-left transition-colors duration-150 outline-none",
-                    "hover:border-primary/40 hover:bg-muted/50 focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
-                  )}
-                >
-                  <Icon
-                    className="text-muted-foreground mt-0.5 size-4 shrink-0"
-                    aria-hidden
-                  />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className="truncate text-xs font-medium">
-                        {a.label}
-                      </span>
-                      {a.transforms_axis && (
-                        <Badge
-                          variant="outline"
-                          className="shrink-0 text-[0.65rem] font-normal"
-                        >
-                          changes axis
-                        </Badge>
-                      )}
-                    </span>
-                    <span
-                      className="text-muted-foreground line-clamp-1 text-[0.7rem]"
-                      title={a.description}
-                    >
-                      {a.description}
-                    </span>
-                  </span>
-                  <Plus
-                    className="text-muted-foreground group-hover:text-primary size-4 shrink-0"
-                    aria-hidden
-                  />
-                </button>
+                <ToolChip key={a.step_type} spec={a} onAdd={onAdd} />
               ))}
             </div>
           </div>
         );
       })}
     </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+/** A compact, draggable + click-to-add tool chip in the left palette. */
+function ToolChip({
+  spec,
+  onAdd,
+}: {
+  spec: AlgorithmInfo;
+  onAdd: (spec: AlgorithmInfo) => void;
+}) {
+  const { listeners, setNodeRef, isDragging } = useDraggable({
+    id: `tool:${spec.step_type}`,
+    data: { kind: "tool", spec },
+  });
+
+  return (
+    <button
+      ref={setNodeRef}
+      type="button"
+      title={spec.description}
+      className={cn(
+        "group inline-flex cursor-grab items-center gap-1.5 rounded-full border px-2.5 py-1 text-left text-xs transition-colors duration-150 outline-none active:cursor-grabbing",
+        "hover:border-primary/40 hover:bg-muted/50 focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
+        isDragging && "opacity-40",
+      )}
+      {...listeners}
+      onClick={() => onAdd(spec)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onAdd(spec);
+        }
+      }}
+    >
+      <span
+        className={cn(
+          "size-2 shrink-0 rounded-full",
+          CATEGORY_ACCENT[spec.category] ?? "bg-muted",
+        )}
+        aria-hidden
+      />
+      <span className="font-medium">{spec.label}</span>
+      {spec.transforms_axis && (
+        <Badge
+          variant="outline"
+          className="ml-0.5 shrink-0 px-1 py-0 text-[0.6rem] font-normal"
+        >
+          axis
+        </Badge>
+      )}
+    </button>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+/** The drop target that accepts tools dragged in from the palette. */
+function PipelineDropZone({ children }: { children: ReactNode }) {
+  const { setNodeRef, isOver } = useDroppable({
+    id: "pipeline-dropzone",
+    data: { kind: "zone" },
+  });
+  return (
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "min-h-24 p-3 transition-colors duration-150 motion-reduce:transition-none",
+        isOver && "bg-muted/40",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+
+/** One ordered pipeline row: drag handle + label + move/remove + param form. */
+function SortableStep({
+  step,
+  index,
+  total,
+  onMove,
+  onRemove,
+  onParam,
+}: {
+  step: PipeStep;
+  index: number;
+  total: number;
+  onMove: (uid: string, dir: -1 | 1) => void;
+  onRemove: (uid: string) => void;
+  onParam: (uid: string, key: string, value: unknown) => void;
+}) {
+  const { listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: step.uid, data: { kind: "step", uid: step.uid } });
+
+  return (
+    <li
+      ref={setNodeRef}
+      style={{ transform: CSS.Translate.toString(transform), transition }}
+      className={cn(
+        "bg-card rounded-lg border",
+        isDragging && "relative z-10 opacity-60 shadow-lg",
+      )}
+    >
+      <div className="flex items-stretch gap-2">
+        <span
+          className={cn(
+            "w-1 shrink-0 rounded-l-lg",
+            CATEGORY_ACCENT[step.spec.category] ?? "bg-muted",
+          )}
+          aria-hidden
+        />
+        <div className="min-w-0 flex-1 py-2 pr-2">
+          <div className="flex items-center gap-1">
+            <button
+              type="button"
+              aria-label={`Drag to reorder ${step.spec.label}`}
+              className={cn(
+                iconBtn,
+                "size-7 cursor-grab active:cursor-grabbing",
+              )}
+              {...listeners}
+            >
+              <GripVertical className="size-3.5" aria-hidden />
+            </button>
+            <span className="min-w-0 flex-1 truncate text-xs font-medium">
+              {index + 1}. {step.spec.label}
+            </span>
+            <button
+              type="button"
+              aria-label={`Move ${step.spec.label} up`}
+              disabled={index === 0}
+              onClick={() => onMove(step.uid, -1)}
+              className={iconBtn}
+            >
+              <ChevronUp className="size-3.5" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label={`Move ${step.spec.label} down`}
+              disabled={index === total - 1}
+              onClick={() => onMove(step.uid, 1)}
+              className={iconBtn}
+            >
+              <ChevronDown className="size-3.5" aria-hidden />
+            </button>
+            <button
+              type="button"
+              aria-label={`Remove ${step.spec.label}`}
+              onClick={() => onRemove(step.uid)}
+              className={iconBtn}
+            >
+              <X className="size-3.5" aria-hidden />
+            </button>
+          </div>
+          <ParamForm
+            uid={step.uid}
+            schema={step.spec.param_schema}
+            values={step.params}
+            onChange={onParam}
+          />
+        </div>
+      </div>
+    </li>
   );
 }
 
