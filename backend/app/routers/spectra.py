@@ -19,12 +19,18 @@ from app.auth.deps import get_current_full_user, get_current_user, get_current_u
 from app.db.session import get_db
 from app.doi_lookup import lookup_doi, normalize_doi
 from app.ingestion.sanity_check import check as run_sanity_check
+from app.models.analysis import AnalysisDatasetSpectrum
+from app.models.curation import Pin
 from app.models.enums import IngestionStatus, SpectrumState
+from app.models.finding import FindingSpectrum
 from app.models.ingestion_job import IngestionJob
 from app.models.license import License
+from app.models.processed_cache import ProcessedCache
 from app.models.processing_ledger import ProcessingLedger
 from app.models.publication import Publication, PublicationSnapshot
 from app.models.raw_file import RawFile
+from app.models.similarity import SimilarityFeature
+from app.models.social import Comment, CommunityPostSpectrum, Share, Vote
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.processing.cache import get_or_compute
@@ -44,7 +50,7 @@ from app.spectrum_lifecycle import (
     publication_readiness,
     spectrum_provenance,
 )
-from app.storage.s3_client import download_bytes, upload_bytes
+from app.storage.s3_client import delete_object, download_bytes, upload_bytes
 
 router = APIRouter(tags=["spectra"])
 logger = logging.getLogger(__name__)
@@ -314,6 +320,119 @@ def update_spectrum(
     db.commit()
     db.refresh(spectrum)
     return _serialize(spectrum, db, user)
+
+
+@router.delete("/spectra/{spectrum_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_spectrum(
+    spectrum_id: UUID,
+    db: Session = Depends(get_db),
+    # Owner-only, same as PATCH — a guest session may delete its own drafts.
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Hard-delete a non-published spectrum the caller owns, plus everything
+    that only exists to support it: the immutable `RawFile`, its
+    `IngestionJob`(s), any `ProcessingLedger` / `ProcessedCache` for that raw
+    file, dataset membership, and social signals (votes/comments/shares/pins)
+    pointing at the spectrum. Published or DOI-linked spectra are part of the
+    public record and refuse deletion with 409.
+
+    No Alembic migration accompanies this: it deletes rows, it doesn't change
+    the schema. Some child FKs (`pins`, `similarity_features`,
+    `analysis_dataset_spectra`) already `ON DELETE CASCADE` from `spectra`;
+    the explicit deletes below keep the endpoint correct even against a DB
+    whose constraints predate that, and cover the children that don't
+    cascade.
+    """
+    spectrum = _get_owned_spectrum_or_404(spectrum_id, user, db)
+
+    if (
+        spectrum.state != SpectrumState.draft
+        or effective_state(spectrum) != SpectrumState.draft.value
+        or spectrum.published_at is not None
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "Only draft spectra can be deleted. Published or embargoed "
+                "spectra are part of the public commons and cannot be removed."
+            ),
+        )
+    if spectrum.doi or spectrum.publication_id is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                "This spectrum is linked to a verified DOI / publication and "
+                "cannot be deleted."
+            ),
+        )
+
+    raw_file_id = spectrum.raw_file_id
+    raw_file = db.get(RawFile, raw_file_id)
+
+    # Object-storage keys to remove after the DB rows are gone (best-effort,
+    # never fatal). Captured now, while the rows still exist.
+    storage_targets: list[tuple[str, str]] = []
+    if raw_file is not None:
+        storage_targets.append((raw_file.storage_bucket, raw_file.storage_key))
+    for cache_row in (
+        db.query(ProcessedCache).filter(ProcessedCache.raw_file_id == raw_file_id).all()
+    ):
+        storage_targets.append((cache_row.storage_bucket, cache_row.storage_key))
+
+    # Detach child forks that reference this spectrum as their parent so the
+    # self-FK doesn't block the delete (fork lineage is best-effort metadata).
+    db.query(Spectrum).filter(Spectrum.parent_spectrum_id == spectrum.id).update(
+        {Spectrum.parent_spectrum_id: None}, synchronize_session=False
+    )
+
+    # Social / curation / membership rows targeting the spectrum.
+    for model in (
+        Vote,
+        Share,
+        Comment,
+        Pin,
+        SimilarityFeature,
+        AnalysisDatasetSpectrum,
+        FindingSpectrum,
+        CommunityPostSpectrum,
+        PublicationSnapshot,
+    ):
+        db.query(model).filter(model.spectrum_id == spectrum.id).delete(
+            synchronize_session=False
+        )
+
+    # Processing + ingestion artefacts for the (owned, unpublished) raw file.
+    db.query(ProcessedCache).filter(ProcessedCache.raw_file_id == raw_file_id).delete(
+        synchronize_session=False
+    )
+    db.query(IngestionJob).filter(IngestionJob.raw_file_id == raw_file_id).delete(
+        synchronize_session=False
+    )
+
+    db.delete(spectrum)
+    db.flush()
+
+    # Ledgers reference the raw file, and the spectrum referenced a ledger via
+    # current_ledger_id — so this only becomes safe once the spectrum row is
+    # gone.
+    db.query(ProcessingLedger).filter(
+        ProcessingLedger.raw_file_id == raw_file_id
+    ).delete(synchronize_session=False)
+
+    if raw_file is not None:
+        db.delete(raw_file)
+
+    db.commit()
+
+    for bucket, key in storage_targets:
+        try:
+            delete_object(bucket, key)
+        except Exception:  # noqa: BLE001 - a storage hiccup must not fail the delete
+            logger.warning(
+                "delete_spectrum: could not remove object %s/%s", bucket, key, exc_info=True
+            )
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.post("/spectra/{spectrum_id}/doi/verify", response_model=SpectrumResponse)

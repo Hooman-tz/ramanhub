@@ -112,6 +112,9 @@ def fake_s3(monkeypatch):
     def download_bytes(bucket, key):
         return store[(bucket, key)]
 
+    def delete_object(bucket, key):
+        store.pop((bucket, key), None)
+
     monkeypatch.setattr("app.processing.cache.upload_bytes", upload_bytes)
     monkeypatch.setattr("app.processing.cache.download_bytes", download_bytes)
     monkeypatch.setattr("app.spectra_io.download_bytes", download_bytes)
@@ -119,6 +122,8 @@ def fake_s3(monkeypatch):
     # The fork endpoint copies raw bytes through its own imported names.
     monkeypatch.setattr("app.routers.spectra.upload_bytes", upload_bytes)
     monkeypatch.setattr("app.routers.spectra.download_bytes", download_bytes)
+    # The delete endpoint removes raw / processed objects best-effort.
+    monkeypatch.setattr("app.routers.spectra.delete_object", delete_object)
     return store
 
 

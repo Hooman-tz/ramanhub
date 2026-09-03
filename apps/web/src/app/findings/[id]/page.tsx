@@ -17,6 +17,7 @@ import {
 
 import { AbstractSummary } from "~/components/abstract-summary";
 import { BackLink } from "~/components/back-link";
+import { DeleteRecordButton } from "~/components/delete-record-button";
 import { FindingActions } from "~/components/finding-actions";
 import { FindingComments } from "~/components/finding-comments";
 import { FindingEditor } from "~/components/finding-editor";
@@ -159,6 +160,16 @@ export default async function FindingPage({
       {isOwner && finding.state === "published" && (
         <div className="mt-3">
           <PinButton kind="finding" id={finding.id} />
+        </div>
+      )}
+
+      {isOwner && finding.state !== "published" && (
+        <div className="mt-3">
+          <DeleteRecordButton
+            kind="finding"
+            id={finding.id}
+            redirectTo="/office"
+          />
         </div>
       )}
 
