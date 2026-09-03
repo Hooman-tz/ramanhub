@@ -23,6 +23,7 @@ import numpy as np
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "backend"))
 
+from app.analysis.engine import execute_pca_arrays  # noqa: E402
 from app.processing.algorithms.registry import apply_step  # noqa: E402
 
 OUT = pathlib.Path(__file__).resolve().parent / "parity-fixture.json"
@@ -93,6 +94,46 @@ CASES: list[tuple[str, list[tuple[str, dict]]]] = [
 ]
 
 
+def analysis_inputs() -> list[tuple[str, np.ndarray, np.ndarray]]:
+    """Six spectra that differ in a way PCA should actually separate: three
+    dominated by one band, three by another, plus varying background and noise
+    so the components aren't trivially recoverable."""
+    rng = np.random.default_rng(4242)
+    items = []
+    for i in range(6):
+        x = np.linspace(300.0 + 5 * i, 3000.0 - 4 * i, 700 + 13 * i)
+        group = i % 2
+        y = np.zeros_like(x)
+        y += (1200.0 if group == 0 else 300.0) * np.exp(-0.5 * ((x - 1001.0) / 9.0) ** 2)
+        y += (250.0 if group == 0 else 1400.0) * np.exp(-0.5 * ((x - 1580.0) / 14.0) ** 2)
+        y += 600.0 * np.exp(-0.5 * ((x - 1350.0) / 30.0) ** 2)
+        y += (900.0 + 120.0 * i) * np.exp(-0.5 * ((x - 2000.0) / 1000.0) ** 2)
+        y += 0.05 * i * x + 60.0 + rng.normal(0.0, 4.0, x.size)
+        items.append((f"spec-{i}", x, y))
+    return items
+
+
+ANALYSIS = analysis_inputs()
+
+
+def pca_cases() -> list[dict]:
+    """Run the real server engine so the TypeScript port has something
+    authoritative to match."""
+    ids = [name for name, _x, _y in ANALYSIS]
+    arrays = [(x, y) for _name, x, y in ANALYSIS]
+    out = []
+    for name, params in [
+        ("pca-2", {"components": 2, "grid_points": 128}),
+        ("pca-3-fine", {"components": 3, "grid_points": 256}),
+        ("pca-kmeans", {"components": 2, "grid_points": 128, "clusters": 2}),
+    ]:
+        output, _checks = execute_pca_arrays(
+            ids, arrays, parameters=params, cancelled=lambda: False
+        )
+        out.append({"name": name, "params": params, "output": output})
+    return out
+
+
 def main() -> None:
     cases = []
     for name, steps in CASES:
@@ -116,6 +157,15 @@ def main() -> None:
                     "intensities": [float(v) for v in Y],
                 },
                 "cases": cases,
+                "analysisInputs": [
+                    {
+                        "id": name,
+                        "wavenumbers": [float(v) for v in x],
+                        "intensities": [float(v) for v in y],
+                    }
+                    for name, x, y in ANALYSIS
+                ],
+                "pcaCases": pca_cases(),
             }
         )
     )

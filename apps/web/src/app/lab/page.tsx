@@ -38,10 +38,11 @@ export default function LabPage() {
     <div className="mx-auto max-w-[1500px] px-4 py-6">
       <header className="mb-4 flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h1 className="text-xl font-bold tracking-tight">My Lab</h1>
+          <h1 className="text-xl font-bold tracking-tight">Data Lab</h1>
           <p className="text-muted-foreground mt-1 text-sm">
-            Your SpectraBase and the processing toolbox. Hosted analysis
-            compute is not enabled yet — the API rejects hosted runs.
+            Your database and your analysis. Prep and unsupervised analysis run
+            on this machine, so they&apos;re immediate — but they&apos;re
+            exploratory, and hosted analysis runs are still disabled.
           </p>
         </div>
         <Button asChild>

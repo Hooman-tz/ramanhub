@@ -11,7 +11,7 @@ import { ProfileHeader } from "~/components/profile/profile-header";
 import { CollabNetwork } from "./collab-network";
 import { RecentActivity } from "./recent-activity";
 import { SavedPosts } from "./saved-posts";
-import { SpectrumProjects } from "./spectrum-projects";
+import { ProjectStatus } from "./project-status";
 
 const STAT_KEYS = [
   ["spectrum_count", "Spectra"],
@@ -58,7 +58,7 @@ export function OfficeView({ handle }: { handle: string }) {
       )}
 
       <ContributionGraph handle={handle} />
-      <SpectrumProjects />
+      <ProjectStatus />
       <RecentActivity />
       <SavedPosts handle={handle} />
       <CollabNetwork handle={handle} />

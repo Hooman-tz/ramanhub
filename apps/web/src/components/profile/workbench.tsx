@@ -3,7 +3,7 @@
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   closestCenter,
@@ -93,11 +93,16 @@ import { Skeleton } from "@ramanhub/ui/skeleton";
 import { toast } from "@ramanhub/ui/toast";
 
 import { SpectrumChart } from "~/components/charts/spectrum-chart";
+import type { LabMode } from "~/components/lab/lab-mode-nav";
 import {
   DatasetRowMenu,
   NewDatasetButton,
   SpectrumRowMenu,
 } from "~/components/lab/data-management";
+import { DatabaseOverview } from "~/components/lab/database-overview";
+import { LabModeNav, parseLabMode } from "~/components/lab/lab-mode-nav";
+import { SupervisedPanel } from "~/components/lab/supervised-panel";
+import { UnsupervisedPanel } from "~/components/lab/unsupervised-panel";
 import { ReadinessBadge } from "~/components/profile/profile-tabs";
 import {
   BUFFER_MAX_POINTS,
@@ -217,6 +222,7 @@ export function Workbench() {
   const qc = useQueryClient();
 
   const selectedId = searchParams.get("s");
+  const mode = parseLabMode(searchParams.get("mode"));
 
   /* left pane — files */
   const [showFilters, setShowFilters] = useState(false);
@@ -244,6 +250,23 @@ export function Workbench() {
     queryFn: () => listDatasets(),
   });
   const selectedDataset = datasets.data?.find((d) => d.id === datasetId);
+
+  /** Short label for a spectrum id, for annotating analysis plots. Depends on
+   * `lib.data` rather than the flattened rows array so it stays referentially
+   * stable across renders and doesn't re-trigger the analysis memo. */
+  const titleFor = useCallback(
+    (id: string) => {
+      const fromDataset = selectedDataset?.spectra.find(
+        (s) => s.id === id,
+      )?.title;
+      if (fromDataset) return fromDataset;
+      const fromLibrary = lib.data?.pages
+        .flat()
+        .find((r) => r.id === id)?.title;
+      return fromLibrary ?? id.slice(0, 8);
+    },
+    [selectedDataset, lib.data],
+  );
 
   const memberIds = useMemo(
     () =>
@@ -465,6 +488,15 @@ export function Workbench() {
     params.set("tab", "workbench");
     if (id) params.set("s", id);
     else params.delete("s");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
+
+  /** Switch what the lab is doing. Kept in the URL so a view is shareable and
+   * survives a reload, alongside `?s=` and `?d=`. */
+  function selectMode(next: LabMode) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "workbench");
+    params.set("mode", next);
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
@@ -843,6 +875,28 @@ export function Workbench() {
 
       {/* -------- Main column: spectrum preview + processing toolbox -------- */}
       <div className="flex min-w-0 flex-1 flex-col gap-3">
+        <LabModeNav mode={mode} onSelect={selectMode} />
+
+        {mode === "database" && (
+          <DatabaseOverview
+            row={selectedRow}
+            spectrum={spectrum.data}
+            buffer={buffer.data}
+            bufferLoading={buffer.isLoading}
+            dataset={selectedDataset}
+            datasets={datasets.data ?? []}
+            loadedCount={visibleRows.length}
+          />
+        )}
+
+        {mode === "unsupervised" && (
+          <UnsupervisedPanel dataset={selectedDataset} titleFor={titleFor} />
+        )}
+
+        {mode === "supervised" && <SupervisedPanel />}
+
+        {mode === "prep" && (
+          <>
         {/* -------- Spectrum preview -------- */}
         <Card className="min-w-0 gap-3 p-3">
           {!selectedId ? (
@@ -1135,6 +1189,8 @@ export function Workbench() {
             ) : null}
           </DragOverlay>
         </DndContext>
+          </>
+        )}
       </div>
     </div>
   );

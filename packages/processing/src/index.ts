@@ -31,10 +31,11 @@
  */
 
 import type { Float64Buffer } from "./numeric";
-
 import { PREVIEW_ALGORITHMS, PreviewError } from "./algorithms";
 
 export { PreviewError } from "./algorithms";
+export { analyzePca, AnalysisError } from "./multivariate";
+export type { AnalysisInput, PcaResult } from "./multivariate";
 
 /** A spectrum held in the client-side working buffer. */
 export interface BufferedSpectrum {

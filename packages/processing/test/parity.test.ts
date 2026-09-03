@@ -25,7 +25,7 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import type { PreviewStep } from "../src/index";
-import { previewPipeline, toBuffer } from "../src/index";
+import { analyzePca, previewPipeline, toBuffer } from "../src/index";
 
 interface Fixture {
   input: { wavenumbers: number[]; intensities: number[] };
@@ -151,4 +151,120 @@ void test("previewing does not mutate the source buffer", () => {
     { type: "raman.snv", params: {} },
   ]);
   assert.deepEqual(Array.from(source.intensities), Array.from(before));
+});
+
+/* --- multivariate: PCA / k-means ----------------------------------------- */
+
+interface PcaFixture {
+  analysisInputs: { id: string; wavenumbers: number[]; intensities: number[] }[];
+  pcaCases: {
+    name: string;
+    params: { components: number; grid_points: number; clusters?: number };
+    output: {
+      grid_wavenumbers: number[];
+      scores: number[][];
+      components: number[][];
+      explained_variance_ratio: number[];
+      cluster_labels?: number[];
+    };
+  }[];
+}
+
+const pcaFixture = fixture as unknown as PcaFixture;
+
+const analysisInputs = pcaFixture.analysisInputs.map((s) => ({
+  id: s.id,
+  label: s.id,
+  wavenumbers: Float64Array.from(s.wavenumbers),
+  intensities: Float64Array.from(s.intensities),
+}));
+
+/**
+ * Loading vectors and score columns are only defined up to a shared sign — the
+ * port fixes signs deterministically, NumPy's SVD does not, so a component may
+ * legitimately come back mirrored. Compare on the axis where that is resolved.
+ */
+function signedDeviation(actual: number[], expected: number[]): number {
+  let scale = 0;
+  for (const v of expected) scale = Math.max(scale, Math.abs(v));
+  scale = Math.max(scale, 1e-12);
+
+  const worst = (flip: number) => {
+    let w = 0;
+    for (let i = 0; i < expected.length; i++) {
+      w = Math.max(w, Math.abs(flip * actual[i]! - expected[i]!));
+    }
+    return w;
+  };
+  return Math.min(worst(1), worst(-1)) / scale;
+}
+
+for (const testCase of pcaFixture.pcaCases) {
+  void test(`matches the Python analysis engine: ${testCase.name}`, () => {
+    const result = analyzePca(analysisInputs, {
+      components: testCase.params.components,
+      gridPoints: testCase.params.grid_points,
+      clusters: testCase.params.clusters ?? null,
+    });
+
+    assert.deepEqual(
+      result.grid.map((v) => Math.round(v * 1e6) / 1e6),
+      testCase.output.grid_wavenumbers.map((v) => Math.round(v * 1e6) / 1e6),
+      "shared grid",
+    );
+
+    // Explained variance is sign-independent, so it is the strictest check
+    // available and the one that proves the same subspace was found.
+    for (let k = 0; k < testCase.output.explained_variance_ratio.length; k++) {
+      const got = result.explainedVarianceRatio[k]!;
+      const want = testCase.output.explained_variance_ratio[k]!;
+      assert.ok(
+        Math.abs(got - want) < 1e-9,
+        `component ${k} explained variance: got ${got}, want ${want}`,
+      );
+    }
+
+    for (let k = 0; k < testCase.output.components.length; k++) {
+      const dev = signedDeviation(
+        result.components[k]!,
+        testCase.output.components[k]!,
+      );
+      assert.ok(dev < 1e-8, `loading ${k} deviates by ${dev.toExponential(2)}`);
+    }
+
+    for (let k = 0; k < testCase.output.explained_variance_ratio.length; k++) {
+      const gotColumn = result.scores.map((row) => row[k]!);
+      const wantColumn = testCase.output.scores.map((row) => row[k]!);
+      const dev = signedDeviation(gotColumn, wantColumn);
+      assert.ok(dev < 1e-8, `score column ${k} deviates by ${dev.toExponential(2)}`);
+    }
+
+    if (testCase.output.cluster_labels) {
+      assert.deepEqual(
+        result.clusterLabels,
+        testCase.output.cluster_labels,
+        "cluster labels",
+      );
+    }
+  });
+}
+
+void test("PCA refuses spectra that barely overlap", () => {
+  const [first] = analysisInputs;
+  const shifted = {
+    ...first!,
+    id: "shifted",
+    wavenumbers: Float64Array.from(
+      Array.from(first!.wavenumbers, (v) => v + 5000),
+    ),
+  };
+  assert.throws(
+    () => analyzePca([first!, shifted], {}),
+    /overlap/i,
+    "non-overlapping spectra must be refused, not silently truncated",
+  );
+});
+
+void test("PCA needs at least two spectra", () => {
+  assert.throws(() => analyzePca(analysisInputs.slice(0, 1), {}), /two spectra/i);
 });

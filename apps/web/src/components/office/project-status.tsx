@@ -9,8 +9,6 @@ import { cn } from "@ramanhub/ui";
 import { Card } from "@ramanhub/ui/card";
 import { Skeleton } from "@ramanhub/ui/skeleton";
 
-import { DeleteRecordButton } from "~/components/delete-record-button";
-
 /** Maps a library spectrum's state fields to a status dot + short step label. */
 function status(s: LibrarySpectrum): { dot: string; label: string } {
   if (s.state === "published")
@@ -23,7 +21,16 @@ function status(s: LibrarySpectrum): { dot: string; label: string } {
   return { dot: "bg-muted-foreground/50", label: "Draft" };
 }
 
-export function SpectrumProjects() {
+/**
+ * A read-only status board: where each of the owner's spectra sits in the
+ * draft -> metadata -> QC -> published pipeline.
+ *
+ * Deliberately has no management controls. The office is for paperwork —
+ * tracking what state things are in — while creating, moving and deleting
+ * data belongs to the Data Lab, so there is exactly one place to change a
+ * record and one place to check on it.
+ */
+export function ProjectStatus() {
   const lib = useQuery({
     queryKey: ["my-library", "recent"],
     queryFn: () => getMyLibrary({ limit: 8 }),
@@ -33,12 +40,12 @@ export function SpectrumProjects() {
   return (
     <Card className="gap-0 overflow-hidden py-0">
       <div className="border-border flex items-center justify-between border-b px-5 py-3.5">
-        <div className="text-sm font-semibold">Spectrum projects</div>
+        <div className="text-sm font-semibold">Project status</div>
         <Link
           href="/lab"
           className="text-primary text-[11px] font-medium hover:underline"
         >
-          View all in My Lab →
+          Manage in Data Lab →
         </Link>
       </div>
 
@@ -84,15 +91,6 @@ export function SpectrumProjects() {
                 >
                   Open
                 </Link>
-                {s.state !== "published" && (
-                  <DeleteRecordButton
-                    kind="spectrum"
-                    id={s.id}
-                    redirectTo={null}
-                    variant="icon"
-                    className="text-muted-foreground hover:text-destructive size-7 shrink-0"
-                  />
-                )}
               </div>
             );
           })}

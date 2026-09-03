@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 
 import type { BufferedSpectrum } from "@ramanhub/processing";
 import { getAlgorithmCatalog, getSpectrumData } from "@ramanhub/api-client";
@@ -123,6 +123,50 @@ export function useWarmDatasetBuffers(spectrumIds: readonly string[]): void {
       cancelled = true;
     };
   }, [idKey, qc]);
+}
+
+/**
+ * Buffers for many spectra at once — what a dataset-level analysis needs.
+ *
+ * Shares the exact query keys `useSpectrumBuffer` and `useWarmDatasetBuffers`
+ * use, so by the time someone opens the analysis tab the warm-up has usually
+ * already paid for all of it and nothing refetches.
+ */
+export function useDatasetBuffers(spectrumIds: readonly string[]): {
+  ready: { id: string; buffer: SpectrumBuffer }[];
+  loading: boolean;
+  failed: number;
+} {
+  const results = useQueries({
+    queries: spectrumIds.map((id) => ({
+      queryKey: bufferKey(id),
+      queryFn: () => fetchBuffer(id),
+      staleTime: Infinity,
+      gcTime: BUFFER_GC_MS,
+    })),
+  });
+
+  // A stable digest of every query's state — `results` itself is a fresh array
+  // on each render, so it can't be a dependency on its own.
+  const digest = results.map((r) => `${r.status}:${r.dataUpdatedAt}`).join("|");
+
+  return useMemo(() => {
+    const ready: { id: string; buffer: SpectrumBuffer }[] = [];
+    let failed = 0;
+    results.forEach((result, i) => {
+      const id = spectrumIds[i];
+      if (!id) return;
+      if (result.data) ready.push({ id, buffer: result.data });
+      else if (result.isError) failed += 1;
+    });
+    return {
+      ready,
+      loading: results.some((r) => r.isLoading),
+      failed,
+    };
+    // `results` is intentionally not a dependency; `digest` stands in for it.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [spectrumIds, digest]);
 }
 
 /**
