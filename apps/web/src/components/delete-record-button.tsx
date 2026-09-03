@@ -5,7 +5,11 @@ import { useRouter } from "next/navigation";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Trash2 } from "lucide-react";
 
-import { deleteFinding, deleteSpectrum, isApiError } from "@ramanhub/api-client";
+import {
+  deleteFinding,
+  deleteSpectrum,
+  isApiError,
+} from "@ramanhub/api-client";
 import { Button } from "@ramanhub/ui/button";
 import {
   Dialog,
@@ -21,7 +25,12 @@ import { toast } from "@ramanhub/ui/toast";
 
 type Kind = "spectrum" | "finding";
 
-const COPY: Record<Kind, { title: string; body: string; done: string }> = {
+/** Exported so the lab's row menu warns in exactly the same words as the
+ * detail page — one source of truth for what deletion actually destroys. */
+export const RECORD_DELETE_COPY: Record<
+  Kind,
+  { title: string; body: string; done: string }
+> = {
   spectrum: {
     title: "Delete this spectrum?",
     body: "This permanently removes the draft, its raw file, processing history and any comments or votes. Published spectra can't be deleted. This can't be undone.",
@@ -72,7 +81,7 @@ export function DeleteRecordButton({
         qc.invalidateQueries({ queryKey: ["feed"] }),
         qc.invalidateQueries({ queryKey: [kind, id] }),
       ]);
-      toast.success(COPY[kind].done);
+      toast.success(RECORD_DELETE_COPY[kind].done);
       if (redirectTo) router.push(redirectTo);
       else router.refresh();
     },
@@ -80,7 +89,7 @@ export function DeleteRecordButton({
       setErr(isApiError(e) ? e.message : `Could not delete this ${kind}.`),
   });
 
-  const copy = COPY[kind];
+  const copy = RECORD_DELETE_COPY[kind];
 
   return (
     <Dialog

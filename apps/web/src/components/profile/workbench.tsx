@@ -93,6 +93,11 @@ import { Skeleton } from "@ramanhub/ui/skeleton";
 import { toast } from "@ramanhub/ui/toast";
 
 import { SpectrumChart } from "~/components/charts/spectrum-chart";
+import {
+  DatasetRowMenu,
+  NewDatasetButton,
+  SpectrumRowMenu,
+} from "~/components/lab/data-management";
 import { ReadinessBadge } from "~/components/profile/profile-tabs";
 import {
   BUFFER_MAX_POINTS,
@@ -453,10 +458,13 @@ export function Workbench() {
   });
 
   /* actions */
-  function select(id: string) {
+  /** Open a spectrum, or clear the selection with `null` (used when the
+   * selected spectrum is deleted out from under the viewer). */
+  function select(id: string | null) {
     const params = new URLSearchParams(searchParams.toString());
     params.set("tab", "workbench");
-    params.set("s", id);
+    if (id) params.set("s", id);
+    else params.delete("s");
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
@@ -620,7 +628,10 @@ export function Workbench() {
       <Card className="flex max-h-[70vh] flex-col gap-0 overflow-hidden p-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:w-[210px] lg:shrink-0">
         <div className="bg-card flex items-center gap-2 border-b px-3 py-2">
           <FolderOpen className="text-muted-foreground size-4" aria-hidden />
-          <h3 className="text-sm font-semibold">My datasets</h3>
+          <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">
+            My datasets
+          </h3>
+          <NewDatasetButton onCreated={(d) => selectDataset(d.id)} />
         </div>
 
         <ScrollArea className="min-h-0 flex-1">
@@ -654,22 +665,33 @@ export function Workbench() {
               {(datasets.data ?? []).map((d) => {
                 const sel = d.id === datasetId;
                 return (
-                  <li key={d.id}>
+                  <li
+                    key={d.id}
+                    className={cn(
+                      "flex items-center gap-1 rounded-lg pr-1 transition-colors duration-150 motion-reduce:transition-none",
+                      sel ? "bg-muted" : "hover:bg-muted/60",
+                    )}
+                  >
                     <button
                       type="button"
                       aria-pressed={sel}
                       onClick={() => selectDataset(d.id)}
-                      className={cn(
-                        "flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-2 text-left transition-colors duration-150 outline-none",
-                        "focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
-                        sel ? "bg-muted" : "hover:bg-muted/60",
-                      )}
+                      className="focus-visible:ring-ring/50 flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-2 text-left outline-none focus-visible:ring-[3px]"
                     >
                       <span className="truncate text-sm">{d.name}</span>
                       <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
                         {d.spectra.length}
                       </span>
                     </button>
+                    <DatasetRowMenu
+                      dataset={d}
+                      // Deleting the folder you were viewing has to drop the
+                      // scope too, or the list filters against a dataset that
+                      // no longer exists and silently shows nothing.
+                      onDeleted={(id) => {
+                        if (id === datasetId) selectDataset(null);
+                      }}
+                    />
                   </li>
                 );
               })}
@@ -755,16 +777,18 @@ export function Workbench() {
               {visibleRows.map((s) => {
                 const sel = s.id === selectedId;
                 return (
-                  <li key={s.id}>
+                  <li
+                    key={s.id}
+                    className={cn(
+                      "flex items-start gap-1 rounded-lg pr-1 transition-colors duration-150 motion-reduce:transition-none",
+                      sel ? "bg-muted" : "hover:bg-muted/60",
+                    )}
+                  >
                     <button
                       type="button"
                       aria-pressed={sel}
                       onClick={() => select(s.id)}
-                      className={cn(
-                        "flex w-full cursor-pointer flex-col gap-1 rounded-lg px-2 py-2 text-left transition-colors duration-150 outline-none",
-                        "focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
-                        sel ? "bg-muted" : "hover:bg-muted/60",
-                      )}
+                      className="focus-visible:ring-ring/50 flex min-w-0 flex-1 cursor-pointer flex-col gap-1 rounded-lg px-2 py-2 text-left outline-none focus-visible:ring-[3px]"
                     >
                       <span className="truncate text-sm font-medium">
                         {s.title ?? "Untitled"}
@@ -784,6 +808,19 @@ export function Workbench() {
                         <ReadinessBadge s={s} />
                       </span>
                     </button>
+                    <div className="pt-2">
+                      <SpectrumRowMenu
+                        spectrum={s}
+                        datasets={datasets.data ?? []}
+                        activeDataset={selectedDataset}
+                        // Deleting the spectrum being viewed must clear the
+                        // selection, or the centre pane keeps rendering a
+                        // record that no longer exists.
+                        onDeleted={(id) => {
+                          if (id === selectedId) select(null);
+                        }}
+                      />
+                    </div>
                   </li>
                 );
               })}
