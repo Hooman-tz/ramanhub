@@ -23,7 +23,7 @@ covered by tests in ``tests/test_llm_fallback.py``):
   a different file that shares a header template is a pure cache hit with
   ZERO LLM calls. Filename-derived facts are layered on afterwards by the
   deterministic ``filename_overlay`` (also no LLM).
-* **No key configured is not an error.** When ``llm_configured()`` is False
+* **No key configured is not an error.** When no credential resolves
   the fallback returns ``ExtractedMetadata(modality="raman")`` plus the
   filename overlay instead of raising.
 """
@@ -36,7 +36,8 @@ from sqlalchemy.orm import Session
 from app.config import settings
 from app.ingestion import filename_overlay
 from app.ingestion.header_hash import compute_header_hash
-from app.llm import LLMError, complete_json, llm_configured
+from app.llm import LLMError, complete_json
+from app.llm_credentials import LLMCredential, platform_credential
 from app.models.enums import Modality, ParseSource
 from app.models.vendor_parse_cache import VendorParseCache
 from app.schemas.ingestion import ExtractedMetadata
@@ -47,9 +48,12 @@ from app.schemas.ingestion import ExtractedMetadata
 # the model.
 MAX_HEADER_CHARS = 65536
 
-# Hard cap on the model's reply. ExtractedMetadata is tiny; 1024 tokens is
-# ample and bounds cost / latency of a misbehaving model.
-MAX_OUTPUT_TOKENS = 1024
+# Hard cap on the model's reply. ExtractedMetadata itself is tiny, but on a
+# reasoning model the chain of thought is billed against this same budget
+# (measured: 100-870 reasoning tokens for a metadata-rich header), so a cap
+# sized for the answer alone truncates the JSON mid-string. 4096 leaves room
+# for both while still bounding a misbehaving model.
+MAX_OUTPUT_TOKENS = 4096
 
 # Recorded on the cache row's `parser_version`; the concrete model slug is
 # an operator env choice (OPENROUTER_INGESTION_MODEL / OPENROUTER_MODEL).
@@ -97,7 +101,10 @@ _SYSTEM_PROMPT = (
     "'polystyrene_532nm_10s_x50.txt'). Return a JSON object with every field "
     "you can confidently determine. Leave a field null if it is not present "
     "or you are not confident — never guess. Put other useful facts in "
-    "`raw_extra_fields` as flat string/number values only.\n"
+    "`raw_extra_fields` as flat string/number values only: at most 12 entries, "
+    "keys at most 40 characters, values at most 120 characters, and nothing "
+    "that is already covered by a named field above. Skip padding, debug, and "
+    "aux parameters — do not transcribe the whole header.\n"
     "\n"
     "CRITICAL — do not confuse two different quantities:\n"
     "- `laser_wavelength_nm` is the EXCITATION LASER wavelength, in "
@@ -141,7 +148,11 @@ def _guard_laser_wavelength(metadata: ExtractedMetadata) -> ExtractedMetadata:
 
 
 async def extract_metadata_via_llm(
-    header_text: str, db: Session, *, filename: str | None = None
+    header_text: str,
+    db: Session,
+    *,
+    filename: str | None = None,
+    credential: LLMCredential | None = None,
 ) -> tuple[ExtractedMetadata, str]:
     """Extract metadata from `header_text` via the shared LLM client, with a
     `VendorParseCache` lookup/write keyed by the FORMAT-ONLY header template
@@ -155,6 +166,11 @@ async def extract_metadata_via_llm(
       * "llm"          — fresh model call, result cached
       * "filename-only" — no LLM key configured; header ignored, filename
                           overlay applied to an empty `ExtractedMetadata`
+
+    `credential` is the file owner's LLM credential (see
+    `app.llm_credentials.resolve_for_user`); None falls back to the platform
+    key. A result produced with the *user's own* key is deliberately not
+    written to `VendorParseCache` — see below.
     """
     # Belt-and-braces: never hand the model more than the header sniff window,
     # regardless of what a caller passes.
@@ -175,7 +191,8 @@ async def extract_metadata_via_llm(
         db.commit()
         return filename_overlay.apply(metadata, name_hint), "cache"
 
-    if not llm_configured():
+    credential = credential or platform_credential()
+    if credential is None:
         # No key: degrade gracefully rather than failing the ingestion job.
         # Return a valid empty Raman metadata object plus whatever the
         # filename deterministically tells us. Not cached — a real parse
@@ -196,6 +213,7 @@ async def extract_metadata_via_llm(
             model=settings.OPENROUTER_INGESTION_MODEL or None,
             max_tokens=MAX_OUTPUT_TOKENS,
             temperature=0.0,
+            credential=credential,
         )
     except LLMError as exc:
         raise LLMExtractionError(f"LLM API call failed: {exc}") from exc
@@ -215,6 +233,18 @@ async def extract_metadata_via_llm(
         cache_modality = Modality(format_metadata.modality)
     except ValueError:
         cache_modality = Modality.raman
+
+    if credential.is_user_supplied:
+        # `VendorParseCache` is keyed on the header template alone and is read
+        # by every user who later uploads that format. Writing a result that
+        # came from *this* user's private model would serve their output to
+        # strangers — and, unlike a layout, this template is never
+        # independently verified, so a bad or adversarial answer would
+        # propagate. They also asked for their data to stay on their own
+        # provider; the derived template staying private follows from that.
+        # The cache simply refills the next time a platform-key upload of the
+        # same format comes through.
+        return filename_overlay.apply(format_metadata, name_hint), "llm"
 
     cache_row = VendorParseCache(
         header_hash=header_hash,

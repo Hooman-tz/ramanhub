@@ -48,7 +48,7 @@ from app.db.session import get_db
 from app.doi_lookup import lookup_doi
 from app.enrichment import EnrichmentError, summarize_abstract
 from app.journals import match_journal
-from app.llm import llm_configured
+from app.llm_credentials import llm_available_for, resolve_for_user
 from app.models.accession import next_finding_accession
 from app.models.enums import FindingEntryKind, FindingState, SpectrumState
 from app.models.finding import (
@@ -674,12 +674,15 @@ async def link_doi(
                 "cover_url": journal.cover_url if journal else None,
                 "abstract_raw": metadata.abstract,
             }
-            # Enrich inline only when there's an abstract AND a configured key
-            # (empty locally / in tests). A failed enrichment is non-fatal —
-            # the DOI link still succeeds.
-            if metadata.abstract and llm_configured():
+            # Enrich inline only when there's an abstract AND a reachable
+            # model — the platform key (empty locally / in tests) or the
+            # user's own. A failed enrichment is non-fatal — the DOI link
+            # still succeeds.
+            if metadata.abstract and llm_available_for(db, user.id):
                 try:
-                    summary = await summarize_abstract(metadata.abstract)
+                    summary = await summarize_abstract(
+                        metadata.abstract, credential=resolve_for_user(db, user.id)
+                    )
                     pub["ai_summary"] = summary.model_dump()
                 except EnrichmentError:
                     pass
@@ -741,7 +744,7 @@ async def enrich_finding(
     `publication_metadata.ai_summary`. A no-op (200, `enriched=false`) when
     no LLM key is configured, so the frontend can always call it."""
     finding = _get_finding_for_owner(finding_id, user, db)
-    if not llm_configured():
+    if not llm_available_for(db, user.id):
         return EnrichResponse(enriched=False, reason="llm_not_configured")
 
     pub = dict(finding.publication_metadata or {})
@@ -752,7 +755,9 @@ async def enrich_finding(
             detail="This finding has no linked-paper abstract to summarize.",
         )
     try:
-        summary = await summarize_abstract(abstract_raw)
+        summary = await summarize_abstract(
+            abstract_raw, credential=resolve_for_user(db, user.id)
+        )
     except EnrichmentError as exc:
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)) from exc
 

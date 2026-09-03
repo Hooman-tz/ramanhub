@@ -34,6 +34,8 @@ import {
 import { Input } from "@ramanhub/ui/input";
 import { Label } from "@ramanhub/ui/label";
 
+import { LlmKeyCard } from "~/components/settings/llm-key-card";
+
 interface ProfileForm {
   display_name: string;
   affiliation: string;
@@ -328,6 +330,8 @@ export default function SettingsPage() {
           </a>
         </CardContent>
       </Card>
+
+      <LlmKeyCard />
 
       {/* Data */}
       <Card>

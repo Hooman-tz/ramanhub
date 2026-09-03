@@ -16,6 +16,7 @@ from app.handles import normalize_handle
 from app.models.social import Comment, CommunityPost
 from app.models.spectrum import Spectrum
 from app.models.user import User
+from app.models.user_llm_credential import UserLLMCredential
 from app.profile_stats import compute_profile_stats
 from app.schemas.auth import PublicProfileOut, UserOut, UserUpdate
 
@@ -182,6 +183,12 @@ def delete_my_account(
     db.query(Comment).filter(Comment.user_id == current_user.id).update(
         {"moderation_status": "hidden", "deleted_at": now}, synchronize_session=False
     )
+    # This anonymizes rather than deletes the `users` row, so the credential
+    # table's ON DELETE CASCADE never fires — the stored provider key has to
+    # be dropped explicitly, or it would outlive the account that owns it.
+    db.query(UserLLMCredential).filter(
+        UserLLMCredential.user_id == current_user.id
+    ).delete(synchronize_session=False)
     db.add(current_user)
     db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)

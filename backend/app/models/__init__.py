@@ -51,6 +51,7 @@ from app.models.social import (
 )
 from app.models.spectrum import Spectrum
 from app.models.user import User
+from app.models.user_llm_credential import UserLLMCredential
 from app.models.vendor_parse_cache import VendorParseCache
 
 __all__ = [
@@ -97,6 +98,7 @@ __all__ = [
     "SpectrumState",
     "UploadStatus",
     "User",
+    "UserLLMCredential",
     "VendorParseCache",
     "Vote",
 ]

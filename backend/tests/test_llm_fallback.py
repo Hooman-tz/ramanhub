@@ -32,17 +32,37 @@ from app.ingestion.llm_fallback import (
     extract_metadata_via_llm,
 )
 from app.llm import LLMError
-from app.models.enums import ParseSource
+from app.llm_credentials import LLMCredential
+from app.models.enums import Modality, ParseSource
 from app.models.vendor_parse_cache import VendorParseCache
 
 HEADER_TEXT = "Some Unknown Vendor Header\nLaser: 785nm\nExposure: 1000ms"
+
+
+PLATFORM_CREDENTIAL = LLMCredential(
+    api_key="sk-or-test",
+    base_url="https://openrouter.ai/api/v1",
+    provider="openrouter",
+    model=None,
+    is_user_supplied=False,
+)
+
+USER_CREDENTIAL = LLMCredential(
+    api_key="sk-user-test",
+    base_url="https://api.openai.com/v1",
+    provider="openai",
+    model="gpt-4o-mini",
+    is_user_supplied=True,
+)
 
 
 @pytest.fixture(autouse=True)
 def _llm_key_configured():
     """Default every test in this module to "an OpenRouter key IS set" so the
     LLM path is exercised; the no-key test overrides this locally."""
-    with patch("app.ingestion.llm_fallback.llm_configured", return_value=True):
+    with patch(
+        "app.ingestion.llm_fallback.platform_credential", return_value=PLATFORM_CREDENTIAL
+    ):
         yield
 
 
@@ -267,7 +287,7 @@ def test_no_llm_key_returns_valid_metadata_plus_overlay_without_raising():
     db = _FakeDB(cached_row=None)
 
     with (
-        patch("app.ingestion.llm_fallback.llm_configured", return_value=False),
+        patch("app.ingestion.llm_fallback.platform_credential", return_value=None),
         _patch_complete_json() as mock_cj,
     ):
         metadata, source = _run(
@@ -291,7 +311,7 @@ def test_no_llm_key_returns_valid_metadata_plus_overlay_without_raising():
 
 def test_no_llm_key_with_no_filename_still_returns_bare_raman_metadata():
     db = _FakeDB(cached_row=None)
-    with patch("app.ingestion.llm_fallback.llm_configured", return_value=False):
+    with patch("app.ingestion.llm_fallback.platform_credential", return_value=None):
         metadata, source = _run(extract_metadata_via_llm(HEADER_TEXT, db))
     assert source == "filename-only"
     assert metadata.modality == "raman"
@@ -377,3 +397,70 @@ def test_llm_and_cache_sources_keep_their_llm_provenance_label():
     # A cache hit replays a parse the model already did on this exact header
     # template, so it is at least as trustworthy as a fresh call.
     assert _fallback_provenance("cache")[2] >= _fallback_provenance("llm")[2]
+
+
+# ---------------------------------------------------------------------------
+# (j) a user's own key keeps its results out of the shared cache
+# ---------------------------------------------------------------------------
+
+
+def test_a_user_supplied_key_does_not_write_the_shared_cache():
+    """`VendorParseCache` is keyed on the header template alone and is read by
+    every user who later uploads that format. A template produced by one
+    user's private model must not be served to strangers — it is never
+    independently verified, so a wrong or adversarial answer would propagate,
+    and the user asked for their data to stay on their own provider.
+    """
+    db = _FakeDB(cached_row=None)
+    payload = {"modality": "raman", "instrument_vendor": "Acme Spectro"}
+
+    with _patch_complete_json(return_value=payload) as mock_cj:
+        metadata, source = _run(
+            extract_metadata_via_llm(HEADER_TEXT, db, credential=USER_CREDENTIAL)
+        )
+
+    # The user still gets their answer...
+    assert source == "llm"
+    assert metadata.instrument_vendor == "Acme Spectro"
+    # ...and the credential was actually used for the call...
+    assert mock_cj.await_args.kwargs["credential"] is USER_CREDENTIAL
+    # ...but nothing was written to the table everyone reads.
+    assert db.added == []
+    assert db.commit_count == 0
+
+
+def test_the_platform_key_still_populates_the_shared_cache():
+    """The counterpart to the test above: default (platform-key) ingestion is
+    unchanged, so the cache still does its job for everyone else."""
+    db = _FakeDB(cached_row=None)
+    payload = {"modality": "raman", "instrument_vendor": "Acme Spectro"}
+
+    with _patch_complete_json(return_value=payload):
+        _run(extract_metadata_via_llm(HEADER_TEXT, db, credential=PLATFORM_CREDENTIAL))
+
+    assert len(db.added) == 1
+    assert isinstance(db.added[0], VendorParseCache)
+
+
+def test_a_byo_user_still_reads_the_shared_cache():
+    """Reading is kept: a cache hit means no model call at all, which is
+    strictly more private than sending the header to any provider."""
+    cached = VendorParseCache(
+        header_hash=compute_header_hash(HEADER_TEXT),
+        modality=Modality.raman,
+        vendor_format=None,
+        parser_version="openrouter-llm",
+        source=ParseSource.llm,
+        parsed_template={"modality": "raman", "instrument_vendor": "Cached Vendor"},
+        hit_count=0,
+    )
+    db = _FakeDB(cached_row=cached)
+
+    with _patch_complete_json() as mock_cj:
+        metadata, source = _run(
+            extract_metadata_via_llm(HEADER_TEXT, db, credential=USER_CREDENTIAL)
+        )
+
+    assert source == "cache"
+    assert metadata.instrument_vendor == "Cached Vendor"
+    mock_cj.assert_not_awaited()

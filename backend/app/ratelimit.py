@@ -72,6 +72,10 @@ _login_limiter = RateLimiter(max_calls=10, window_seconds=3600)  # 10 login atte
 # actions above — well clear of a human clicking "get advice" a few times while
 # iterating on a pipeline, tight enough that a script can't rack up model spend.
 _llm_consult_limiter = RateLimiter(max_calls=15, window_seconds=3600)  # 15 LLM consults / hour
+# Storing a key makes a live verification call against the named provider, so
+# an unthrottled endpoint is a free "is this stolen key valid?" oracle that
+# also spends someone else's quota. A real user saves a key once or twice.
+_llm_key_write_limiter = RateLimiter(max_calls=10, window_seconds=3600)  # 10 key writes / hour
 
 
 def rate_limit_uploads(user: User = Depends(get_current_user)) -> None:
@@ -104,6 +108,10 @@ def rate_limit_reports(user: User = Depends(get_current_user)) -> None:
 
 def rate_limit_llm_consult(user: User = Depends(get_current_user)) -> None:
     _llm_consult_limiter.check(str(user.id))
+
+
+def rate_limit_llm_key_write(user: User = Depends(get_current_user)) -> None:
+    _llm_key_write_limiter.check(str(user.id))
 
 
 def rate_limit_login(request: Request) -> None:

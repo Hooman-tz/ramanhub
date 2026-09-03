@@ -5,15 +5,20 @@ bare JSON object matching a JSON Schema and it is always validated through a
 pydantic model before use. A schema violation or API error raises
 `EnrichmentError` and nothing is persisted.
 
-Callers MUST check `app.llm.llm_configured()` and skip this module when it
-is False (no OpenRouter key in local dev and the test env).
+Callers MUST check reachability first — `app.llm_credentials.llm_available_for`
+when a user is in scope, `app.llm.llm_configured()` otherwise — and skip this
+module when it is False (no OpenRouter key in local dev and the test env).
+
+`credential` lets the caller route the abstract through the user's own
+provider key; omitting it uses the platform key.
 """
 from __future__ import annotations
 
 from pydantic import BaseModel, Field, ValidationError
 
 from app.config import settings
-from app.llm import LLMError, complete_json, llm_configured
+from app.llm import LLMError, complete_json
+from app.llm_credentials import LLMCredential, platform_credential
 
 _TOOL_INPUT_SCHEMA = {
     "type": "object",
@@ -49,8 +54,12 @@ class EnrichmentError(Exception):
     non-fatal skip — never persist partial enrichment."""
 
 
-async def summarize_abstract(text: str) -> AbstractSummary:
-    if not llm_configured():
+async def summarize_abstract(
+    text: str, *, credential: LLMCredential | None = None
+) -> AbstractSummary:
+    if credential is None:
+        credential = platform_credential()
+    if credential is None:
         raise EnrichmentError("OPENROUTER_API_KEY is not configured")
 
     try:
@@ -60,6 +69,7 @@ async def summarize_abstract(text: str) -> AbstractSummary:
             schema=_TOOL_INPUT_SCHEMA,
             model=settings.OPENROUTER_ENRICHMENT_MODEL or None,
             max_tokens=1024,
+            credential=credential,
         )
     except LLMError as exc:
         raise EnrichmentError(f"LLM call failed: {exc}") from exc

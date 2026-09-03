@@ -1190,6 +1190,65 @@ export function deleteMe(opts?: ApiClientOptions): Promise<void> {
   return apiRequest<void>("/users/me", { ...opts, method: "DELETE" });
 }
 
+/* --- bring-your-own LLM key ------------------------------------------- */
+
+export interface LlmProvider {
+  slug: string;
+  label: string;
+  default_model: string;
+  key_hint: string;
+}
+
+export interface LlmKeyStatus {
+  /** False when the deployment has no encryption key — hide the whole card. */
+  enabled: boolean;
+  configured: boolean;
+  provider: string | null;
+  provider_label: string | null;
+  model: string | null;
+  /** Last 4 characters only. The key itself is never returned. */
+  key_last4: string | null;
+  providers: LlmProvider[];
+}
+
+export interface SetLlmKeyBody {
+  provider: string;
+  api_key: string;
+  /** Omit for the provider's default model. */
+  model?: string;
+}
+
+/** `GET /v1/users/me/llm-key` — full account only. */
+export function getLlmKeyStatus(
+  opts?: ApiClientOptions,
+): Promise<LlmKeyStatus> {
+  return apiRequest<LlmKeyStatus>("/v1/users/me/llm-key", opts);
+}
+
+/**
+ * `PUT /v1/users/me/llm-key` — full account only. The key is verified against
+ * the provider before it is stored, so a 400 here means the key itself did
+ * not work.
+ */
+export function setLlmKey(
+  body: SetLlmKeyBody,
+  opts?: ApiClientOptions,
+): Promise<LlmKeyStatus> {
+  return apiRequest<LlmKeyStatus>("/v1/users/me/llm-key", {
+    ...opts,
+    method: "PUT",
+    body,
+  });
+}
+
+/** `DELETE /v1/users/me/llm-key` — fall back to the shared models. 204. */
+export function deleteLlmKey(opts?: ApiClientOptions): Promise<void> {
+  return apiRequest<void>("/v1/users/me/llm-key", {
+    ...opts,
+    method: "DELETE",
+  });
+}
+
 /* --- spectra + findings: chart data ------------------------------------- */
 
 export interface SpectrumData {

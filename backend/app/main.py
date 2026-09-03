@@ -41,6 +41,7 @@ from app.routers import (
     follows,
     ingestion_jobs,
     lab_consult,
+    llm_settings,
     ledgers,
     library,
     licenses,
@@ -89,6 +90,7 @@ app.include_router(ingestion_jobs.router)
 app.include_router(spectra.router)
 app.include_router(ledgers.router)
 app.include_router(lab_consult.router)
+app.include_router(llm_settings.router)
 app.include_router(processing.router)
 app.include_router(routines.router)
 app.include_router(spectrum_data.router)

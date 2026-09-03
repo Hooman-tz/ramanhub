@@ -25,6 +25,7 @@ from app.db.base import SessionLocal
 from app.ingestion import filename_overlay
 from app.ingestion.header_hash import compute_header_hash
 from app.ingestion.llm_fallback import extract_metadata_via_llm
+from app.llm_credentials import resolve_for_user
 from app.ingestion.parsers.registry import find_parser
 from app.ingestion.sanity_check import check as run_sanity_check
 from app.logging_config import log_event
@@ -373,10 +374,16 @@ def run_ingestion_job(
                 # this belongs on the parser branch only.
                 metadata = filename_overlay.apply(metadata, raw_file.original_filename)
             else:
+                # This runs in a background worker, so there is no request
+                # user — the file's owner is who the LLM work is being done
+                # for, and whose own provider key (if set) it must use.
                 metadata, source = asyncio.run(
                     await_with_lease_heartbeats(
                         extract_metadata_via_llm(
-                            header_text, db, filename=raw_file.original_filename
+                            header_text,
+                            db,
+                            filename=raw_file.original_filename,
+                            credential=resolve_for_user(db, raw_file.owner_id),
                         ),
                         on_heartbeat=lambda: _renew_lease(db, job.id, active_lease_token),
                     )

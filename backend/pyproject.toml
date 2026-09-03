@@ -17,6 +17,7 @@ dependencies = [
     "boto3",
     "openai",
     "authlib",
+    "cryptography",
     "httpx",
     "pyjwt",
     "python-multipart",

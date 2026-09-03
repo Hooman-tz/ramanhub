@@ -78,7 +78,13 @@ services:
       # LLM routing (OpenRouter). Operator can override the model to a
       # cheaper/smaller one; the API key is a dashboard secret below.
       - key: OPENROUTER_MODEL
-        value: openai/gpt-4o-mini
+        value: openrouter/free
+      - key: OPENROUTER_FALLBACK_MODELS
+        value: z-ai/glm-5.2:free,nvidia/nemotron-3-super-120b-a12b:free,liquid/lfm-2.5-2.6b:free
+      # Fernet key for user-supplied provider keys; empty disables
+      # bring-your-own-key. Dashboard secret.
+      - key: LLM_KEY_ENCRYPTION_KEY
+        sync: false
       - key: DATABASE_URL
         fromDatabase:
           name: ramanhub-db
@@ -158,7 +164,13 @@ services:
       - key: OPENROUTER_API_KEY
         sync: false
       - key: OPENROUTER_MODEL
-        value: openai/gpt-4o-mini
+        value: openrouter/free
+      - key: OPENROUTER_FALLBACK_MODELS
+        value: z-ai/glm-5.2:free,nvidia/nemotron-3-super-120b-a12b:free,liquid/lfm-2.5-2.6b:free
+      # Fernet key for user-supplied provider keys; empty disables
+      # bring-your-own-key. Dashboard secret.
+      - key: LLM_KEY_ENCRYPTION_KEY
+        sync: false
       - key: JWT_SECRET
         sync: false
       - key: SENTRY_DSN

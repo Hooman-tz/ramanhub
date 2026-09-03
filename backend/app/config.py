@@ -110,11 +110,46 @@ class Settings(BaseSettings):
         validation_alias=AliasChoices("OPENROUTER_API_KEY", "OPENROUTER"),
     )
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
-    # Default model — cheap, reliable JSON. Operator overrides via env.
-    OPENROUTER_MODEL: str = "openai/gpt-4o-mini"
+    # `openrouter/free` is OpenRouter's free-model router: it picks one of the
+    # currently-available zero-cost models that satisfies the capabilities the
+    # request needs (here: `response_format`). Pinning a single slug instead
+    # means one model being down, rate-limited, or truncating its JSON takes
+    # the whole ingestion path with it.
+    #
+    # Free-tier ceilings apply and are the usual cause of a 429: 20 requests
+    # per minute, and 50 per day until the account has bought $10 of lifetime
+    # credits (1000/day after that). Users who bring their own key via
+    # Settings spend their own quota instead — see app/llm_credentials.py.
+    OPENROUTER_MODEL: str = "openrouter/free"
+    # Comma-separated slugs handed to OpenRouter as a priority-ordered
+    # fallback list. OpenRouter moves to the next one on provider downtime,
+    # rate limiting, a context-length rejection, or a moderation refusal, and
+    # does not bill the failed attempt. Empty => no fallback list sent.
+    # Every entry must support `response_format`, or `require_parameters`
+    # below will refuse to route to it.
+    OPENROUTER_FALLBACK_MODELS: str = ""
+    # Only route to providers that honour every parameter we sent. Without
+    # this a provider that silently ignores `response_format` can answer with
+    # prose, which costs a retry to discover.
+    OPENROUTER_REQUIRE_PARAMETERS: bool = True
     # Optional per-call-site overrides; empty => fall back to OPENROUTER_MODEL.
+    # These apply to the platform key only — a user who brought their own key
+    # picked their own model, and an OpenRouter slug is meaningless on another
+    # provider anyway.
     OPENROUTER_INGESTION_MODEL: str = ""
     OPENROUTER_ENRICHMENT_MODEL: str = ""
+
+    # Fernet key (44-char urlsafe base64) encrypting user-supplied LLM API
+    # keys at rest. Empty disables the bring-your-own-key feature entirely —
+    # the endpoints 503 and the settings card hides. There is deliberately no
+    # plaintext fallback. Generate with:
+    #   python -c "from cryptography.fernet import Fernet;
+    #              print(Fernet.generate_key().decode())"
+    LLM_KEY_ENCRYPTION_KEY: str = ""
+
+    def openrouter_fallback_models(self) -> list[str]:
+        """`OPENROUTER_FALLBACK_MODELS` parsed into slugs, blanks dropped."""
+        return [slug.strip() for slug in self.OPENROUTER_FALLBACK_MODELS.split(",") if slug.strip()]
 
     # Cookie domain shared by the web app and the API. Empty means host-only,
     # which is right for local dev (both halves are `localhost`). In any

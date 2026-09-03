@@ -37,7 +37,8 @@ from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user
 from app.db.session import get_db
-from app.llm import LLMError, complete_json, llm_configured
+from app.llm import LLMError, complete_json
+from app.llm_credentials import llm_available_for, resolve_for_user
 from app.models.analysis import AnalysisDataset, AnalysisDatasetSpectrum
 from app.models.processing_ledger import ProcessingLedger
 from app.models.raw_file import RawFile
@@ -419,7 +420,7 @@ async def lab_consult(
 ) -> LabConsultResponse:
     """Read-only processing advice for the caller's own spectra. No side
     effects: nothing is created, mutated, cached, or enqueued."""
-    if not llm_configured():
+    if not llm_available_for(db, user.id):
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Lab consultant is unavailable (no LLM configured).",
@@ -439,6 +440,7 @@ async def lab_consult(
             schema=_OUTPUT_SCHEMA,
             max_tokens=_MAX_TOKENS,
             temperature=0.0,
+            credential=resolve_for_user(db, user.id),
         )
     except LLMError as exc:
         raise HTTPException(

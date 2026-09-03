@@ -40,6 +40,15 @@ export default function PrivacyPage() {
           provider (OpenRouter) for metadata extraction — header content only,
           not tied to your identity.
         </p>
+        <p>
+          You can change that: add your own provider API key under Settings and
+          every AI-assisted feature — header parsing, file-structure detection,
+          abstract summaries, filename suggestions, and the lab consultant — goes
+          to your account with your chosen provider instead of ours. Your key is
+          encrypted at rest and is never shown again after you save it. While your
+          own key is in use, results derived from your files are also kept out of
+          the shared format caches other accounts read.
+        </p>
       </section>
 
       <section>

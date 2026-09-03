@@ -18,6 +18,7 @@ from app.auth.deps import get_current_user
 from app.config import settings
 from app.db.session import get_db
 from app.llm import LLMError, complete_json
+from app.llm_credentials import resolve_for_user
 from app.logging_config import log_event
 from app.models.enums import IngestionStatus, Modality, UploadStatus
 from app.models.ingestion_job import IngestionJob
@@ -198,7 +199,10 @@ async def suggest_rename(
             ),
             user=f"Metadata:\n\n{json.dumps(metadata, default=str)}",
             schema=_RENAME_TOOL_SCHEMA,
-            max_tokens=256,
+            # Reasoning models bill their chain of thought against this budget;
+            # 256 truncates before the filename is even emitted.
+            max_tokens=1024,
+            credential=resolve_for_user(db, user.id),
         )
     except LLMError as exc:
         raise HTTPException(

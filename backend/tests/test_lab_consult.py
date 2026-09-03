@@ -60,7 +60,10 @@ def _make_spectrum(db_session, owner, raw_file) -> Spectrum:
 
 
 def _patch_llm(monkeypatch, *, configured=True, reply=None):
-    monkeypatch.setattr(lab_consult, "llm_configured", lambda: configured)
+    # The router now asks whether *this user* can reach a model (platform key
+    # or their own), and hands the resolved credential to complete_json.
+    monkeypatch.setattr(lab_consult, "llm_available_for", lambda db, user_id: configured)
+    monkeypatch.setattr(lab_consult, "resolve_for_user", lambda db, user_id: None)
 
     async def _fake_complete_json(**kwargs):
         _fake_complete_json.calls.append(kwargs)
