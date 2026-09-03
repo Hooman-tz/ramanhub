@@ -22,9 +22,33 @@ This is text-based, so we give it real (if not exhaustive) field extraction.
 """
 from __future__ import annotations
 
+from app.ingestion.parsers._common import plausible_laser_nm
 from app.schemas.ingestion import ExtractedMetadata
 
 _JCAMP_MARKER = "##JCAMP-DX="
+
+# JCAMP-DX keys we lift onto typed fields; every other `##KEY=VALUE` header
+# line is preserved (bounded) in `raw_extra_fields`.
+_MAPPED_KEYS = {
+    "title",
+    "jcamp-dx",
+    "origin",
+    "date",
+    "time",
+    "resolution",
+    "laser wavelength",
+    "$laser wavelength",
+    "firstx",
+    "lastx",
+    "spectrometer/data system",
+    "spectrometer",
+    "instrument",
+    "$instrument model",
+    "$instr model",
+    "sample description",
+    "$sample description",
+    "xydata",
+}
 
 
 def _parse_header_lines(text: str) -> dict[str, str]:
@@ -69,14 +93,20 @@ class ThermoParser:
         for key in ("laser wavelength", "$laser wavelength"):
             if key in fields:
                 try:
-                    laser_wavelength_nm = float(fields[key])
+                    laser_wavelength_nm = plausible_laser_nm(float(fields[key]))
                 except ValueError:
                     pass
                 break
 
         spectral_range_cm1: str | None = None
         if "firstx" in fields and "lastx" in fields:
-            spectral_range_cm1 = f"{fields['firstx']}-{fields['lastx']}"
+            try:
+                first_x = float(fields["firstx"])
+                last_x = float(fields["lastx"])
+            except ValueError:
+                first_x = last_x = None
+            if first_x is not None and last_x is not None and first_x < last_x:
+                spectral_range_cm1 = f"{first_x:g}-{last_x:g}"
 
         date = fields.get("date")
         time = fields.get("time")
@@ -87,14 +117,43 @@ class ThermoParser:
             acquisition_datetime = date
 
         instrument_vendor = fields.get("origin")
-        sample_description = fields.get("title")
+
+        instrument_model: str | None = None
+        for key in (
+            "spectrometer/data system",
+            "spectrometer",
+            "instrument",
+            "$instrument model",
+            "$instr model",
+        ):
+            if fields.get(key):
+                instrument_model = fields[key]
+                break
+
+        sample_description = (
+            fields.get("title")
+            or fields.get("sample description")
+            or fields.get("$sample description")
+        )
+
+        # Preserve every other `##KEY=VALUE` header line as a flat scalar
+        # (NPOINTS, XUNITS, YUNITS, DATA TYPE, XFACTOR, ...).
+        raw_extra: dict[str, str | float | int] = {}
+        for key, value in fields.items():
+            if key in _MAPPED_KEYS:
+                continue
+            if len(raw_extra) >= 15:
+                break
+            raw_extra[key[:100]] = value[:500]
 
         return ExtractedMetadata(
             modality="raman",
             instrument_vendor=instrument_vendor or "Thermo Fisher Scientific",
+            instrument_model=instrument_model,
             resolution_cm1=resolution_cm1,
             laser_wavelength_nm=laser_wavelength_nm,
             spectral_range_cm1=spectral_range_cm1,
             acquisition_datetime=acquisition_datetime,
             sample_description=sample_description,
+            raw_extra_fields=raw_extra,
         )

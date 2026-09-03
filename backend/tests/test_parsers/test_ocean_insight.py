@@ -47,6 +47,19 @@ def test_parse_extracts_known_fields_correctly():
     assert metadata.acquisition_datetime == "Thu Jan 01 00:00:00 GMT 2026"
 
 
+def test_parse_guards_wavelength_wavenumber_confusion():
+    raw = (
+        b"Data from x.txt\n\n"
+        b"Spectrometers: USB2000\n"
+        b"Integration Time (usec): 100000\n"
+        b"Excitation Wavelength (nm): 3200\n"  # a wavenumber mislabelled nm
+        b">>>>>Begin Spectral Data<<<<<\n100 1.0\n"
+    )
+    metadata = OceanInsightParser().parse(raw)
+    assert metadata.laser_wavelength_nm is None
+    assert metadata.integration_time_ms == 100.0
+
+
 def test_parse_never_populates_unmapped_fields():
     metadata = parser.parse(load(OCEAN_INSIGHT))
     assert metadata.resolution_cm1 is None
