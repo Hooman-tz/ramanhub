@@ -104,7 +104,9 @@ export function FindingComments({
       setError(isApiError(e) ? e.message : "Could not post — try again."),
   });
 
-  const list = comments.data ?? [];
+  // Memoized so the `?? []` fallback doesn't hand `useMemo` below a fresh
+  // array identity on every render and regroup the thread each time.
+  const list = useMemo(() => comments.data ?? [], [comments.data]);
 
   // The API returns a flat list; group one level of replies under their parent.
   const { roots, repliesByParent } = useMemo(() => {

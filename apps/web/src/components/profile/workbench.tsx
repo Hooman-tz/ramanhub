@@ -3,7 +3,7 @@
 import type { DragEndEvent, DragStartEvent } from "@dnd-kit/core";
 import type { LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import {
   closestCenter,
@@ -33,6 +33,7 @@ import {
 import {
   ChevronDown,
   ChevronUp,
+  FolderOpen,
   GripVertical,
   ListPlus,
   Play,
@@ -60,6 +61,7 @@ import {
   getSpectrum,
   getSpectrumData,
   isApiError,
+  listDatasets,
   listRoutines,
   updateSpectrum,
 } from "@ramanhub/api-client";
@@ -96,6 +98,7 @@ import {
   BUFFER_MAX_POINTS,
   useAlgorithmVersions,
   useSpectrumBuffer,
+  useWarmDatasetBuffers,
 } from "~/lib/spectra-buffer";
 
 /* --- catalog visual maps --------------------------------------------- */
@@ -228,6 +231,51 @@ export function Workbench() {
       last.length === PAGE ? all.length * PAGE : undefined,
   });
   const rows: LibrarySpectrum[] = lib.data?.pages.flat() ?? [];
+
+  /* left pane — datasets (project folders that scope the spectra list) */
+  const datasetId = searchParams.get("d");
+  const datasets = useQuery({
+    queryKey: ["datasets"],
+    queryFn: () => listDatasets(),
+  });
+  const selectedDataset = datasets.data?.find((d) => d.id === datasetId);
+
+  const memberIds = useMemo(
+    () =>
+      selectedDataset
+        ? new Set(selectedDataset.spectra.map((s) => s.id))
+        : null,
+    [selectedDataset],
+  );
+  const visibleRows = memberIds
+    ? rows.filter((r) => memberIds.has(r.id))
+    : rows;
+
+  // A dataset member the library hasn't paged in yet can't be listed — and
+  // couldn't be processed either, since the workbench needs its `raw_file_id`,
+  // which only the library record carries. Page until every member is loaded.
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = lib;
+  useEffect(() => {
+    if (!memberIds || visibleRows.length >= memberIds.size) return;
+    if (!hasNextPage || isFetchingNextPage) return;
+    void fetchNextPage();
+  }, [
+    memberIds,
+    visibleRows.length,
+    hasNextPage,
+    isFetchingNextPage,
+    fetchNextPage,
+  ]);
+
+  // Working on a dataset means working across its spectra, so pull them all
+  // into the buffer up front — switching between them is then instant.
+  useWarmDatasetBuffers(
+    useMemo(
+      () => (memberIds ? visibleRows.map((r) => r.id) : []),
+      [memberIds, visibleRows],
+    ),
+  );
+
   const selectedRow = rows.find((r) => r.id === selectedId);
   const rawFileId = selectedRow?.raw_file_id;
 
@@ -412,6 +460,17 @@ export function Workbench() {
     router.replace(`${pathname}?${params.toString()}`, { scroll: false });
   }
 
+  /** Scope the spectra list to one dataset, or clear the scope with `null`.
+   * The selected spectrum is deliberately left alone — switching folders
+   * shouldn't yank the curve someone is looking at. */
+  function selectDataset(id: string | null) {
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("tab", "workbench");
+    if (id) params.set("d", id);
+    else params.delete("d");
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
+
   function applyFilters() {
     const f: { material_type?: string; min_snr?: number } = {};
     if (matDraft.trim()) f.material_type = matDraft.trim();
@@ -557,10 +616,81 @@ export function Workbench() {
 
   return (
     <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+      {/* -------- Far left: Datasets (scopes the spectra list) -------- */}
+      <Card className="flex max-h-[70vh] flex-col gap-0 overflow-hidden p-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:w-[210px] lg:shrink-0">
+        <div className="bg-card flex items-center gap-2 border-b px-3 py-2">
+          <FolderOpen className="text-muted-foreground size-4" aria-hidden />
+          <h3 className="text-sm font-semibold">My datasets</h3>
+        </div>
+
+        <ScrollArea className="min-h-0 flex-1">
+          <div className="p-2">
+            {datasets.isLoading && (
+              <div className="space-y-2">
+                {[0, 1, 2].map((i) => (
+                  <Skeleton key={i} className="h-9 w-full rounded-lg" />
+                ))}
+              </div>
+            )}
+
+            <ul className="space-y-1">
+              <li>
+                <button
+                  type="button"
+                  aria-pressed={!datasetId}
+                  onClick={() => selectDataset(null)}
+                  className={cn(
+                    "flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-2 text-left transition-colors duration-150 outline-none",
+                    "focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
+                    !datasetId ? "bg-muted" : "hover:bg-muted/60",
+                  )}
+                >
+                  <span className="truncate text-sm font-medium">
+                    All spectra
+                  </span>
+                </button>
+              </li>
+
+              {(datasets.data ?? []).map((d) => {
+                const sel = d.id === datasetId;
+                return (
+                  <li key={d.id}>
+                    <button
+                      type="button"
+                      aria-pressed={sel}
+                      onClick={() => selectDataset(d.id)}
+                      className={cn(
+                        "flex w-full cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-2 text-left transition-colors duration-150 outline-none",
+                        "focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
+                        sel ? "bg-muted" : "hover:bg-muted/60",
+                      )}
+                    >
+                      <span className="truncate text-sm">{d.name}</span>
+                      <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
+                        {d.spectra.length}
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+
+            {!datasets.isLoading && (datasets.data?.length ?? 0) === 0 && (
+              <p className="text-muted-foreground p-3 text-center text-xs">
+                No datasets yet. Group spectra into a dataset to work through a
+                project together.
+              </p>
+            )}
+          </div>
+        </ScrollArea>
+      </Card>
+
       {/* -------- Left: Files -------- */}
       <Card className="flex max-h-[70vh] flex-col gap-0 overflow-hidden p-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:w-[300px] lg:shrink-0">
         <div className="bg-card flex items-center justify-between gap-2 border-b px-3 py-2">
-          <h3 className="text-sm font-semibold">My spectra</h3>
+          <h3 className="min-w-0 truncate text-sm font-semibold">
+            {selectedDataset ? selectedDataset.name : "My spectra"}
+          </h3>
           <button
             type="button"
             aria-label={showFilters ? "Hide filters" : "Show filters"}
@@ -613,14 +743,16 @@ export function Workbench() {
               </div>
             )}
 
-            {!lib.isLoading && rows.length === 0 && (
+            {!lib.isLoading && visibleRows.length === 0 && (
               <p className="text-muted-foreground p-4 text-center text-xs">
-                No spectra yet — upload one to start processing.
+                {selectedDataset
+                  ? `Nothing in ${selectedDataset.name} yet.`
+                  : "No spectra yet — upload one to start processing."}
               </p>
             )}
 
             <ul className="space-y-1">
-              {rows.map((s) => {
+              {visibleRows.map((s) => {
                 const sel = s.id === selectedId;
                 return (
                   <li key={s.id}>
