@@ -142,6 +142,157 @@ def test_analysis_run_records_manifest_signature_and_deterministic_output(
     assert run.input_manifest[0]["raw_checksum_sha256"]
 
 
+def test_dataset_folder_lifecycle_create_empty_add_dedupe_remove_rename(
+    db_session, make_user, make_raw_file
+):
+    owner = make_user()
+    a = _spectrum(db_session, owner, make_raw_file(owner))
+    b = _spectrum(db_session, owner, make_raw_file(owner, b"100 2\n200 3\n300 4\n400 3\n"))
+    client = _analysis_client(db_session)
+    client.set_current_user(owner)
+
+    # create empty
+    created = client.post("/analysis/datasets", json={"name": "Folder"})
+    assert created.status_code == 201, created.text
+    dataset_id = created.json()["id"]
+    assert created.json()["spectra"] == []
+    assert created.json()["modality"] == "raman"
+
+    # add two
+    added = client.post(
+        f"/analysis/datasets/{dataset_id}/spectra",
+        json={"spectrum_ids": [str(a.id), str(b.id)]},
+    )
+    assert added.status_code == 200, added.text
+    assert [s["id"] for s in added.json()["spectra"]] == [str(a.id), str(b.id)]
+
+    # add duplicate -> idempotent no-op
+    again = client.post(
+        f"/analysis/datasets/{dataset_id}/spectra",
+        json={"spectrum_ids": [str(a.id)]},
+    )
+    assert again.status_code == 200, again.text
+    assert [s["id"] for s in again.json()["spectra"]] == [str(a.id), str(b.id)]
+
+    # remove one
+    removed = client.delete(f"/analysis/datasets/{dataset_id}/spectra/{a.id}")
+    assert removed.status_code == 204
+    assert [s["id"] for s in client.get(f"/analysis/datasets/{dataset_id}").json()["spectra"]] == [
+        str(b.id)
+    ]
+
+    # removing a non-member -> 404
+    assert client.delete(f"/analysis/datasets/{dataset_id}/spectra/{a.id}").status_code == 404
+
+    # rename + edit description
+    patched = client.patch(
+        f"/analysis/datasets/{dataset_id}", json={"name": "Renamed", "description": "notes"}
+    )
+    assert patched.status_code == 200, patched.text
+    assert patched.json()["name"] == "Renamed"
+    assert patched.json()["description"] == "notes"
+
+
+def test_dataset_rename_to_existing_name_conflicts(db_session, make_user, make_raw_file):
+    owner = make_user()
+    client = _analysis_client(db_session)
+    client.set_current_user(owner)
+    first = client.post("/analysis/datasets", json={"name": "Alpha"}).json()
+    client.post("/analysis/datasets", json={"name": "Beta"})
+
+    clash = client.patch(f"/analysis/datasets/{first['id']}", json={"name": "Beta"})
+    assert clash.status_code == 409, clash.text
+
+
+def test_delete_dataset_removes_membership_but_keeps_spectra(db_session, make_user, make_raw_file):
+    owner = make_user()
+    a = _spectrum(db_session, owner, make_raw_file(owner))
+    b = _spectrum(db_session, owner, make_raw_file(owner, b"100 2\n200 3\n300 4\n400 3\n"))
+    client = _analysis_client(db_session)
+    client.set_current_user(owner)
+    dataset_id = client.post(
+        "/analysis/datasets", json={"name": "Trash me", "spectrum_ids": [str(a.id), str(b.id)]}
+    ).json()["id"]
+
+    resp = client.delete(f"/analysis/datasets/{dataset_id}")
+    assert resp.status_code == 204
+
+    assert db_session.get(AnalysisDataset, dataset_id) is None
+    assert (
+        db_session.query(AnalysisDatasetSpectrum)
+        .filter(AnalysisDatasetSpectrum.dataset_id == dataset_id)
+        .count()
+        == 0
+    )
+    # spectra themselves survive
+    assert db_session.get(Spectrum, a.id) is not None
+    assert db_session.get(Spectrum, b.id) is not None
+
+
+def test_delete_dataset_with_runs_conflicts(db_session, make_user, make_raw_file):
+    owner = make_user()
+    a = _spectrum(db_session, owner, make_raw_file(owner))
+    b = _spectrum(db_session, owner, make_raw_file(owner, b"100 2\n200 3\n300 4\n400 3\n500 2\n600 3\n"))
+    dataset = AnalysisDataset(owner_id=owner.id, modality=Modality.raman, name="Has runs")
+    db_session.add(dataset)
+    db_session.flush()
+    db_session.add_all(
+        [
+            AnalysisDatasetSpectrum(dataset_id=dataset.id, spectrum_id=a.id, position=0),
+            AnalysisDatasetSpectrum(dataset_id=dataset.id, spectrum_id=b.id, position=1),
+        ]
+    )
+    db_session.commit()
+    client = _analysis_client(db_session)
+    client.set_current_user(owner)
+    run = client.post(
+        f"/analysis/datasets/{dataset.id}/runs",
+        json={"analysis_type": "pca", "components": 2, "grid_points": 16},
+    )
+    assert run.status_code == 202, run.text
+
+    assert client.delete(f"/analysis/datasets/{dataset.id}").status_code == 409
+
+
+def test_run_requires_at_least_two_spectra(db_session, make_user, make_raw_file):
+    owner = make_user()
+    a = _spectrum(db_session, owner, make_raw_file(owner))
+    client = _analysis_client(db_session)
+    client.set_current_user(owner)
+    dataset_id = client.post("/analysis/datasets", json={"name": "Too small"}).json()["id"]
+    client.post(f"/analysis/datasets/{dataset_id}/spectra", json={"spectrum_ids": [str(a.id)]})
+
+    resp = client.post(
+        f"/analysis/datasets/{dataset_id}/runs",
+        json={"analysis_type": "pca", "components": 2, "grid_points": 16},
+    )
+    assert resp.status_code == 422, resp.text
+    assert "at least two spectra" in resp.json()["detail"]
+
+
+def test_dataset_folder_mutations_reject_non_owner(db_session, make_user, make_raw_file):
+    owner, other = make_user(), make_user()
+    a = _spectrum(db_session, owner, make_raw_file(owner))
+    b = _spectrum(db_session, owner, make_raw_file(owner, b"100 2\n200 3\n300 4\n400 3\n"))
+    client = _analysis_client(db_session)
+    client.set_current_user(owner)
+    dataset_id = client.post(
+        "/analysis/datasets", json={"name": "Private folder", "spectrum_ids": [str(a.id), str(b.id)]}
+    ).json()["id"]
+
+    client.set_current_user(other)
+    assert client.get(f"/analysis/datasets/{dataset_id}").status_code == 404
+    assert client.patch(f"/analysis/datasets/{dataset_id}", json={"name": "hijack"}).status_code == 404
+    assert client.delete(f"/analysis/datasets/{dataset_id}").status_code == 404
+    assert (
+        client.post(
+            f"/analysis/datasets/{dataset_id}/spectra", json={"spectrum_ids": [str(a.id)]}
+        ).status_code
+        == 404
+    )
+    assert client.delete(f"/analysis/datasets/{dataset_id}/spectra/{a.id}").status_code == 404
+
+
 def test_run_cancel_transitions_pending_job_without_executing(db_session, make_user, make_raw_file):
     owner = make_user()
     first = _spectrum(db_session, owner, make_raw_file(owner))

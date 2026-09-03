@@ -929,6 +929,126 @@ export function updateSpectrum(
   });
 }
 
+/* --- datasets (analysis project folders) ------------------------- */
+
+/** A spectrum as it appears inside a dataset's ordered membership list. */
+export interface DatasetSpectrum {
+  id: string;
+  title: string | null;
+  modality: string;
+  state: string;
+}
+
+/**
+ * An owner-scoped, named collection of spectra — a "project folder". May be
+ * empty or hold a single spectrum; an analysis run (`POST` under `/analysis`)
+ * is what requires >= 2. `spectra` is ordered by membership position.
+ */
+export interface Dataset {
+  id: string;
+  name: string;
+  description: string | null;
+  modality: string;
+  spectra: DatasetSpectrum[];
+  created_at: string | null;
+  updated_at: string | null;
+}
+
+/** `GET /analysis/datasets` — the caller's datasets, newest-updated first. */
+export function listDatasets(opts?: ApiClientOptions): Promise<Dataset[]> {
+  return apiRequest<Dataset[]>("/analysis/datasets", opts);
+}
+
+/**
+ * `POST /analysis/datasets` — create a folder. `spectrum_ids` is optional and
+ * may be `[]`; when non-empty every spectrum must be owned-or-public, Raman,
+ * and share one modality. Re-POSTing the same name + identical id list returns
+ * the existing dataset (201); a different list under a taken name is 409.
+ */
+export function createDataset(
+  body: { name: string; description?: string; spectrum_ids?: string[] },
+  opts?: ApiClientOptions,
+): Promise<Dataset> {
+  return apiRequest<Dataset>("/analysis/datasets", {
+    ...opts,
+    method: "POST",
+    body,
+  });
+}
+
+/** `GET /analysis/datasets/{id}` — owner only, else 404. */
+export function getDataset(
+  datasetId: string,
+  opts?: ApiClientOptions,
+): Promise<Dataset> {
+  return apiRequest<Dataset>(
+    `/analysis/datasets/${encodeURIComponent(datasetId)}`,
+    opts,
+  );
+}
+
+/**
+ * `PATCH /analysis/datasets/{id}` — rename and/or edit the description. Owner
+ * only. A name already used by another of the caller's datasets is 409.
+ */
+export function updateDataset(
+  datasetId: string,
+  body: { name?: string; description?: string | null },
+  opts?: ApiClientOptions,
+): Promise<Dataset> {
+  return apiRequest<Dataset>(
+    `/analysis/datasets/${encodeURIComponent(datasetId)}`,
+    { ...opts, method: "PATCH", body },
+  );
+}
+
+/**
+ * `DELETE /analysis/datasets/{id}` — 204. Owner only. Removes the folder and
+ * its membership rows but never the spectra. 409 if the dataset still has
+ * analysis runs (delete those first).
+ */
+export function deleteDataset(
+  datasetId: string,
+  opts?: ApiClientOptions,
+): Promise<void> {
+  return apiRequest<void>(
+    `/analysis/datasets/${encodeURIComponent(datasetId)}`,
+    { ...opts, method: "DELETE" },
+  );
+}
+
+/**
+ * `POST /analysis/datasets/{id}/spectra` — append spectra to the folder.
+ * Idempotent: ids already present are skipped. New ids must be
+ * owned-or-public and match the dataset's modality; the per-dataset cap
+ * still applies. Returns the updated dataset.
+ */
+export function addDatasetSpectra(
+  datasetId: string,
+  spectrumIds: string[],
+  opts?: ApiClientOptions,
+): Promise<Dataset> {
+  return apiRequest<Dataset>(
+    `/analysis/datasets/${encodeURIComponent(datasetId)}/spectra`,
+    { ...opts, method: "POST", body: { spectrum_ids: spectrumIds } },
+  );
+}
+
+/**
+ * `DELETE /analysis/datasets/{id}/spectra/{spectrumId}` — drop one membership
+ * row, 204. The spectrum itself is untouched. 404 if it was not a member.
+ */
+export function removeDatasetSpectrum(
+  datasetId: string,
+  spectrumId: string,
+  opts?: ApiClientOptions,
+): Promise<void> {
+  return apiRequest<void>(
+    `/analysis/datasets/${encodeURIComponent(datasetId)}/spectra/${encodeURIComponent(spectrumId)}`,
+    { ...opts, method: "DELETE" },
+  );
+}
+
 /* --- account settings --------------------------------------------- */
 
 export interface UpdateMeBody {
