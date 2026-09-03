@@ -20,7 +20,29 @@ from __future__ import annotations
 
 import re
 
+from app.ingestion.parsers._common import plausible_laser_nm
 from app.schemas.ingestion import ExtractedMetadata
+
+# LabSpec header keys we map onto typed fields; everything else recognized as
+# a `#key : value` line is preserved (bounded) in `raw_extra_fields`.
+_MAPPED_KEYS = {
+    "acquired",
+    "title",
+    "acq. time (s)",
+    "acquisition time (s)",
+    "exposure time (s)",
+    "accumulations",
+    "range (cm-1)",
+    "range",
+    "grating",
+    "objective",
+    "laser",
+    "laser power (mw)",
+    "laser power",
+    "spectro",
+    "resolution",
+    "resolution (cm-1)",
+}
 
 # Header keys that, when found (as single-# comment lines), are strong
 # evidence of a Horiba LabSpec export.
@@ -92,7 +114,21 @@ class HoribaParser:
 
         laser_wavelength_nm: float | None = None
         if "laser" in fields:
-            laser_wavelength_nm = _leading_number(fields["laser"])
+            # "532", "532nm edge", "633 nm" -> 532.0 / 633.0, then guard the
+            # wavelength / wavenumber confusion.
+            laser_wavelength_nm = plausible_laser_nm(_leading_number(fields["laser"]))
+
+        laser_power_mw: float | None = None
+        for key in ("laser power (mw)", "laser power"):
+            if key in fields:
+                laser_power_mw = _leading_number(fields[key])
+                break
+
+        resolution_cm1: float | None = None
+        for key in ("resolution (cm-1)", "resolution"):
+            if key in fields:
+                resolution_cm1 = _leading_number(fields[key])
+                break
 
         grating_lines_mm: float | None = None
         if "grating" in fields:
@@ -104,6 +140,7 @@ class HoribaParser:
 
         instrument_model = fields.get("spectro")
         acquisition_datetime = fields.get("acquired")
+        sample_description = fields.get("title")
 
         spectral_range_cm1: str | None = None
         for key in ("range (cm-1)", "range"):
@@ -117,15 +154,29 @@ class HoribaParser:
                     spectral_range_cm1 = range_value
                 break
 
+        # Everything else that parsed as a `#key : value` line, preserved as
+        # flat scalars for human review (bounded by ExtractedMetadata).
+        raw_extra: dict[str, str | float | int] = {}
+        for key, value in fields.items():
+            if key in _MAPPED_KEYS:
+                continue
+            if len(raw_extra) >= 15:
+                break
+            raw_extra[key[:100]] = value[:500]
+
         return ExtractedMetadata(
             modality="raman",
             instrument_vendor="Horiba",
             instrument_model=instrument_model,
             laser_wavelength_nm=laser_wavelength_nm,
+            laser_power_mw=laser_power_mw,
             integration_time_ms=integration_time_ms,
             accumulations=accumulations,
             spectral_range_cm1=spectral_range_cm1,
+            resolution_cm1=resolution_cm1,
             acquisition_datetime=acquisition_datetime,
+            sample_description=sample_description,
             grating_lines_mm=grating_lines_mm,
             objective_magnification=objective_magnification,
+            raw_extra_fields=raw_extra,
         )

@@ -1,12 +1,31 @@
 """LLM-based metadata extraction fallback, used when no deterministic vendor
 parser recognizes a raw file's header.
 
-Security boundary: the model returns a bare JSON object matching a JSON
-Schema (structured output, not free-text parsing) and then *always* passes
-through `ExtractedMetadata.model_validate(...)`. LLM output never touches a
-file path, SQL string, or shell command — it only ever populates typed
-pydantic fields on `ExtractedMetadata`. A schema-violating response raises
-`LLMExtractionError` and nothing is written to the database.
+Security / cost boundary (every invariant here is asserted in code below and
+covered by tests in ``tests/test_llm_fallback.py``):
+
+* **The model only ever sees ``header_text[:MAX_HEADER_CHARS]`` (65536 chars,
+  == ``jobs.HEADER_SNIFF_BYTES``) plus the bare filename.** It is never given
+  whole-file content, a file path, an S3 key, SQL, or a shell string. The
+  header is re-truncated here defensively even though the worker already
+  sniffs only a leading chunk.
+* **The model's output is only ever a typed ``ExtractedMetadata``.** The
+  reply is a bare JSON object matching a JSON Schema (structured output, not
+  free-text parsing) and *always* passes through
+  ``ExtractedMetadata.model_validate(...)``. A schema-violating response
+  raises ``LLMExtractionError`` and nothing is written to the database.
+* **Deterministic decoding:** ``temperature`` is pinned to 0 and the reply is
+  capped at ``MAX_OUTPUT_TOKENS`` so two identical headers give the same
+  parse and a single call can never run away.
+* **Cache key is FORMAT-ONLY.** The ``VendorParseCache`` row is keyed on
+  ``compute_header_hash(header_text)`` — the normalized header template
+  alone. The filename is deliberately *not* folded in, so a second upload of
+  a different file that shares a header template is a pure cache hit with
+  ZERO LLM calls. Filename-derived facts are layered on afterwards by the
+  deterministic ``filename_overlay`` (also no LLM).
+* **No key configured is not an error.** When ``llm_configured()`` is False
+  the fallback returns ``ExtractedMetadata(modality="raman")`` plus the
+  filename overlay instead of raising.
 """
 
 from __future__ import annotations
@@ -15,11 +34,22 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from app.config import settings
+from app.ingestion import filename_overlay
 from app.ingestion.header_hash import compute_header_hash
-from app.llm import LLMError, complete_json
+from app.llm import LLMError, complete_json, llm_configured
 from app.models.enums import Modality, ParseSource
 from app.models.vendor_parse_cache import VendorParseCache
 from app.schemas.ingestion import ExtractedMetadata
+
+# Must stay == app.ingestion.jobs.HEADER_SNIFF_BYTES. The worker already
+# decodes only a leading chunk; this is a belt-and-braces cap so a future
+# call site that hands us more text still cannot leak whole-file content to
+# the model.
+MAX_HEADER_CHARS = 65536
+
+# Hard cap on the model's reply. ExtractedMetadata is tiny; 1024 tokens is
+# ample and bounds cost / latency of a misbehaving model.
+MAX_OUTPUT_TOKENS = 1024
 
 # Recorded on the cache row's `parser_version`; the concrete model slug is
 # an operator env choice (OPENROUTER_INGESTION_MODEL / OPENROUTER_MODEL).
@@ -113,16 +143,24 @@ def _guard_laser_wavelength(metadata: ExtractedMetadata) -> ExtractedMetadata:
 async def extract_metadata_via_llm(
     header_text: str, db: Session, *, filename: str | None = None
 ) -> tuple[ExtractedMetadata, str]:
-    """Extract metadata from `header_text` (and `filename`, if given) via the
-    shared LLM client, with a `VendorParseCache` lookup/write keyed by the
-    header template hash — the filename is folded in so two files with an
-    identical header but different names don't share a cache entry.
+    """Extract metadata from `header_text` via the shared LLM client, with a
+    `VendorParseCache` lookup/write keyed by the FORMAT-ONLY header template
+    hash (`compute_header_hash(header_text)`). The filename is never part of
+    the cache key — two files that share a header template are a pure cache
+    hit with zero LLM calls; filename facts are layered on deterministically
+    afterwards by `filename_overlay.apply`.
 
-    Returns `(metadata, source)` where `source` is "cache" on a cache hit or
-    "llm" after a fresh model call.
+    Returns `(metadata, source)` where `source` is:
+      * "cache"        — served from `VendorParseCache`, no LLM call
+      * "llm"          — fresh model call, result cached
+      * "filename-only" — no LLM key configured; header ignored, filename
+                          overlay applied to an empty `ExtractedMetadata`
     """
+    # Belt-and-braces: never hand the model more than the header sniff window,
+    # regardless of what a caller passes.
+    header_text = header_text[:MAX_HEADER_CHARS]
     name_hint = (filename or "").strip()
-    header_hash = compute_header_hash(f"{name_hint}\n{header_text}")
+    header_hash = compute_header_hash(header_text)
 
     cached = (
         db.query(VendorParseCache).filter(VendorParseCache.header_hash == header_hash).one_or_none()
@@ -135,7 +173,15 @@ async def extract_metadata_via_llm(
         cached.hit_count = (cached.hit_count or 0) + 1
         db.add(cached)
         db.commit()
-        return metadata, "cache"
+        return filename_overlay.apply(metadata, name_hint), "cache"
+
+    if not llm_configured():
+        # No key: degrade gracefully rather than failing the ingestion job.
+        # Return a valid empty Raman metadata object plus whatever the
+        # filename deterministically tells us. Not cached — a real parse
+        # should replace this once a key is configured.
+        metadata = filename_overlay.apply(ExtractedMetadata(modality="raman"), name_hint)
+        return metadata, "filename-only"
 
     user_prompt = (
         f"Filename: {name_hint}\n\nRaw header text:\n\n{header_text}"
@@ -148,7 +194,8 @@ async def extract_metadata_via_llm(
             user=user_prompt,
             schema=_TOOL_INPUT_SCHEMA,
             model=settings.OPENROUTER_INGESTION_MODEL or None,
-            max_tokens=1024,
+            max_tokens=MAX_OUTPUT_TOKENS,
+            temperature=0.0,
         )
     except LLMError as exc:
         raise LLMExtractionError(f"LLM API call failed: {exc}") from exc
@@ -158,10 +205,14 @@ async def extract_metadata_via_llm(
     except (ValidationError, TypeError) as exc:
         raise LLMExtractionError(f"LLM tool output failed schema validation: {exc}") from exc
 
-    metadata = _guard_laser_wavelength(metadata)
+    # `format_metadata` is the FORMAT-ONLY parse and is what gets cached, so a
+    # later file with the same header template but a different name does not
+    # inherit this file's filename-derived fields. The overlay is applied only
+    # to the value returned to *this* caller.
+    format_metadata = _guard_laser_wavelength(metadata)
 
     try:
-        cache_modality = Modality(metadata.modality)
+        cache_modality = Modality(format_metadata.modality)
     except ValueError:
         cache_modality = Modality.raman
 
@@ -171,10 +222,10 @@ async def extract_metadata_via_llm(
         vendor_format=None,
         parser_version=MODEL_ID,
         source=ParseSource.llm,
-        parsed_template=metadata.model_dump(mode="json"),
+        parsed_template=format_metadata.model_dump(mode="json"),
         hit_count=0,
     )
     db.add(cache_row)
     db.commit()
 
-    return metadata, "llm"
+    return filename_overlay.apply(format_metadata, name_hint), "llm"

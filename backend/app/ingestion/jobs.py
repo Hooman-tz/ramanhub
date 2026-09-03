@@ -22,6 +22,7 @@ from sqlalchemy import or_
 
 from app.config import settings
 from app.db.base import SessionLocal
+from app.ingestion import filename_overlay
 from app.ingestion.header_hash import compute_header_hash
 from app.ingestion.llm_fallback import extract_metadata_via_llm
 from app.ingestion.parsers.registry import find_parser
@@ -361,6 +362,11 @@ def run_ingestion_job(
                 parser_used = f"llm:{source}"
                 parser_version = source
                 parser_confidence = 0.7 if source == "cache" else 0.55
+
+            # Deterministic filename overlay: fill only fields the parser (or
+            # the LLM fallback) left null from regex hints in the upload's
+            # original filename. Never overwrites a file-derived value.
+            metadata = filename_overlay.apply(metadata, raw_file.original_filename)
 
             flags = run_sanity_check(metadata, metadata.modality, db)
             flags.update(_quality_flags_for_arrays(raw_bytes))

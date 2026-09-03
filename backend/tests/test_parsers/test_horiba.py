@@ -33,3 +33,26 @@ def test_parse_extracts_best_effort_fields():
     assert metadata.objective_magnification == 50.0
     assert metadata.spectral_range_cm1 == "100-3200"
     assert metadata.acquisition_datetime == "01/31/2026 12:00:00"
+    # Prefilled directly from the header so the LLM is not needed:
+    assert metadata.sample_description == "Sample 1"
+    # Unmapped `#key : value` lines are preserved for review, as flat scalars.
+    assert metadata.raw_extra_fields.get("nd filter") == "1"
+    assert metadata.raw_extra_fields.get("windows") == "1"
+    for value in metadata.raw_extra_fields.values():
+        assert isinstance(value, (str, int, float))
+
+
+def test_parse_guards_wavelength_wavenumber_confusion():
+    # A LabSpec export where "#Laser:" carries a wavenumber-looking value must
+    # not populate laser_wavelength_nm.
+    raw = (
+        b"#Acquired:\t01/31/2026 12:00:00\n"
+        b"#Accumulations:\t2\n"
+        b"#Grating:\t1800\n"
+        b"#Objective:\tx100\n"
+        b"#Laser:\t3200\n"
+        b"#Spectro:\tiHR320\n"
+    )
+    metadata = HoribaParser().parse(raw)
+    assert metadata.laser_wavelength_nm is None
+    assert metadata.objective_magnification == 100.0

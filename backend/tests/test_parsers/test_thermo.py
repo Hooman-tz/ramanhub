@@ -30,3 +30,20 @@ def test_parse_extracts_best_effort_fields():
     assert metadata.spectral_range_cm1 == "100-3200"
     assert metadata.acquisition_datetime == "2026/01/31 12:00:00"
     assert metadata.sample_description == "sample_001"
+    # Extra JCAMP header lines are preserved as flat scalars so the LLM is
+    # needed less often.
+    assert metadata.raw_extra_fields.get("npoints") == "1024"
+    assert metadata.raw_extra_fields.get("data type") == "RAMAN SPECTRUM"
+    for value in metadata.raw_extra_fields.values():
+        assert isinstance(value, (str, int, float))
+
+
+def test_parse_guards_wavelength_wavenumber_confusion():
+    raw = (
+        b"##TITLE=x\n##JCAMP-DX=5.01\n##DATA TYPE=RAMAN SPECTRUM\n"
+        b"##LASER WAVELENGTH=3200\n##FIRSTX=100\n##LASTX=3200\n"
+        b"##XYDATA=(X++(Y..Y))\n100 1 2 3\n"
+    )
+    metadata = ThermoParser().parse(raw)
+    assert metadata.laser_wavelength_nm is None
+    assert metadata.spectral_range_cm1 == "100-3200"

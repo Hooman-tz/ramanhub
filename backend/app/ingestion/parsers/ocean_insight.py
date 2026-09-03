@@ -20,6 +20,7 @@ Real-world header conventions this handles:
 """
 from __future__ import annotations
 
+from app.ingestion.parsers._common import plausible_laser_nm
 from app.schemas.ingestion import ExtractedMetadata
 
 BEGIN_MARKER = ">>>>>Begin Spectral Data<<<<<"
@@ -96,11 +97,13 @@ class OceanInsightParser:
                 break
 
         accumulations: int | None = None
-        if "scans to average" in fields:
-            try:
-                accumulations = int(float(fields["scans to average"]))
-            except ValueError:
-                pass
+        for key in ("scans to average", "spectra averaged"):
+            if key in fields:
+                try:
+                    accumulations = int(float(fields[key]))
+                except ValueError:
+                    pass
+                break
 
         acquisition_datetime = fields.get("date")
 
@@ -108,7 +111,18 @@ class OceanInsightParser:
         for key in ("excitation wavelength (nm)", "laser wavelength (nm)"):
             if key in fields:
                 try:
-                    laser_wavelength_nm = float(fields[key])
+                    # Guard the wavelength / wavenumber confusion even for a
+                    # key that is explicitly labelled "(nm)".
+                    laser_wavelength_nm = plausible_laser_nm(float(fields[key]))
+                except ValueError:
+                    pass
+                break
+
+        laser_power_mw: float | None = None
+        for key in ("laser power (mw)", "excitation power (mw)"):
+            if key in fields:
+                try:
+                    laser_power_mw = float(fields[key])
                 except ValueError:
                     pass
                 break
@@ -122,8 +136,11 @@ class OceanInsightParser:
             "spectrometer",
             "date",
             "scans to average",
+            "spectra averaged",
             "excitation wavelength (nm)",
             "laser wavelength (nm)",
+            "laser power (mw)",
+            "excitation power (mw)",
             "data from",
             "comment",
         } | set(_INTEGRATION_TIME_KEYS.keys())
@@ -140,6 +157,7 @@ class OceanInsightParser:
             instrument_vendor=instrument_vendor,
             instrument_model=instrument_model,
             laser_wavelength_nm=laser_wavelength_nm,
+            laser_power_mw=laser_power_mw,
             integration_time_ms=integration_time_ms,
             accumulations=accumulations,
             acquisition_datetime=acquisition_datetime,
