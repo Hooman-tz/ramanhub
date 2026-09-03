@@ -9,6 +9,7 @@ import { Card } from "@ramanhub/ui/card";
 
 import { BackLink } from "~/components/back-link";
 import { SpectrumChart } from "~/components/charts/spectrum-chart";
+import { DeleteRecordButton } from "~/components/delete-record-button";
 import { serverApiOpts } from "~/lib/server-api";
 
 export const dynamic = "force-dynamic";
@@ -159,6 +160,9 @@ export default async function SpectrumPage({
           >
             Open in Toolbox
           </Link>
+          {meta.is_owner && meta.state !== "published" && !meta.doi && (
+            <DeleteRecordButton kind="spectrum" id={id} redirectTo="/office" />
+          )}
         </div>
       </div>
 

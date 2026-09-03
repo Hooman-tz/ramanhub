@@ -104,6 +104,21 @@ def generate_presigned_get(
     )
 
 
+def delete_object(bucket: str, key: str, client: BaseClient | None = None) -> None:
+    """Best-effort hard delete of `bucket/key`.
+
+    Idempotent: deleting a key that isn't there is a no-op, not an error
+    (S3 `DeleteObject` is already idempotent; the `local` backend uses
+    `missing_ok=True`). Callers that must not fail on a storage hiccup
+    should still wrap this in their own try/except.
+    """
+    if settings.STORAGE_BACKEND == "local":
+        _local_path(bucket, key).unlink(missing_ok=True)
+        return
+    s3 = client or get_s3_client()
+    s3.delete_object(Bucket=bucket, Key=key)
+
+
 def object_exists(bucket: str, key: str, client: BaseClient | None = None) -> bool:
     """Return True if `bucket/key` exists, False on a 404/NoSuchKey."""
     if settings.STORAGE_BACKEND == "local":

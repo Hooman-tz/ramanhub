@@ -9,6 +9,8 @@ import { cn } from "@ramanhub/ui";
 import { Card } from "@ramanhub/ui/card";
 import { Skeleton } from "@ramanhub/ui/skeleton";
 
+import { DeleteRecordButton } from "~/components/delete-record-button";
+
 /** Maps a library spectrum's state fields to a status dot + short step label. */
 function status(s: LibrarySpectrum): { dot: string; label: string } {
   if (s.state === "published")
@@ -82,6 +84,15 @@ export function SpectrumProjects() {
                 >
                   Open
                 </Link>
+                {s.state !== "published" && (
+                  <DeleteRecordButton
+                    kind="spectrum"
+                    id={s.id}
+                    redirectTo={null}
+                    variant="icon"
+                    className="text-muted-foreground hover:text-destructive size-7 shrink-0"
+                  />
+                )}
               </div>
             );
           })}

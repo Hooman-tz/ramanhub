@@ -426,6 +426,20 @@ export function publishFinding(
   });
 }
 
+/**
+ * `DELETE /v1/findings/{id}` — 204. Owner-only; hard-deletes a non-published
+ * finding. Published findings are citable and refuse deletion with 409.
+ */
+export function deleteFinding(
+  id: string,
+  opts?: ApiClientOptions,
+): Promise<void> {
+  return apiRequest<void>(`/v1/findings/${encodeURIComponent(id)}`, {
+    ...opts,
+    method: "DELETE",
+  });
+}
+
 /** Create a draft note and immediately publish it — the one-tap "post". */
 export async function postNote(
   body: { title: string; abstract_md?: string; tags?: string[] },
@@ -1047,6 +1061,21 @@ export function removeDatasetSpectrum(
     `/analysis/datasets/${encodeURIComponent(datasetId)}/spectra/${encodeURIComponent(spectrumId)}`,
     { ...opts, method: "DELETE" },
   );
+}
+
+/**
+ * `DELETE /spectra/{id}` — 204. Owner-only; hard-deletes a non-published
+ * spectrum plus its raw file, ingestion job(s), ledgers and social signals.
+ * A published / DOI-linked spectrum refuses deletion with 409.
+ */
+export function deleteSpectrum(
+  spectrumId: string,
+  opts?: ApiClientOptions,
+): Promise<void> {
+  return apiRequest<void>(`/spectra/${encodeURIComponent(spectrumId)}`, {
+    ...opts,
+    method: "DELETE",
+  });
 }
 
 /* --- account settings --------------------------------------------- */
