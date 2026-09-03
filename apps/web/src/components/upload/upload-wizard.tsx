@@ -32,6 +32,7 @@ import {
   getIngestionJob,
   isApiError,
   retryIngestionJob,
+  updateSpectrum,
   uploadRawFile,
 } from "@ramanhub/api-client";
 import { Button } from "@ramanhub/ui/button";
@@ -126,6 +127,10 @@ export function UploadWizard() {
   const qc = useQueryClient();
   const [jobId, setJobId] = useState<string | null>(null);
   const [fileName, setFileName] = useState<string | null>(null);
+  /** The record's display name + notes — stored on the Spectrum, not in the
+   * parsed acquisition metadata. Seeded from the filename. */
+  const [title, setTitle] = useState("");
+  const [description, setDescription] = useState("");
   /** User edits only. Parsed values are derived, so re-parsing can't be lost. */
   const [edits, setEdits] = useState<Draft>({});
   const [pendingSince, setPendingSince] = useState<number | null>(null);
@@ -137,6 +142,9 @@ export function UploadWizard() {
     onSuccess: (res, file) => {
       setJobId(res.ingestion_job_id);
       setFileName(file.name);
+      // Seed the title from the filename (sans extension) so it's never blank.
+      setTitle(file.name.replace(/\.[^.]+$/, ""));
+      setDescription("");
       setEdits({});
       setPendingSince(Date.now());
       setNow(Date.now());
@@ -190,7 +198,20 @@ export function UploadWizard() {
   );
 
   const confirm = useMutation({
-    mutationFn: (id: string) => confirmIngestionMetadata(id, toMetadata(draft)),
+    mutationFn: async (id: string) => {
+      const updated = await confirmIngestionMetadata(id, toMetadata(draft));
+      // The draft Spectrum now exists; give it a title/description (those live
+      // on the record, not in the parsed acquisition metadata).
+      const t = title.trim();
+      const d = description.trim();
+      if (updated.draft_spectrum_id && (t || d)) {
+        await updateSpectrum(updated.draft_spectrum_id, {
+          title: t || undefined,
+          description: d || undefined,
+        });
+      }
+      return updated;
+    },
     onSuccess: async (updated) => {
       await qc.invalidateQueries({ queryKey: ["library"] });
       qc.setQueryData(["ingestion-job", updated.id], updated);
@@ -224,6 +245,7 @@ export function UploadWizard() {
 
   const draftSpectrumId = job.data?.draft_spectrum_id ?? null;
   const canConfirm =
+    !!title.trim() &&
     !!draft.laser_wavelength_nm &&
     !!draft.integration_time_ms?.trim() &&
     !confirm.isPending;
@@ -407,6 +429,34 @@ export function UploadWizard() {
           }}
         >
           <div className="space-y-1.5">
+            <Label htmlFor="spectrum_title">
+              Title <span className="text-destructive">*</span>
+            </Label>
+            <Input
+              id="spectrum_title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="e.g. Polystyrene reference, 785 nm"
+              required
+            />
+            <p className="text-muted-foreground text-xs">
+              How this spectrum is labelled in your library and the feed.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label htmlFor="spectrum_description">Description</Label>
+            <textarea
+              id="spectrum_description"
+              rows={2}
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Optional notes about the sample, prep, or conditions."
+              className="border-input bg-background focus-visible:ring-ring/50 focus-visible:border-ring w-full rounded-md border px-3 py-2 text-sm leading-relaxed focus-visible:ring-[3px] focus-visible:outline-none"
+            />
+          </div>
+
+          <div className="space-y-1.5">
             <Label htmlFor="laser_wavelength_nm">
               Laser wavelength (nm) <span className="text-destructive">*</span>
             </Label>
@@ -483,7 +533,7 @@ export function UploadWizard() {
             </Button>
             {!canConfirm && !confirm.isPending && (
               <span className="text-muted-foreground text-xs">
-                Laser wavelength and integration time are required.
+                Title, laser wavelength and integration time are required.
               </span>
             )}
           </div>

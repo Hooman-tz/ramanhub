@@ -909,10 +909,17 @@ export function createLedger(
   );
 }
 
-/** `PATCH /spectra/{id}` — point the spectrum at a processing ledger (or `null` to reset to raw). */
+/**
+ * `PATCH /spectra/{id}` — edit the record's title/description, and/or point it
+ * at a processing ledger (`current_ledger_id: null` resets to raw).
+ */
 export function updateSpectrum(
   spectrumId: string,
-  body: { current_ledger_id: string | null },
+  body: {
+    current_ledger_id?: string | null;
+    title?: string;
+    description?: string;
+  },
   opts?: ApiClientOptions,
 ): Promise<Spectrum> {
   return apiRequest<Spectrum>(`/spectra/${encodeURIComponent(spectrumId)}`, {
