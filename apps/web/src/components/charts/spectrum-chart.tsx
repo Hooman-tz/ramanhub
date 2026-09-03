@@ -27,11 +27,45 @@ echarts.use([
   CanvasRenderer,
 ]);
 
-interface TraceSeries {
+export interface TraceSeries {
   name: string;
   wavenumbers: number[];
   intensities: number[];
 }
+
+/**
+ * Display-only view options for the trace chart. Every field is optional and
+ * defaults to a no-op, so existing callers that don't pass `display` render
+ * exactly as before. Normalisation is applied to a *copy* of the caller's
+ * arrays — the source data is never mutated.
+ */
+export interface SpectrumDisplayOptions {
+  /** Waterfall the traces, each shifted up by `offset * seriesIndex`. */
+  stacked?: boolean;
+  /** Vertical gap between stacked traces, in intensity units. */
+  offset?: number;
+  /** Per-series intensity rescale, for shape comparison. Display only. */
+  normalize?: "none" | "max" | "minmax" | "area";
+  /** Crop the wavenumber axis to `[xMin, xMax]` (either end optional). */
+  xMin?: number;
+  xMax?: number;
+  /** Force the legend on/off (otherwise it shows when there is >1 series). */
+  showLegend?: boolean;
+  /** Toggle the axis split lines. */
+  showGrid?: boolean;
+  /** Line stroke width for every trace. */
+  lineWidth?: number;
+}
+
+/** Baseline `SpectrumDisplayOptions` — a completely neutral view. */
+export const DEFAULT_DISPLAY_OPTIONS: SpectrumDisplayOptions = {
+  stacked: false,
+  offset: 0,
+  normalize: "none",
+  showLegend: true,
+  showGrid: true,
+  lineWidth: 2,
+};
 
 type SpectrumChartProps = {
   /** Fixed pixel height for the chart canvas. */
@@ -48,9 +82,21 @@ type SpectrumChartProps = {
       /**
        * A second line drawn on its own right-hand axis — raw vs processed
        * intensities routinely differ by orders of magnitude, so sharing one
-       * axis would flatten the smaller series into the baseline.
+       * axis would flatten the smaller series into the baseline. Only used on
+       * the single-line path (i.e. when `series` is not supplied).
        */
       overlay?: TraceSeries;
+      /**
+       * N independent traces, each its own legend entry and palette colour.
+       * When supplied and non-empty this REPLACES the single
+       * `wavenumbers`/`intensities` line (those props stay required by the
+       * type but are ignored). Legend appears once there is >1 series and is
+       * click-to-toggle; the tooltip is axis-triggered across every visible
+       * series.
+       */
+      series?: TraceSeries[];
+      /** Display-only view options; never mutates the caller's arrays. */
+      display?: SpectrumDisplayOptions;
     }
   | {
       mode: "band";
@@ -74,6 +120,15 @@ function resolveColors() {
     surface: token("--popover", "#ffffff"),
     ink: token("--popover-foreground", "#0b0b0b"),
     border: token("--border", "#e1e0d9"),
+    // Categorical palette for the N-series trace mode. These flip with the
+    // theme (light hex / dark oklch) via `tooling/tailwind/theme.css`.
+    palette: [
+      token("--chart-1", "#0d6b6e"),
+      token("--chart-2", "#2f8f92"),
+      token("--chart-3", "#5bb3b5"),
+      token("--chart-4", "#b45309"),
+      token("--chart-5", "#1e40af"),
+    ],
   };
 }
 
@@ -107,6 +162,34 @@ function fmt(v: number | undefined): string {
   return v.toPrecision(4).replace(/\.?0+$/, "");
 }
 
+/**
+ * Return a rescaled COPY of `ys` for display. Never mutates the input. Uses a
+ * single pass (no `Math.max(...spread)` — spectra can be tens of thousands of
+ * points and that overflows the call stack).
+ */
+function normalizeIntensities(
+  ys: number[],
+  mode: "max" | "minmax" | "area",
+): number[] {
+  let min = Infinity;
+  let max = -Infinity;
+  let absMax = 0;
+  let absSum = 0;
+  for (const y of ys) {
+    if (!Number.isFinite(y)) continue;
+    if (y < min) min = y;
+    if (y > max) max = y;
+    const a = Math.abs(y);
+    if (a > absMax) absMax = a;
+    absSum += a;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) return ys.slice();
+  if (mode === "max") return absMax ? ys.map((y) => y / absMax) : ys.slice();
+  if (mode === "area") return absSum ? ys.map((y) => y / absSum) : ys.slice();
+  const span = max - min;
+  return span ? ys.map((y) => (y - min) / span) : ys.slice();
+}
+
 /** Zip two number arrays into `[x, y]` pairs, dropping any ragged tail. */
 function zip(xs: number[], ys: number[]): [number, number][] {
   const out: [number, number][] = [];
@@ -135,6 +218,19 @@ export function SpectrumChart(props: SpectrumChartProps) {
   const wavenumbers = props.mode === "trace" ? props.wavenumbers : undefined;
   const intensities = props.mode === "trace" ? props.intensities : undefined;
   const overlay = props.mode === "trace" ? props.overlay : undefined;
+  const seriesProp = props.mode === "trace" ? props.series : undefined;
+  const displayProp = props.mode === "trace" ? props.display : undefined;
+  // Spread `display` into primitive handles so the draw effect only re-runs on
+  // a real value change, not on a fresh object identity each render.
+  const hasDisplay = displayProp !== undefined;
+  const dStacked = displayProp?.stacked;
+  const dOffset = displayProp?.offset;
+  const dNormalize = displayProp?.normalize;
+  const dXMin = displayProp?.xMin;
+  const dXMax = displayProp?.xMax;
+  const dShowLegend = displayProp?.showLegend;
+  const dShowGrid = displayProp?.showGrid;
+  const dLineWidth = displayProp?.lineWidth;
 
   // init once / dispose on unmount
   useEffect(() => {
@@ -312,56 +408,198 @@ export function SpectrumChart(props: SpectrumChartProps) {
     }
 
     if (mode === "trace" && wavenumbers && intensities) {
-      const series: Record<string, unknown>[] = [
-        {
-          type: "line",
-          name: overlay ? "Processed" : "Intensity",
-          data: zip(wavenumbers, intensities),
-          showSymbol: false,
-          sampling: "lttb",
-          smooth: 0.15,
-          lineStyle: { width: 2.25, color: c.mean },
-          itemStyle: { color: c.mean },
-          areaStyle: areaFill,
-          emphasis: { focus: "series" },
-          yAxisIndex: 0,
-          z: 3,
-        },
-      ];
-      if (overlay) {
-        series.push({
-          type: "line",
-          name: overlay.name,
-          data: zip(overlay.wavenumbers, overlay.intensities),
-          showSymbol: false,
-          sampling: "lttb",
-          lineStyle: {
-            width: 1.25,
-            type: "dashed",
-            color: c.axis,
-            opacity: 0.85,
+      const multiSeries = seriesProp !== undefined && seriesProp.length > 0;
+
+      // ---- Legacy path: single trace (+ optional dual-axis overlay). ----
+      // Byte-for-byte identical to before, so every existing caller (the
+      // `spectra/[id]` viewer, findings overlay, feed cards) is untouched.
+      if (!multiSeries && !hasDisplay) {
+        const series: Record<string, unknown>[] = [
+          {
+            type: "line",
+            name: overlay ? "Processed" : "Intensity",
+            data: zip(wavenumbers, intensities),
+            showSymbol: false,
+            sampling: "lttb",
+            smooth: 0.15,
+            lineStyle: { width: 2.25, color: c.mean },
+            itemStyle: { color: c.mean },
+            areaStyle: areaFill,
+            emphasis: { focus: "series" },
+            yAxisIndex: 0,
+            z: 3,
           },
-          itemStyle: { color: c.axis },
-          yAxisIndex: 1,
-          z: 1,
-        });
+        ];
+        if (overlay) {
+          series.push({
+            type: "line",
+            name: overlay.name,
+            data: zip(overlay.wavenumbers, overlay.intensities),
+            showSymbol: false,
+            sampling: "lttb",
+            lineStyle: {
+              width: 1.25,
+              type: "dashed",
+              color: c.axis,
+              opacity: 0.85,
+            },
+            itemStyle: { color: c.axis },
+            yAxisIndex: 1,
+            z: 1,
+          });
+        }
+
+        chart.setOption(
+          {
+            ...drawAnimation,
+            textStyle: baseTextStyle,
+            legend: overlay
+              ? {
+                  data: ["Processed", overlay.name],
+                  top: 0,
+                  textStyle: { color: c.axis },
+                }
+              : undefined,
+            grid: {
+              left: 56,
+              right: overlay ? 56 : 20,
+              top: overlay ? 34 : 16,
+              bottom: 44,
+            },
+            tooltip: {
+              ...baseTooltip,
+              trigger: "axis",
+              axisPointer: compact
+                ? { type: "line", lineStyle: { color: c.axis } }
+                : {
+                    type: "cross",
+                    label: { backgroundColor: c.axis },
+                    lineStyle: { color: c.axis },
+                    crossStyle: { color: c.axis },
+                  },
+              valueFormatter: (v: unknown) =>
+                typeof v === "number" ? fmt(v) : String(v),
+            },
+            xAxis: {
+              type: "value",
+              scale: true,
+              name: AXIS_NAME,
+              nameLocation: "middle",
+              nameGap: 26,
+              ...axisStyle,
+            },
+            yAxis: [
+              {
+                type: "value",
+                scale: true,
+                name: "Intensity",
+                nameLocation: "middle",
+                nameGap: 40,
+                ...axisStyle,
+              },
+              {
+                type: "value",
+                scale: true,
+                position: "right",
+                show: Boolean(overlay),
+                name: overlay ? overlay.name : "",
+                ...axisStyle,
+                splitLine: { show: false },
+              },
+            ],
+            series,
+          },
+          { notMerge: true },
+        );
+        return;
       }
+
+      // ---- N-series / customisable path. ----
+      // Normalise both accepted shapes down to one `TraceSeries[]`.
+      const opts = {
+        stacked: dStacked ?? false,
+        offset: dOffset ?? 0,
+        normalize: dNormalize ?? "none",
+        showLegend: dShowLegend ?? true,
+        showGrid: dShowGrid ?? true,
+        lineWidth: dLineWidth ?? 2,
+      };
+
+      const rawList: TraceSeries[] =
+        seriesProp && seriesProp.length > 0
+          ? seriesProp.slice()
+          : [
+              {
+                name: overlay ? "Processed" : "Intensity",
+                wavenumbers,
+                intensities,
+              },
+            ];
+      if (!multiSeries && overlay) rawList.push(overlay);
+
+      const legendVisible = opts.showLegend && rawList.length > 1;
+
+      const built = rawList.map((s, i) => {
+        // Copy + rescale for display only — caller arrays are never touched.
+        const shaped =
+          opts.normalize === "none"
+            ? s.intensities
+            : normalizeIntensities(s.intensities, opts.normalize);
+        const shifted =
+          opts.stacked && opts.offset
+            ? shaped.map((y) => y + i * opts.offset)
+            : shaped;
+        return {
+          name: s.name || `Series ${i + 1}`,
+          color: c.palette[i % c.palette.length] ?? c.mean,
+          data: zip(s.wavenumbers, shifted),
+        };
+      });
+
+      const cropMin = Number.isFinite(dXMin) ? dXMin : undefined;
+      const cropMax = Number.isFinite(dXMax) ? dXMax : undefined;
+      // Keep the y-axis honest: only advertise "normalised" when it is.
+      const yName =
+        opts.normalize === "none"
+          ? opts.stacked
+            ? "Intensity (offset)"
+            : "Intensity"
+          : "Intensity (normalised)";
+      const splitLine = { ...axisStyle.splitLine, show: opts.showGrid };
+
+      const nSeries: Record<string, unknown>[] = built.map((b) => ({
+        type: "line",
+        name: b.name,
+        data: b.data,
+        showSymbol: false,
+        sampling: "lttb",
+        smooth: 0.15,
+        lineStyle: { width: opts.lineWidth, color: b.color },
+        itemStyle: { color: b.color },
+        areaStyle: built.length === 1 ? areaFill : undefined,
+        emphasis: { focus: "series" },
+        z: 3,
+      }));
 
       chart.setOption(
         {
           ...drawAnimation,
           textStyle: baseTextStyle,
-          legend: overlay
+          legend: legendVisible
             ? {
-                data: ["Processed", overlay.name],
+                type: "scroll",
                 top: 0,
+                data: built.map((b) => b.name),
                 textStyle: { color: c.axis },
+                pageIconColor: c.axis,
+                pageIconInactiveColor: c.grid,
+                pageTextStyle: { color: c.axis },
               }
             : undefined,
           grid: {
             left: 56,
-            right: overlay ? 56 : 20,
-            top: overlay ? 34 : 16,
+            right: 20,
+            top: legendVisible ? 34 : 16,
             bottom: 44,
           },
           tooltip: {
@@ -381,34 +619,28 @@ export function SpectrumChart(props: SpectrumChartProps) {
           xAxis: {
             type: "value",
             scale: true,
+            min: cropMin,
+            max: cropMax,
             name: AXIS_NAME,
             nameLocation: "middle",
             nameGap: 26,
             ...axisStyle,
+            splitLine,
           },
-          yAxis: [
-            {
-              type: "value",
-              scale: true,
-              name: "Intensity",
-              nameLocation: "middle",
-              nameGap: 40,
-              ...axisStyle,
-            },
-            {
-              type: "value",
-              scale: true,
-              position: "right",
-              show: Boolean(overlay),
-              name: overlay ? overlay.name : "",
-              ...axisStyle,
-              splitLine: { show: false },
-            },
-          ],
-          series,
+          yAxis: {
+            type: "value",
+            scale: true,
+            name: yName,
+            nameLocation: "middle",
+            nameGap: 40,
+            ...axisStyle,
+            splitLine,
+          },
+          series: nSeries,
         },
         { notMerge: true },
       );
+      return;
     }
   }, [
     loading,
@@ -420,6 +652,16 @@ export function SpectrumChart(props: SpectrumChartProps) {
     wavenumbers,
     intensities,
     overlay,
+    seriesProp,
+    hasDisplay,
+    dStacked,
+    dOffset,
+    dNormalize,
+    dXMin,
+    dXMax,
+    dShowLegend,
+    dShowGrid,
+    dLineWidth,
     // Read inside the effect (`compact = height <= 200`) to pick the axis /
     // label density, so a height change must re-render the chart.
     height,
