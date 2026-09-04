@@ -141,6 +141,29 @@ def _caller_key(request: Request, user: User | None) -> str:
     return f"ip:{request.client.host if request.client else 'unknown'}"
 
 
+# Typeahead fires once per debounced keystroke and is anonymous-capable, so
+# the ceiling is about stopping a scraper walking the corpus letter by letter
+# rather than about the cost of any one call — each is a handful of LIMIT-6
+# index scans. A heavy human session lands near 100/hr once the client
+# debounce and its response cache are doing their jobs.
+_search_suggest_limiter = RateLimiter(max_calls=600, window_seconds=3600)
+
+# The reference browse is the same shape of traffic and had no limit at all.
+_search_browse_limiter = RateLimiter(max_calls=600, window_seconds=3600)
+
+
+def rate_limit_search_suggest(
+    request: Request, user: User | None = Depends(get_current_user_optional)
+) -> None:
+    _search_suggest_limiter.check(_caller_key(request, user))
+
+
+def rate_limit_search_browse(
+    request: Request, user: User | None = Depends(get_current_user_optional)
+) -> None:
+    _search_browse_limiter.check(_caller_key(request, user))
+
+
 def rate_limit_library_match(
     request: Request, user: User | None = Depends(get_current_user_optional)
 ) -> None:
