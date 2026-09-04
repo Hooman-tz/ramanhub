@@ -68,7 +68,7 @@ function FeedSearch() {
             submit("");
           }
         }}
-        placeholder="Search — @author or #tag"
+        placeholder="Search the feed — or @author, #tag"
         className="placeholder:text-muted-foreground w-full min-w-0 bg-transparent py-1 text-sm focus:outline-none [&::-webkit-search-cancel-button]:hidden"
       />
       {value && (

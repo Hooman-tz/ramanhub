@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { Library, Search } from "lucide-react";
 
 import { getSpectrum, matchAgainstLibrary, searchReferences, unmixAgainstLibrary } from "@ramanhub/api-client";
@@ -25,6 +25,7 @@ import {
 } from "~/components/library/pieces";
 import { Step } from "~/components/library/step";
 import { SpectrumPickerDialog } from "~/components/spectrum-picker";
+import { useDebounced } from "~/hooks/use-debounced";
 import { useSpectrumBuffer } from "~/lib/spectra-buffer";
 
 /**
@@ -394,9 +395,16 @@ export function IdentifyFlow({
 
 function BrowsePanel() {
   const [query, setQuery] = useState("");
+  // Typing used to issue a request per keystroke against the whole reference
+  // corpus. 250 ms because this is a list people stop and read, not a palette
+  // they glance at mid-word.
+  const debouncedQuery = useDebounced(query.trim(), 250);
   const rows = useQuery({
-    queryKey: ["ref-search", query],
-    queryFn: () => searchReferences({ q: query || undefined, limit: 40 }),
+    queryKey: ["ref-search", debouncedQuery],
+    queryFn: ({ signal }) =>
+      searchReferences({ q: debouncedQuery || undefined, limit: 40 }, { signal }),
+    // Without this the list empties on every new query and the page jumps.
+    placeholderData: keepPreviousData,
   });
 
   return (
@@ -426,14 +434,21 @@ function BrowsePanel() {
         <EmptyCard
           icon={Library}
           message={
-            query
-              ? `Nothing in the library matches “${query}”.`
+            debouncedQuery
+              ? `Nothing in the library matches “${debouncedQuery}”.`
               : "The reference library has no entries yet. Publishing your own identified spectra into it is what makes it useful."
           }
         />
       ) : (
         <Card className="gap-0 p-0">
-          <ul className="divide-y">
+          <ul
+            className={cn(
+              "divide-y transition-opacity duration-150 motion-reduce:transition-none",
+              // Debouncing means the list can lag the box by a moment; saying
+              // so is better than letting it look stale for no reason.
+              rows.isFetching && "opacity-60",
+            )}
+          >
             {rows.data.map((row) => (
               <ReferenceRow key={row.id} row={row} />
             ))}
