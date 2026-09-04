@@ -29,13 +29,13 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.search_sql import REFERENCE_SEARCH_SQL
 from app.models.enums import (
     ReferenceCurationStatus,
     ReferenceTrustTier,
     reference_curation_status_enum,
     reference_trust_tier_enum,
 )
+from app.models.search_sql import REFERENCE_SEARCH_SQL
 
 
 class ReferenceEntry(Base):

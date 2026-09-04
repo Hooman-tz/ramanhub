@@ -18,8 +18,8 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.search_sql import SPECTRUM_SEARCH_SQL
 from app.models.enums import Modality, SpectrumState, modality_enum, spectrum_state_enum
+from app.models.search_sql import SPECTRUM_SEARCH_SQL
 
 
 class Spectrum(Base):

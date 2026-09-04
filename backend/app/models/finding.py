@@ -47,13 +47,13 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.search_sql import FINDING_SEARCH_SQL
 from app.models.enums import (
     FindingEntryKind,
     FindingState,
     finding_entry_kind_enum,
     finding_state_enum,
 )
+from app.models.search_sql import FINDING_SEARCH_SQL
 
 
 class Finding(Base):
