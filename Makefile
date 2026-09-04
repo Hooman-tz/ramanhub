@@ -24,14 +24,22 @@ seed-demo:
 seed-scenarios:
 	cd backend && uv run python -m app.seed.scenarios_data $(ARGS)
 
-# Bundled open reference spectra for the Lab's Library tab (RRUFF unoriented
-# high-res, CC-BY). Point ARGS=--dir at the unpacked archive; the download is a
-# deliberate manual step, since it is a few hundred MB from a third party under
-# its own terms. Requires `make seed` first (needs the CC-BY-4.0 licence row).
+# Bundled open reference spectra for the Library.
 #
-# Full import is ~8,583 spectra: ~400MB object storage, ~105MB Postgres.
-# Idempotent and resumable — always dry-run first:
-#   make seed-library ARGS="--dir /path/to/rruff --limit 20"
+# Default source is the Raman Open Database (CC0, ~1,133 entries, minerals +
+# organics + polymers). ROD publishes no archive tarball, so --fetch walks its
+# id range politely (one request at a time, resumable, skips what is already on
+# disk) before importing:
+#
+#   make seed-library ARGS="--dir .cache/rod --fetch --limit 25"   # dry run
+#   make seed-library ARGS="--dir .cache/rod --fetch"              # full ~1,133
+#
+# RRUFF is the deeper mineral set but its licence is UNCONFIRMED — RRUFF's own
+# pages state none. Confirm in writing before running it:
+#
+#   make seed-library ARGS="--source rruff-unoriented-highres --dir /path/to/rruff"
+#
+# Requires `make seed` first (needs the licence rows). Idempotent and resumable.
 seed-library:
 	cd backend && uv run python -m app.seed.reference_library $(ARGS)
 

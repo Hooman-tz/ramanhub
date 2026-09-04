@@ -165,3 +165,115 @@ def test_rruff_filenames_yield_the_record_id_not_the_mineral_name(tmp_path):
     assert records["Calcite"].source_id == "R040070"
     assert records["Rutile"].provenance_url == "https://rruff.info/R040049"
     assert records["Rutile"].laser_wavelength_nm == 785.0
+
+
+# ---------------------------------------------------------------------------
+# Raman Open Database
+# ---------------------------------------------------------------------------
+
+ROD_ENTRY = """#\\#CIF_2.0
+#
+# This file is available in the Raman Open Database (ROD),
+# http://solsa.crystallography.net/rod/
+#
+# All data on this site have been placed in the public domain by the
+# contributors.
+#
+data_1000001
+loop_
+_publ_author_name
+'El Mendili, Yassine'
+_publ_section_title
+;
+ Insights into the Mechanism Related to the Phase Transition
+ from a-Fe2O3 to g-Fe2O3 Nanoparticles
+;
+_chemical_formula_sum            'Fe2 O3'
+_chemical_name_mineral           Hematite
+_chemical_name_systematic        'iron(III) oxide'
+_raman_measurement_device.excitation_laser_wavelength 514
+_rod_database.code               1000001
+loop_
+_space_group_symop_id
+_space_group_symop_operation_xyz
+1 x,y,z
+2 -y,x-y,z
+loop_
+_raman_spectrum.raman_shift
+_raman_spectrum.intensity
+100.0 10.0
+110.0 25.0
+120.0 90.0
+130.0 30.0
+140.0 12.0
+"""
+
+
+def test_rod_entry_is_parsed_into_a_reference_record():
+    from app.seed.reference_library import parse_rod_entry
+
+    record = parse_rod_entry(ROD_ENTRY, fallback_id="unused")
+
+    assert record is not None
+    assert record.source == "rod"
+    assert record.source_id == "1000001"
+    assert record.compound_name == "Hematite"
+    assert record.mineral_name == "Hematite"
+    # Whitespace is stripped so the formula is comparable across sources.
+    assert record.chemical_formula == "Fe2O3"
+    assert record.laser_wavelength_nm == 514.0
+    assert record.provenance_url.endswith("/1000001.html")
+
+
+def test_rod_spectra_are_re_emitted_as_plain_two_column_text():
+    """That is what lets a ROD entry travel the same path as any upload."""
+    from app.seed.reference_library import parse_rod_entry
+    from app.spectra_io import parse_two_column_raman
+
+    record = parse_rod_entry(ROD_ENTRY, fallback_id="unused")
+    x, y = parse_two_column_raman(record.raw_bytes)
+
+    assert x.tolist() == [100.0, 110.0, 120.0, 130.0, 140.0]
+    assert y.tolist() == [10.0, 25.0, 90.0, 30.0, 12.0]
+
+
+def test_the_symmetry_loop_is_not_mistaken_for_the_spectrum():
+    """A ROD file has several `loop_` blocks; only one is the spectrum."""
+    from app.seed.reference_library import _cif_spectrum
+
+    points = _cif_spectrum(ROD_ENTRY)
+    assert len(points) == 5
+    assert points[0] == (100.0, 10.0)
+
+
+def test_semicolon_delimited_blocks_do_not_break_the_reader():
+    from app.seed.reference_library import _cif_values
+
+    values = _cif_values(ROD_ENTRY)
+    assert values["_chemical_name_mineral"] == "Hematite"
+    # Quoted values keep their spaces and lose their quotes.
+    assert values["_chemical_name_systematic"] == "iron(III) oxide"
+    assert "Phase Transition" in values["_publ_section_title"]
+
+
+def test_an_entry_with_no_spectrum_is_skipped_not_imported():
+    from app.seed.reference_library import parse_rod_entry
+
+    header_only = ROD_ENTRY.split("loop_\n_raman_spectrum.raman_shift")[0]
+    assert parse_rod_entry(header_only, fallback_id="1000001") is None
+
+
+def test_rod_ids_fan_out_the_way_the_server_lays_them_out():
+    """Entries live at cif/<d1>/<d2d3>/<d4d5>/<id>.rod, COD-style."""
+    from app.seed.reference_library import rod_entry_path
+
+    assert rod_entry_path(1000001) == "cif/1/00/00/1000001.rod"
+    assert rod_entry_path(1001133) == "cif/1/00/11/1001133.rod"
+
+
+def test_rod_is_registered_as_a_source_under_cc0():
+    from app.seed.reference_library import SOURCES, RamanOpenDatabase
+
+    assert SOURCES[RamanOpenDatabase.dataset_key] is RamanOpenDatabase
+    # Verified on the ROD site and in every file header — not an assumption.
+    assert RamanOpenDatabase.license_id == "CC0-1.0"
