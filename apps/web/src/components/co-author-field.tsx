@@ -1,13 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Users, X } from "lucide-react";
 
 import type { FollowUser } from "@ramanhub/api-client";
 import { listFollowers, listFollowing } from "@ramanhub/api-client";
-import { cn } from "@ramanhub/ui";
 import { Avatar, AvatarFallback, AvatarImage } from "@ramanhub/ui/avatar";
+import { Combobox } from "@ramanhub/ui/combobox";
 import { Label } from "@ramanhub/ui/label";
 
 /**
@@ -16,8 +16,11 @@ import { Label } from "@ramanhub/ui/label";
  * Suggestions come from your own follow graph rather than a global user
  * search. Two reasons: the person you're crediting is almost always someone
  * you already follow or who follows you, so a short relevant list beats a long
- * one; and it means crediting someone never requires an endpoint that lets
- * anyone enumerate the user table.
+ * one; and it keeps this field off the global people search, which answers a
+ * different question. That search exists now (`/v1/search/suggest`), but it is
+ * not a directory: it returns only profiles their owners chose to publish, it
+ * caps results, and it has no offset to page through. The constraint here was
+ * always "no enumerable user list", and it still holds.
  *
  * Free typing still works. Someone you haven't followed can be credited by
  * handle — the server validates it and names the handle back if it's wrong, so
@@ -46,9 +49,6 @@ export function CoAuthorField({
   viewerHandle: string | null;
 }) {
   const [draft, setDraft] = useState("");
-  const [highlight, setHighlight] = useState(0);
-  const [focused, setFocused] = useState(false);
-  const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const network = useQuery({
     queryKey: ["co-author-network", viewerHandle],
@@ -96,10 +96,7 @@ export function CoAuthorField({
     if (!clean) return;
     if (!chosen.has(clean.toLowerCase())) onChange([...handles, clean]);
     setDraft("");
-    setHighlight(0);
   };
-
-  const open = focused && suggestions.length > 0;
 
   return (
     <div className="space-y-1">
@@ -108,124 +105,68 @@ export function CoAuthorField({
         Co-authors
       </Label>
 
-      <div className="relative">
-        <div className="border-input bg-background focus-within:border-ring flex flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5">
-          {handles.map((handle) => (
-            <span
-              key={handle}
-              className="bg-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
-            >
-              @{handle}
-              <button
-                type="button"
-                aria-label={`Remove @${handle}`}
-                onClick={() => onChange(handles.filter((h) => h !== handle))}
-                className="text-muted-foreground hover:text-foreground cursor-pointer"
-              >
-                <X className="size-3" aria-hidden />
-              </button>
+      <Combobox
+        items={suggestions}
+        value={draft}
+        onValueChange={setDraft}
+        onSelect={(user) => add(user.handle)}
+        onSubmitRaw={(raw) => add(raw)}
+        listboxId="composer-coauthor-suggestions"
+        inputProps={{
+          id: "composer-coauthors",
+          placeholder: handles.length ? "" : "@handle or name",
+          className: "min-w-28 flex-1 bg-transparent py-0.5 text-sm focus:outline-none",
+          onKeyDownCapture: (e) => {
+            if (e.key === "Backspace" && !draft && handles.length) {
+              onChange(handles.slice(0, -1));
+            }
+            // A comma commits too, the way every tag field does.
+            if (e.key === ",") {
+              e.preventDefault();
+              add(draft);
+            }
+          },
+        }}
+        renderItem={(user) => (
+          <span className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-sm">
+            <Avatar className="size-6">
+              {user.avatar_url ? <AvatarImage src={user.avatar_url} alt="" /> : null}
+              <AvatarFallback className="text-[10px]">
+                {initials(user.display_name, user.handle)}
+              </AvatarFallback>
+            </Avatar>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{user.display_name ?? user.handle}</span>
+              <span className="text-muted-foreground block truncate text-xs">
+                @{user.handle}
+                {user.affiliation ? ` · ${user.affiliation}` : ""}
+              </span>
             </span>
-          ))}
-          <input
-            id="composer-coauthors"
-            value={draft}
-            role="combobox"
-            aria-expanded={open}
-            aria-autocomplete="list"
-            aria-controls="composer-coauthor-suggestions"
-            autoComplete="off"
-            onChange={(e) => {
-              setDraft(e.target.value);
-              setHighlight(0);
-            }}
-            onFocus={() => {
-              if (blurTimer.current) clearTimeout(blurTimer.current);
-              setFocused(true);
-            }}
-            onBlur={() => {
-              // Let a click on a suggestion land before the list unmounts.
-              blurTimer.current = setTimeout(() => {
-                setFocused(false);
-                if (draft.trim()) add(draft);
-              }, 120);
-            }}
-            onKeyDown={(e) => {
-              if (open && e.key === "ArrowDown") {
-                e.preventDefault();
-                setHighlight((h) => (h + 1) % suggestions.length);
-                return;
-              }
-              if (open && e.key === "ArrowUp") {
-                e.preventDefault();
-                setHighlight(
-                  (h) => (h - 1 + suggestions.length) % suggestions.length,
-                );
-                return;
-              }
-              // Enter must never submit the composer from here — it commits a
-              // name, whether that's a highlighted suggestion or free text.
-              if (e.key === "Enter" || e.key === ",") {
-                e.preventDefault();
-                const picked = open ? suggestions[highlight] : undefined;
-                add(picked?.handle ?? draft);
-                return;
-              }
-              if (e.key === "Escape") {
-                setFocused(false);
-                return;
-              }
-              if (e.key === "Backspace" && !draft && handles.length) {
-                onChange(handles.slice(0, -1));
-              }
-            }}
-            placeholder={handles.length ? "" : "@handle or name"}
-            className="min-w-28 flex-1 bg-transparent py-0.5 text-sm focus:outline-none"
-          />
-        </div>
-
-        {open && (
-          <ul
-            id="composer-coauthor-suggestions"
-            role="listbox"
-            className="border-border bg-popover absolute z-50 mt-1 w-full overflow-hidden rounded-md border shadow-lg"
-          >
-            {suggestions.map((user, i) => (
-              <li key={user.id} role="option" aria-selected={i === highlight}>
+          </span>
+        )}
+      >
+        {(input) => (
+          <div className="border-input bg-background focus-within:border-ring flex flex-wrap items-center gap-1.5 rounded-md border px-2 py-1.5">
+            {handles.map((handle) => (
+              <span
+                key={handle}
+                className="bg-muted inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs"
+              >
+                @{handle}
                 <button
                   type="button"
-                  // Mouse-down would blur the input and close the list before
-                  // the click registered.
-                  onMouseDown={(e) => e.preventDefault()}
-                  onMouseEnter={() => setHighlight(i)}
-                  onClick={() => add(user.handle)}
-                  className={cn(
-                    "flex w-full cursor-pointer items-center gap-2 px-2 py-1.5 text-left text-sm transition-colors duration-150 motion-reduce:transition-none",
-                    i === highlight ? "bg-accent" : "hover:bg-muted",
-                  )}
+                  aria-label={`Remove @${handle}`}
+                  onClick={() => onChange(handles.filter((h) => h !== handle))}
+                  className="text-muted-foreground hover:text-foreground cursor-pointer"
                 >
-                  <Avatar className="size-6">
-                    {user.avatar_url ? (
-                      <AvatarImage src={user.avatar_url} alt="" />
-                    ) : null}
-                    <AvatarFallback className="text-[10px]">
-                      {initials(user.display_name, user.handle)}
-                    </AvatarFallback>
-                  </Avatar>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate">
-                      {user.display_name ?? user.handle}
-                    </span>
-                    <span className="text-muted-foreground block truncate text-xs">
-                      @{user.handle}
-                      {user.affiliation ? ` · ${user.affiliation}` : ""}
-                    </span>
-                  </span>
+                  <X className="size-3" aria-hidden />
                 </button>
-              </li>
+              </span>
             ))}
-          </ul>
+            {input}
+          </div>
         )}
-      </div>
+      </Combobox>
 
       <p className="text-foreground/60 text-xs">
         {network.data && network.data.length > 0
