@@ -268,6 +268,7 @@ def engine():
     eng = create_engine(DB_URL)
     with eng.begin() as conn:
         conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
+        conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
     Base.metadata.create_all(eng)
     yield eng
     # Deliberately NOT dropping tables here (used to call
