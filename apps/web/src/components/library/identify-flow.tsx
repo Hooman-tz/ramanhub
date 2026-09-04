@@ -45,7 +45,13 @@ export function IdentifyFlow({
 }) {
   const router = useRouter();
   const pathname = usePathname();
-  const [task, setTask] = useState<"identify" | "browse">("identify");
+  // Arriving from the Lab means a sample is already in hand, so open on the
+  // flow that uses it. Arriving cold, the useful thing to see is the library
+  // itself — opening on an empty four-step form makes a stocked library look
+  // like a broken one.
+  const [task, setTask] = useState<"identify" | "browse">(
+    initialSpectrumId ? "identify" : "browse",
+  );
   const [spectrumId, setSpectrumId] = useState<string | null>(initialSpectrumId);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
@@ -421,8 +427,8 @@ function BrowsePanel() {
           icon={Library}
           message={
             query
-              ? "No references match that search."
-              : "The reference library is empty. Seed it with `make seed-library`, or publish your own standards into it."
+              ? `Nothing in the library matches “${query}”.`
+              : "The reference library has no entries yet. Publishing your own identified spectra into it is what makes it useful."
           }
         />
       ) : (
