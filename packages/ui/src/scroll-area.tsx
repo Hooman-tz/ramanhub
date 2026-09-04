@@ -17,7 +17,13 @@ export function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1"
+        // Radix renders its own wrapper div inside the viewport with
+        // `display: table`, which is shrink-to-fit and therefore grows past
+        // 100% to max-content. That silently defeats every `truncate` inside a
+        // fixed-width scroll area: long unbreakable text widens the rows and
+        // pushes sibling controls out beyond the clipped edge. Force it back to
+        // a normal block box so the viewport's width actually constrains.
+        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1 [&>div]:!block"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>

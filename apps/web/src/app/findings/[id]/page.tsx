@@ -14,6 +14,7 @@ import {
   isApiError,
   listFindingComments,
 } from "@ramanhub/api-client";
+import { Card } from "@ramanhub/ui/card";
 
 import { AbstractSummary } from "~/components/abstract-summary";
 import { BackLink } from "~/components/back-link";
@@ -21,11 +22,13 @@ import { DeleteRecordButton } from "~/components/delete-record-button";
 import { FindingActions } from "~/components/finding-actions";
 import { FindingComments } from "~/components/finding-comments";
 import { FindingEditor } from "~/components/finding-editor";
-import { FindingImageUploader } from "~/components/finding-image-uploader";
+import { ForkDataButton } from "~/components/fork-data-button";
 import { JournalCard } from "~/components/journal-card";
 import { Markdown } from "~/components/markdown";
+import { PostDataCard } from "~/components/post-data-card";
 import { PostGallery } from "~/components/post-gallery";
 import { PinButton } from "~/components/profile/pin-button";
+import { ProvenanceTrail } from "~/components/provenance-trail";
 import { serverApiOpts } from "~/lib/server-api";
 
 export const dynamic = "force-dynamic";
@@ -70,9 +73,16 @@ export default async function FindingPage({
     label: s.label ?? s.title ?? s.accession,
   }));
 
+  // Lineage is per-spectrum; the first member is the representative one. A
+  // post whose data was forked has the same origin for every member in
+  // practice, because forking copies a whole dataset at once.
+  const lineageAnchor = finding.spectra[0]?.spectrum_id;
+
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
       <BackLink />
+
+      {lineageAnchor && <ProvenanceTrail spectrumId={lineageAnchor} />}
 
       <div className="text-foreground/80 mt-4 flex flex-wrap items-center gap-2 text-xs">
         {finding.owner_handle ? (
@@ -146,43 +156,58 @@ export default async function FindingPage({
         </div>
       )}
 
-      <FindingActions
-        id={finding.id}
-        initialVotes={
-          initialVotes ?? {
-            count: finding.vote_count,
-            voted_by_me: false,
-          }
-        }
-        initialShares={initialShares}
-      />
-
-      {isOwner && finding.state === "published" && (
-        <div className="mt-3">
-          <PinButton kind="finding" id={finding.id} />
-        </div>
-      )}
-
-      {isOwner && finding.state !== "published" && (
-        <div className="mt-3">
-          <DeleteRecordButton
-            kind="finding"
-            id={finding.id}
-            redirectTo="/office"
-          />
-        </div>
-      )}
-
-      {(members.length > 0 || finding.images.length > 0) && (
-        <section className="mt-6">
+      {/* The figures are the payload, so they sit directly under the abstract
+          — before the vote/share bar rather than after it, which used to split
+          the write-up from the thing it is about. */}
+      {(members.length > 0 || finding.images.length > 0 || isOwner) && (
+        <section className="mt-6" aria-label="Figures and spectra">
           <PostGallery
             variant="full"
             findingId={finding.id}
             members={members}
             images={finding.images}
+            isOwner={isOwner}
+            title={finding.title}
           />
         </section>
       )}
+
+      {/* One action bar instead of three stacked rows: the primary action
+          ("take this data") first, social signals next, owner controls pushed
+          to the trailing edge where they don't compete with either. */}
+      <div className="border-border mt-5 flex flex-wrap items-center gap-2 border-t pt-4">
+        {members.length > 0 && (
+          <ForkDataButton source="finding" id={finding.id} size="sm" />
+        )}
+        <FindingActions
+          id={finding.id}
+          initialVotes={
+            initialVotes ?? {
+              count: finding.vote_count,
+              voted_by_me: false,
+            }
+          }
+          initialShares={initialShares}
+          className="mt-0"
+        />
+        {isOwner && (
+          <div className="ml-auto flex items-center gap-1">
+            {finding.state === "published" && (
+              <PinButton kind="finding" id={finding.id} />
+            )}
+            {finding.state !== "published" && (
+              <DeleteRecordButton
+                kind="finding"
+                id={finding.id}
+                redirectTo="/office"
+                variant="icon"
+              />
+            )}
+          </div>
+        )}
+      </div>
+
+      <PostDataCard finding={finding} />
 
       <JournalCard meta={finding.publication_metadata} />
 
@@ -192,24 +217,24 @@ export default async function FindingPage({
         isOwner={isOwner}
       />
 
-      {isOwner && (
-        <FindingImageUploader findingId={finding.id} images={finding.images} />
-      )}
-
       {finding.entries.length > 0 && (
-        <section className="mt-8 space-y-4">
-          <h2 className="text-base font-semibold tracking-tight">Thread</h2>
-          {finding.entries.map((entry) => (
-            <div
-              key={entry.id}
-              className="border-border rounded-lg border p-3.5 text-sm"
-            >
-              <div className="text-foreground/60 mb-1 text-xs tracking-wide uppercase">
-                {entry.kind}
+        <section className="mt-8" aria-labelledby="thread-heading">
+          <h2
+            id="thread-heading"
+            className="text-muted-foreground mb-2 text-xs font-semibold tracking-wider uppercase"
+          >
+            Thread
+          </h2>
+          <Card className="gap-0 divide-y p-0">
+            {finding.entries.map((entry) => (
+              <div key={entry.id} className="p-3.5 text-sm">
+                <div className="text-foreground/60 mb-1 text-xs tracking-wide uppercase">
+                  {entry.kind}
+                </div>
+                {entry.body_md && <Markdown>{entry.body_md}</Markdown>}
               </div>
-              {entry.body_md && <Markdown>{entry.body_md}</Markdown>}
-            </div>
-          ))}
+            ))}
+          </Card>
         </section>
       )}
 

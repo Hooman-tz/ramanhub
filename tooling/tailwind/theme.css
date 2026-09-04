@@ -40,11 +40,28 @@
   --sidebar-accent-foreground: #0d6b6e;
   --sidebar-border: #e3ddd7;
   --sidebar-ring: #0d6b6e;
+  /* Categorical project palette — eight visually distinct hues used to give
+     each project (analysis dataset) an identity in the Office and the Lab.
+     Deliberately NOT `--chart-*`: chart-1/2/3 are three shades of one teal, a
+     sequential ramp for plots, so they cannot separate categories. */
+  --project-teal: #0d6b6e;
+  --project-amber: #b45309;
+  --project-blue: #1e40af;
+  --project-violet: #6d28d9;
+  --project-rose: #be123c;
+  --project-green: #15803d;
+  --project-cyan: #0e7490;
+  --project-slate: #44403c;
   /* Per-section accent — drives the active nav pill + zone tint.
-     home = Office, discover = Feed, mylab = Lab, viewer = Spectrum. */
+     home = Office, discover = Feed, mylab = Lab, library = Library,
+     viewer = Spectrum. */
   --zone-home: #b45309;
   --zone-discover: oklch(0.5 0.13 250);
   --zone-mylab: #0d6b6e;
+  /* Violet reads as distinct from the Lab's teal at a glance, which matters:
+     the Library sits next to the Lab in the nav and the two are easy to
+     confuse otherwise. */
+  --zone-library: #6d28d9;
   --zone-viewer: #44403c;
   --radius: 0.75rem;
   --shadow-2xs: 0px 2px 10px 0px hsl(0 0% 0% / 0.03);
@@ -102,6 +119,17 @@
     --sidebar-accent-foreground: oklch(0.72 0.1 188);
     --sidebar-border: oklch(0.2941 0.0175 310.1142);
     --sidebar-ring: oklch(0.72 0.1 188);
+    /* Categorical project palette, retuned for the dark ground. Every slot is
+       re-declared: a token missing here would silently keep its light hex and
+       fail contrast. */
+    --project-teal: oklch(0.72 0.1 188);
+    --project-amber: oklch(0.72 0.13 55);
+    --project-blue: oklch(0.66 0.14 264);
+    --project-violet: oklch(0.68 0.16 300);
+    --project-rose: oklch(0.68 0.17 15);
+    --project-green: oklch(0.72 0.15 150);
+    --project-cyan: oklch(0.72 0.11 210);
+    --project-slate: oklch(0.72 0.02 310);
     --radius: 0.75rem;
     --shadow-2xs: 0px 2px 10px 0px hsl(0 0% 0% / 0.1);
     --shadow-xs: 0px 2px 10px 0px hsl(0 0% 0% / 0.1);
@@ -161,7 +189,16 @@
   --color-zone-home: var(--zone-home);
   --color-zone-discover: var(--zone-discover);
   --color-zone-mylab: var(--zone-mylab);
+  --color-zone-library: var(--zone-library);
   --color-zone-viewer: var(--zone-viewer);
+  --color-project-teal: var(--project-teal);
+  --color-project-amber: var(--project-amber);
+  --color-project-blue: var(--project-blue);
+  --color-project-violet: var(--project-violet);
+  --color-project-rose: var(--project-rose);
+  --color-project-green: var(--project-green);
+  --color-project-cyan: var(--project-cyan);
+  --color-project-slate: var(--project-slate);
 
   --font-sans: var(--font-sans-src), ui-sans-serif, system-ui, sans-serif;
   --font-mono: var(--font-mono-src), ui-monospace, "JetBrains Mono", monospace;

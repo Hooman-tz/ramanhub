@@ -1,13 +1,14 @@
 """Owner-scoped multi-spectrum datasets and reproducible analysis runs."""
 from __future__ import annotations
 
+from collections import Counter
 from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -18,15 +19,32 @@ from app.analysis.engine import (
     sign_run,
     software_versions,
 )
-from app.auth.deps import get_current_user
+from app.auth.deps import get_current_full_user, get_current_user, get_current_user_optional
 from app.db.session import get_db
+from app.models.accession import next_dataset_accession
 from app.models.analysis import AnalysisDataset, AnalysisDatasetSpectrum, AnalysisRun
-from app.models.enums import Modality
+from app.models.enums import DatasetState, FindingState, Modality, SpectrumState
+from app.models.finding import Finding, FindingCoAuthor, FindingSpectrum
+from app.models.license import License
 from app.models.spectrum import Spectrum
 from app.models.user import User
-from app.processing.state_machine import require_owner_or_public
+from app.processing.state_machine import (
+    effective_state,
+    require_dataset_readable,
+    require_owner_or_public,
+)
 
 router = APIRouter(prefix="/analysis", tags=["analysis"])
+
+# The single source of truth for a project's visual identity. Mirrored in
+# `apps/web/src/components/project-identity.ts`; the web side falls back to
+# slot 0 on an unknown value, so adding a slot here is backwards-compatible
+# and the two lists need not be deployed together.
+PROJECT_COLORS = ("teal", "amber", "blue", "violet", "rose", "green", "cyan", "slate")
+PROJECT_ICONS = ("folder", "flask", "atom", "microscope", "beaker", "dna", "layers", "hexagon")
+
+ProjectColor = Literal["teal", "amber", "blue", "violet", "rose", "green", "cyan", "slate"]
+ProjectIcon = Literal["folder", "flask", "atom", "microscope", "beaker", "dna", "layers", "hexagon"]
 
 
 class DatasetCreate(BaseModel):
@@ -35,11 +53,18 @@ class DatasetCreate(BaseModel):
     # Datasets behave like project folders: they may start empty and grow over
     # time. The >=2 requirement lives on the analysis run, not the container.
     spectrum_ids: list[UUID] = Field(default_factory=list, max_length=MAX_ANALYSIS_SPECTRA)
+    # Omit both and the server assigns the next slot in the palette, so a
+    # user who never opens the picker still gets projects that look different
+    # from one another.
+    color: ProjectColor | None = None
+    icon: ProjectIcon | None = None
 
 
 class DatasetUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=160)
     description: str | None = Field(default=None, max_length=2000)
+    color: ProjectColor | None = None
+    icon: ProjectIcon | None = None
 
 
 class DatasetSpectraAdd(BaseModel):
@@ -51,6 +76,12 @@ class DatasetSpectrumOut(BaseModel):
     title: str | None
     modality: str
     state: str
+    # Carried on the membership payload so a reader rendering a dataset (or a
+    # post's data card) gets accession + excitation without one extra request
+    # per member.
+    accession: str | None = None
+    excitation_wavelength_nm: float | None = None
+    parent_spectrum_id: UUID | None = None
 
 
 class DatasetOut(BaseModel):
@@ -61,6 +92,42 @@ class DatasetOut(BaseModel):
     spectra: list[DatasetSpectrumOut]
     created_at: datetime | None
     updated_at: datetime | None
+    # Owner-chosen presentation. Typed `str`, not the Literal, so a value
+    # written by a newer server never fails serialisation on an older one.
+    color: str = PROJECT_COLORS[0]
+    icon: str = PROJECT_ICONS[0]
+    # Publishing + lineage. `accession` is NULL until the dataset is published.
+    accession: str | None = None
+    state: str = DatasetState.draft.value
+    published_at: datetime | None = None
+    license_id: str | None = None
+    doi: str | None = None
+    parent_dataset_id: UUID | None = None
+    owner_id: UUID | None = None
+    owner_handle: str | None = None
+    is_owner: bool = False
+
+
+class DatasetContributorOut(BaseModel):
+    """One person's credited work inside a project.
+
+    Derived, not stored: there is no dataset membership table. A contributor is
+    anyone who owns a spectrum in the folder, or who authored / co-authored a
+    Finding that points at the folder or at one of its spectra.
+    """
+
+    user_id: UUID
+    handle: str | None
+    display_name: str | None
+    avatar_url: str | None
+    affiliation: str | None
+    spectra: int
+    findings: int
+    is_owner: bool
+
+
+class DatasetPublish(BaseModel):
+    license_id: str
 
 
 class RunCreate(BaseModel):
@@ -103,8 +170,38 @@ def _dataset_spectra(dataset: AnalysisDataset, db: Session) -> list[Spectrum]:
     )
 
 
-def _dataset_payload(dataset: AnalysisDataset, db: Session) -> DatasetOut:
-    spectra = _dataset_spectra(dataset, db)
+def _visible_to(spectrum: Spectrum, viewer: User | None) -> bool:
+    """Whether `viewer` is allowed to know this spectrum exists.
+
+    The same rule `require_owner_or_public` enforces per row, expressed as a
+    predicate so list-shaped endpoints can *filter* where a single-row read
+    would *raise*. Published (including a lapsed embargo) is visible to
+    everyone; a draft only to its owner.
+    """
+    if effective_state(spectrum) == SpectrumState.published.value:
+        return True
+    return viewer is not None and spectrum.owner_id == viewer.id
+
+
+def _visible_spectra(spectra: list[Spectrum], viewer: User | None) -> list[Spectrum]:
+    """Filter dataset members down to what `viewer` may see.
+
+    A published dataset is supposed to contain only published spectra — the
+    publish endpoint enforces exactly that. But membership can be edited after
+    publication, and rows predating that guard still exist, so every read path
+    filters as well rather than trusting the invariant. Without this, a folder
+    published today and added to tomorrow would hand a stranger the titles and
+    accessions of its owner's drafts.
+    """
+    return [spectrum for spectrum in spectra if _visible_to(spectrum, viewer)]
+
+
+def _dataset_payload(
+    dataset: AnalysisDataset, db: Session, viewer: User | None = None
+) -> DatasetOut:
+    spectra = _visible_spectra(_dataset_spectra(dataset, db), viewer)
+    owner = db.get(User, dataset.owner_id)
+    state = dataset.state.value if isinstance(dataset.state, DatasetState) else dataset.state
     return DatasetOut(
         id=dataset.id,
         name=dataset.name,
@@ -115,13 +212,130 @@ def _dataset_payload(dataset: AnalysisDataset, db: Session) -> DatasetOut:
                 id=spectrum.id,
                 title=spectrum.title,
                 modality=spectrum.modality.value,
-                state=spectrum.state.value,
+                # Read-time evaluation, so an embargo that has lapsed reads as
+                # published here exactly as it does on the spectrum itself.
+                state=effective_state(spectrum),
+                accession=spectrum.accession,
+                excitation_wavelength_nm=(
+                    float(spectrum.excitation_wavelength_nm)
+                    if spectrum.excitation_wavelength_nm is not None
+                    else None
+                ),
+                parent_spectrum_id=spectrum.parent_spectrum_id,
             )
             for spectrum in spectra
         ],
         created_at=dataset.created_at,
         updated_at=dataset.updated_at,
+        color=dataset.color,
+        icon=dataset.icon,
+        accession=dataset.accession,
+        state=state,
+        published_at=dataset.published_at,
+        license_id=dataset.license_id,
+        doi=dataset.doi,
+        parent_dataset_id=dataset.parent_dataset_id,
+        owner_id=dataset.owner_id,
+        owner_handle=owner.profile_handle if owner else None,
+        is_owner=viewer is not None and dataset.owner_id == viewer.id,
     )
+
+
+def _unique_dataset_name(base: str, owner_id: UUID, db: Session) -> str:
+    """Find a free name under `uq_analysis_dataset_owner_name`.
+
+    Forking the same dataset twice is a normal thing to do — you tried one
+    pipeline, you want to try another. Returning 409 "you already have a
+    folder with that name" would make the second fork the user's problem to
+    solve, so suffix instead: "Name (fork)", "Name (fork 2)", ...
+    """
+    base = base.strip()[:140] or "Dataset"
+    taken = {
+        name
+        for (name,) in db.query(AnalysisDataset.name)
+        .filter(AnalysisDataset.owner_id == owner_id)
+        .all()
+    }
+    candidate = f"{base} (fork)"
+    suffix = 2
+    # Bounded: the unique constraint is still the real guard, this loop just
+    # avoids handing the user an avoidable error.
+    while candidate in taken and suffix < 1000:
+        candidate = f"{base} (fork {suffix})"
+        suffix += 1
+    return candidate[:160]
+
+
+def fork_spectra_into_dataset(
+    spectra: list[Spectrum],
+    user: User,
+    db: Session,
+    name: str,
+    parent_dataset_id: UUID | None = None,
+) -> AnalysisDataset:
+    """Fork every spectrum in `spectra` and bundle the copies into a new draft
+    dataset owned by `user`. Flushed, NOT committed — the caller commits.
+
+    This is the single "fork it to my lab" primitive behind both
+    `POST /analysis/datasets/{id}/fork` and
+    `POST /v1/findings/{id}/fork-data`: one call gets you a working folder
+    with your own copies of the data, ledgers replayed, ready to process.
+
+    Callers MUST have already gated each spectrum for readability.
+    """
+    if not spectra:
+        raise HTTPException(status_code=422, detail="There is no data here to fork.")
+    if len(spectra) > MAX_ANALYSIS_SPECTRA:
+        raise HTTPException(
+            status_code=422,
+            detail=f"A dataset can hold at most {MAX_ANALYSIS_SPECTRA} spectra.",
+        )
+    _check_single_raman_modality(spectra)
+
+    # Lazily imported to keep the router import graph acyclic-by-construction,
+    # the same way spectra.py reaches into ledgers.py.
+    from app.routers.spectra import fork_spectrum_record
+
+    # A fork gets the next free slot rather than inheriting the source's
+    # colour: it lands in *your* lab next to your other folders, and two
+    # identically-marked projects side by side is the thing the palette exists
+    # to prevent.
+    fork_color, fork_icon = _next_identity(user.id, db)
+    dataset = AnalysisDataset(
+        owner_id=user.id,
+        modality=spectra[0].modality,
+        name=_unique_dataset_name(name, user.id, db),
+        description=None,
+        state=DatasetState.draft,
+        color=fork_color,
+        icon=fork_icon,
+        parent_dataset_id=parent_dataset_id,
+    )
+    db.add(dataset)
+    db.flush()
+
+    for position, source in enumerate(spectra):
+        fork = fork_spectrum_record(source, user, db)
+        db.add(
+            AnalysisDatasetSpectrum(
+                dataset_id=dataset.id, spectrum_id=fork.id, position=position
+            )
+        )
+    db.flush()
+    return dataset
+
+
+def _next_identity(owner_id: UUID, db: Session) -> tuple[str, str]:
+    """The next colour/symbol slot for `owner_id`, rotating through the palette.
+
+    Keyed on how many projects the owner already has, so the first eight are
+    mutually distinct without the user touching the picker. It is a default,
+    not a constraint: nothing stops two projects sharing a colour once you go
+    past eight or edit one by hand.
+    """
+    count = db.query(func.count(AnalysisDataset.id)).filter(AnalysisDataset.owner_id == owner_id).scalar() or 0
+    slot = count % len(PROJECT_COLORS)
+    return PROJECT_COLORS[slot], PROJECT_ICONS[slot]
 
 
 def _dataset_or_404(dataset_id: UUID, user: User, db: Session) -> AnalysisDataset:
@@ -174,7 +388,7 @@ def list_datasets(db: Session = Depends(get_db), user: User = Depends(get_curren
         .order_by(AnalysisDataset.updated_at.desc())
         .all()
     )
-    return [_dataset_payload(dataset, db) for dataset in datasets]
+    return [_dataset_payload(dataset, db, user) for dataset in datasets]
 
 
 @router.post("/datasets", response_model=DatasetOut, status_code=status.HTTP_201_CREATED)
@@ -195,17 +409,20 @@ def create_dataset(
     if existing is not None:
         existing_ids = [spectrum.id for spectrum in _dataset_spectra(existing, db)]
         if existing_ids == unique_ids:
-            return _dataset_payload(existing, db)
+            return _dataset_payload(existing, db, user)
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail="A dataset with this name already exists. Rename this selection or reuse the existing dataset.",
         )
 
+    default_color, default_icon = _next_identity(user.id, db)
     dataset = AnalysisDataset(
         owner_id=user.id,
         modality=dataset_modality,
         name=body.name.strip(),
         description=body.description.strip() if body.description else None,
+        color=body.color or default_color,
+        icon=body.icon or default_icon,
     )
     db.add(dataset)
     db.flush()
@@ -224,14 +441,209 @@ def create_dataset(
             detail="A dataset with this name was created concurrently. Choose another name and try again.",
         ) from exc
     db.refresh(dataset)
-    return _dataset_payload(dataset, db)
+    return _dataset_payload(dataset, db, user)
 
 
 @router.get("/datasets/{dataset_id}", response_model=DatasetOut)
 def get_dataset(
-    dataset_id: UUID, db: Session = Depends(get_db), user: User = Depends(get_current_user)
+    dataset_id: UUID,
+    db: Session = Depends(get_db),
+    # The one dataset route a non-owner can reach. Published datasets are the
+    # citable destination a post links to, so this read has to work for a
+    # logged-out reader; every *mutating* dataset route below stays on
+    # `_dataset_or_404`.
+    user: User | None = Depends(get_current_user_optional),
 ) -> DatasetOut:
-    return _dataset_payload(_dataset_or_404(dataset_id, user, db), db)
+    dataset = db.get(AnalysisDataset, dataset_id)
+    require_dataset_readable(dataset, user)
+    return _dataset_payload(dataset, db, user)
+
+
+@router.get("/datasets/{dataset_id}/contributors", response_model=list[DatasetContributorOut])
+def list_dataset_contributors(
+    dataset_id: UUID,
+    db: Session = Depends(get_db),
+    # Same reach as `get_dataset`: a published dataset is a citable public
+    # destination, so its credit list has to render for a logged-out reader.
+    user: User | None = Depends(get_current_user_optional),
+) -> list[DatasetContributorOut]:
+    """Who contributed to this project, and how much.
+
+    There is no dataset membership table and this endpoint deliberately does
+    not add one. A project already accumulates other people's work through two
+    existing routes, and both are read back here:
+
+      * `POST /datasets/{id}/spectra` gates each member through
+        `require_owner_or_public`, so a folder may hold anyone's *published*
+        spectra alongside the owner's own drafts.
+      * a Finding points at a project (`findings.dataset_id`) or at one of its
+        spectra (`finding_spectra`), and carries an ordered co-author list.
+
+    Visibility is evaluated per requester, not per dataset owner: an item
+    counts only if it is published or the requester owns it. Counting someone
+    else's draft would leak its existence through an integer, which is the
+    same disclosure `require_owner_or_public` exists to prevent.
+    """
+    dataset = db.get(AnalysisDataset, dataset_id)
+    require_dataset_readable(dataset, user)
+    viewer_id = user.id if user is not None else None
+
+    members = (
+        db.query(Spectrum)
+        .join(AnalysisDatasetSpectrum, AnalysisDatasetSpectrum.spectrum_id == Spectrum.id)
+        .filter(AnalysisDatasetSpectrum.dataset_id == dataset.id)
+        .all()
+    )
+    visible_spectra = _visible_spectra(members, user)
+
+    # A Finding reaches the project either by pointing at the folder or by
+    # citing one of its (visible) spectra.
+    reaches = [Finding.dataset_id == dataset.id]
+    member_ids = [spectrum.id for spectrum in visible_spectra]
+    if member_ids:
+        reaches.append(FindingSpectrum.spectrum_id.in_(member_ids))
+    findings = (
+        db.query(Finding)
+        .outerjoin(FindingSpectrum, FindingSpectrum.finding_id == Finding.id)
+        .filter(or_(*reaches))
+        .distinct()
+        .all()
+    )
+    visible_findings = [
+        finding
+        for finding in findings
+        if finding.state == FindingState.published
+        or (viewer_id is not None and finding.owner_id == viewer_id)
+    ]
+
+    spectra_counts: Counter[UUID] = Counter(spectrum.owner_id for spectrum in visible_spectra)
+
+    # Credit the author and every co-author once each. The pair set is what
+    # keeps an owner who also appears in their own co-author list from being
+    # counted twice for the same Finding.
+    credited: set[tuple[UUID, UUID]] = {
+        (finding.id, finding.owner_id) for finding in visible_findings
+    }
+    finding_ids = [finding.id for finding in visible_findings]
+    if finding_ids:
+        for row in (
+            db.query(FindingCoAuthor).filter(FindingCoAuthor.finding_id.in_(finding_ids)).all()
+        ):
+            credited.add((row.finding_id, row.user_id))
+    finding_counts: Counter[UUID] = Counter(user_id for _, user_id in credited)
+
+    # The owner always appears, even on an empty folder — a project with no
+    # spectra yet still belongs to someone.
+    user_ids = set(spectra_counts) | set(finding_counts) | {dataset.owner_id}
+    people = {
+        row.id: row for row in db.query(User).filter(User.id.in_(user_ids)).all()
+    }
+
+    out = [
+        DatasetContributorOut(
+            user_id=user_id,
+            handle=getattr(people.get(user_id), "profile_handle", None),
+            display_name=getattr(people.get(user_id), "display_name", None),
+            avatar_url=getattr(people.get(user_id), "avatar_url", None),
+            affiliation=getattr(people.get(user_id), "affiliation", None),
+            spectra=spectra_counts.get(user_id, 0),
+            findings=finding_counts.get(user_id, 0),
+            is_owner=user_id == dataset.owner_id,
+        )
+        for user_id in user_ids
+    ]
+    # Most work first; the owner breaks ties ahead of equally-credited guests,
+    # then handle so the order is stable across requests.
+    out.sort(key=lambda c: (-(c.spectra + c.findings), not c.is_owner, c.handle or ""))
+    return out
+
+
+@router.post("/datasets/{dataset_id}/publish", response_model=DatasetOut)
+def publish_dataset(
+    dataset_id: UUID,
+    body: DatasetPublish,
+    db: Session = Depends(get_db),
+    # Publishing is the act that puts a citable identifier into the world, so
+    # it needs a full account — same bar as publishing a finding.
+    user: User = Depends(get_current_full_user),
+) -> DatasetOut:
+    """Draft -> published: mint an `RH-D-*` accession and open the dataset up.
+
+    Refuses a dataset whose members aren't all readable by the public. A
+    published dataset whose spectra 404 for everyone but the owner is worse
+    than no dataset at all — it advertises data it can't hand over.
+    """
+    dataset = _dataset_or_404(dataset_id, user, db)
+    if dataset.state != DatasetState.draft:
+        raise HTTPException(status_code=400, detail="Only draft datasets can be published.")
+
+    license_row = db.get(License, body.license_id)
+    if license_row is None:
+        raise HTTPException(status_code=422, detail="Unknown license.")
+
+    spectra = _dataset_spectra(dataset, db)
+    if not spectra:
+        raise HTTPException(
+            status_code=422, detail="Add at least one spectrum before publishing this dataset."
+        )
+    unpublished = [
+        spectrum.accession or str(spectrum.id)
+        for spectrum in spectra
+        if effective_state(spectrum) != SpectrumState.published.value
+    ]
+    if unpublished:
+        raise HTTPException(
+            status_code=422,
+            detail={
+                "message": "Every spectrum in the dataset must be published first.",
+                "unpublished": unpublished,
+            },
+        )
+
+    dataset.accession = next_dataset_accession(db)
+    dataset.state = DatasetState.published
+    dataset.published_at = datetime.now(UTC)
+    dataset.license_id = license_row.id
+    db.add(dataset)
+    db.commit()
+    db.refresh(dataset)
+    return _dataset_payload(dataset, db, user)
+
+
+@router.post(
+    "/datasets/{dataset_id}/fork",
+    response_model=DatasetOut,
+    status_code=status.HTTP_201_CREATED,
+)
+def fork_dataset(
+    dataset_id: UUID,
+    db: Session = Depends(get_db),
+    # Guests may fork, same as `POST /spectra/{id}/fork` — trying the tools on
+    # public data is the try-before-login loop.
+    user: User = Depends(get_current_user),
+) -> DatasetOut:
+    """Copy a readable dataset and every spectrum in it into the caller's own
+    lab as a new draft folder of forks."""
+    dataset = db.get(AnalysisDataset, dataset_id)
+    require_dataset_readable(dataset, user)
+
+    # Gate every member, not just the folder. `fork_spectra_into_dataset`
+    # states that its callers must have already done this, and a fork *copies
+    # the data*, not merely its name — so a draft slipping through here would
+    # hand a stranger the owner's unpublished spectrum outright, which is a
+    # good deal worse than leaking its title.
+    spectra = _visible_spectra(_dataset_spectra(dataset, db), user)
+    if not spectra:
+        raise HTTPException(
+            status_code=422, detail="This dataset has no spectra you can fork."
+        )
+
+    fork = fork_spectra_into_dataset(
+        spectra, user, db, name=dataset.name, parent_dataset_id=dataset.id
+    )
+    db.commit()
+    db.refresh(fork)
+    return _dataset_payload(fork, db, user)
 
 
 @router.patch("/datasets/{dataset_id}", response_model=DatasetOut)
@@ -269,6 +681,13 @@ def update_dataset(
         cleaned = body.description.strip() if body.description else None
         dataset.description = cleaned or None
 
+    # Explicit null is not "reset to default" here — the columns are NOT NULL
+    # and a project always has an identity, so only a real value applies.
+    if body.color is not None:
+        dataset.color = body.color
+    if body.icon is not None:
+        dataset.icon = body.icon
+
     try:
         db.commit()
     except IntegrityError as exc:
@@ -278,7 +697,7 @@ def update_dataset(
             detail="A dataset with this name already exists.",
         ) from exc
     db.refresh(dataset)
-    return _dataset_payload(dataset, db)
+    return _dataset_payload(dataset, db, user)
 
 
 @router.delete("/datasets/{dataset_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -319,7 +738,7 @@ def add_dataset_spectra(
     present = {row.spectrum_id for row in existing_rows}
     new_ids = [spectrum_id for spectrum_id in incoming if spectrum_id not in present]
     if not new_ids:
-        return _dataset_payload(dataset, db)
+        return _dataset_payload(dataset, db, user)
 
     if len(present) + len(new_ids) > MAX_ANALYSIS_SPECTRA:
         raise HTTPException(
@@ -334,6 +753,27 @@ def add_dataset_spectra(
             detail="Every spectrum in a dataset must share its modality.",
         )
     _check_single_raman_modality(spectra)
+
+    # Publishing refuses a folder holding unpublished data, on the grounds
+    # that "a published dataset whose spectra 404 for everyone but the owner
+    # is worse than no dataset at all". Adding after the fact has to honour
+    # the same rule, or the invariant only holds until the next edit.
+    if dataset.state != DatasetState.draft:
+        unpublished = [
+            spectrum.accession or str(spectrum.id)
+            for spectrum in spectra
+            if effective_state(spectrum) != SpectrumState.published.value
+        ]
+        if unpublished:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "message": (
+                        "This dataset is published; only published spectra can be added to it."
+                    ),
+                    "unpublished": unpublished,
+                },
+            )
 
     next_position = (
         db.query(func.coalesce(func.max(AnalysisDatasetSpectrum.position), -1))
@@ -350,7 +790,7 @@ def add_dataset_spectra(
     )
     db.commit()
     db.refresh(dataset)
-    return _dataset_payload(dataset, db)
+    return _dataset_payload(dataset, db, user)
 
 
 @router.delete(

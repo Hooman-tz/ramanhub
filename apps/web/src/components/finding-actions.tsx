@@ -17,10 +17,13 @@ export function FindingActions({
   id,
   initialVotes,
   initialShares,
+  className,
 }: {
   id: string;
   initialVotes?: FindingVotes;
   initialShares?: FindingShares;
+  /** Overrides the default top margin so the post page's action bar owns spacing. */
+  className?: string;
 }) {
   const qc = useQueryClient();
 
@@ -91,7 +94,12 @@ export function FindingActions({
     "focus-visible:ring-ring/50 border-border inline-flex min-h-9 cursor-pointer items-center gap-1.5 rounded-full border px-3.5 py-1.5 transition-colors focus-visible:ring-[3px] focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none";
 
   return (
-    <div className="mt-5 flex flex-wrap items-center gap-2 text-sm">
+    <div
+      className={cn(
+        "mt-5 flex flex-wrap items-center gap-2 text-sm",
+        className,
+      )}
+    >
       <button
         type="button"
         disabled={!signedIn || voteMutation.isPending}

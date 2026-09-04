@@ -40,7 +40,47 @@ def normalize_header(header_text: str) -> str:
     return text.strip()
 
 
+# A line is "data" when nearly every whitespace/comma/semicolon/tab-separated
+# field on it parses as a number. `_DATA_RUN_LINES` consecutive such lines mark
+# where the numeric body begins.
+_NUMBER_RE = re.compile(r"^[+-]?(?:\d+\.?\d*|\.\d+)(?:[eEdD][+-]?\d+)?$")
+_FIELD_SPLIT_RE = re.compile(r"[\s,;|]+")
+_DATA_RUN_LINES = 3
+
+
+def _is_data_line(line: str) -> bool:
+    fields = [field for field in _FIELD_SPLIT_RE.split(line.strip()) if field]
+    if len(fields) < 2:
+        return False
+    return all(_NUMBER_RE.match(field) for field in fields)
+
+
+def header_portion(header_text: str) -> str:
+    """The preamble of a text export, with the numeric body cut off.
+
+    The whole point of `VendorParseCache` is that a header *template* is
+    parsed once and reused by every later file sharing it. Hashing the data
+    rows as well defeats that completely: two runs on the same instrument
+    differ in every intensity, so the key never repeats and every upload pays
+    for a fresh LLM parse. Cutting at the first sustained run of numeric lines
+    makes the key describe the format, which is what it always claimed to be.
+    """
+    lines = header_text.splitlines()
+    run = 0
+    for index, line in enumerate(lines):
+        if not line.strip():
+            continue
+        if _is_data_line(line):
+            run += 1
+            if run >= _DATA_RUN_LINES:
+                return "\n".join(lines[: index - run + 1])
+        else:
+            run = 0
+    return header_text
+
+
 def compute_header_hash(header_text: str) -> str:
-    """Return the sha256 hex digest of the normalized header text."""
-    normalized = normalize_header(header_text)
+    """Return the sha256 hex digest of the normalized header *template* — the
+    preamble only, with run-specific dates blanked out."""
+    normalized = normalize_header(header_portion(header_text))
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()

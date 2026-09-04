@@ -24,7 +24,7 @@ from app.processing.cache import get_or_compute
 from app.processing.ledger import compute_ledger_hash
 from app.raman_contract import RAMAN_CANONICALIZATION_VERSION, canonicalize_raman_arrays
 from app.schemas.ledger import Ledger, LedgerStep
-from app.spectra_io import load_raw_spectrum, parse_two_column_raman
+from app.spectra_io import load_spectrum_trace, parse_two_column_raman
 from app.storage.s3_client import download_bytes
 
 ANALYSIS_CONTRACT_VERSION = "analysis-1"
@@ -88,11 +88,10 @@ def load_spectrum_arrays(spectrum: Spectrum, db: Session) -> tuple[np.ndarray, n
                 raw_file_id=ledger_row.raw_file_id,
                 steps=[LedgerStep.model_validate(step) for step in ledger_row.steps],
             )
-            return get_or_compute(spectrum.raw_file_id, ledger, db)
-    raw_file = db.get(RawFile, spectrum.raw_file_id)
-    if raw_file is None:
+            return get_or_compute(spectrum.raw_file_id, ledger, db, spectrum=spectrum)
+    if db.get(RawFile, spectrum.raw_file_id) is None:
         raise ValueError("Analysis input no longer has a raw file.")
-    return load_raw_spectrum(raw_file)
+    return load_spectrum_trace(spectrum, db)
 
 
 def load_manifest_arrays(entry: dict[str, str | None], db: Session) -> tuple[np.ndarray, np.ndarray]:

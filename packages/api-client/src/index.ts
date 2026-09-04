@@ -376,6 +376,15 @@ export interface Finding {
   /** Optional link to the code/analysis repo behind the write-up (e.g. a GitHub repo). Not verified. */
   repo_url: string | null;
   publication_metadata: PublicationMeta | null;
+  /**
+   * The dataset this write-up is about, if it names one. Denormalised onto
+   * the response so a post page can render its data card without a second
+   * request. All four are `null` when the post attaches loose spectra.
+   */
+  dataset_id: string | null;
+  dataset_accession: string | null;
+  dataset_name: string | null;
+  dataset_state: "draft" | "published" | null;
   tags: string[] | null;
   published_at: string | null;
   created_at: string;
@@ -431,6 +440,11 @@ export function updateFinding(
     repo_url?: string;
     /** Replaces the credit list wholesale; omit to leave it alone, `[]` clears it. */
     co_author_handles?: string[];
+    /**
+     * The dataset this post is about. Must be one the caller owns (404
+     * otherwise). Explicit `null` unlinks; omitting the key leaves it alone.
+     */
+    dataset_id?: string | null;
   },
   opts?: ApiClientOptions,
 ): Promise<Finding> {
@@ -439,6 +453,24 @@ export function updateFinding(
     method: "PATCH",
     body,
   });
+}
+
+/**
+ * `POST /v1/findings/{id}/fork-data` — 201. Fork every spectrum attached to
+ * this post into a new draft dataset in the caller's lab, and return it.
+ *
+ * The single call behind "Fork to my lab". Works whether or not the post names
+ * a `dataset_id`, so posts that attach loose spectra are still forkable. 422
+ * when the post has no attached spectra.
+ */
+export function forkFindingData(
+  findingId: string,
+  opts?: ApiClientOptions,
+): Promise<Dataset> {
+  return apiRequest<Dataset>(
+    `/v1/findings/${encodeURIComponent(findingId)}/fork-data`,
+    { ...opts, method: "POST" },
+  );
 }
 
 /**
@@ -455,11 +487,14 @@ export function linkFindingDoi(
   doi: string,
   opts?: ApiClientOptions,
 ): Promise<Finding> {
-  return apiRequest<Finding>(`/v1/findings/${encodeURIComponent(id)}/link-doi`, {
-    ...opts,
-    method: "POST",
-    body: { doi },
-  });
+  return apiRequest<Finding>(
+    `/v1/findings/${encodeURIComponent(id)}/link-doi`,
+    {
+      ...opts,
+      method: "POST",
+      body: { doi },
+    },
+  );
 }
 
 /**
@@ -910,6 +945,239 @@ export function getMyLibrary(
   });
 }
 
+/* --- public reference library: identify a spectrum ------------------ */
+
+/*
+ * Not the same thing as the section above. `/library/mine` is *your* spectra,
+ * in every state. `/v1/library/*` is the shared corpus of identified compounds
+ * that anyone can match against — bundled reference data plus vetted user
+ * contributions.
+ */
+
+export interface ReferenceEntry {
+  id: string;
+  spectrum_id: string;
+  compound_name: string;
+  chemical_formula: string | null;
+  cas_number: string | null;
+  mineral_name: string | null;
+  source: string;
+  source_id: string | null;
+  source_dataset: string | null;
+  provenance_url: string | null;
+  /**
+   * `curated` is bundled or staff-vetted reference data. `community` is
+   * user-contributed: auto-approved and matchable at once, but ranked below a
+   * curated entry at equal similarity. Badge it — a user should always be able
+   * to see which tier an identification came from.
+   */
+  trust_tier: "curated" | "community";
+  curation_status: "approved" | "demoted" | "removed";
+  flagged_for_review: boolean;
+  license_id: string | null;
+  title: string | null;
+  excitation_wavelength_nm: number | null;
+  primary_peak_cm1: number | null;
+}
+
+export interface ReferencePeak {
+  cm1: number;
+  height: number;
+  rel_height: number;
+  prominence: number;
+  fwhm: number | null;
+  snr: number | null;
+}
+
+export interface ReferenceDetail extends ReferenceEntry {
+  peaks: ReferencePeak[];
+  wavenumber_min: number | null;
+  wavenumber_max: number | null;
+}
+
+export interface ReferenceSearchParams {
+  q?: string;
+  formula?: string;
+  cas_number?: string;
+  source?: string;
+  trust_tier?: "curated" | "community";
+  limit?: number;
+  offset?: number;
+}
+
+/** `GET /v1/library/references` — browse the reference corpus by identity. */
+export function searchReferences(
+  params: ReferenceSearchParams = {},
+  opts?: ApiClientOptions,
+): Promise<ReferenceEntry[]> {
+  return apiRequest<ReferenceEntry[]>("/v1/library/references", {
+    ...opts,
+    query: { ...params },
+  });
+}
+
+/** `GET /v1/library/references/{id}` — one entry plus its detected bands. */
+export function getReference(
+  referenceId: string,
+  opts?: ApiClientOptions,
+): Promise<ReferenceDetail> {
+  return apiRequest<ReferenceDetail>(
+    `/v1/library/references/${encodeURIComponent(referenceId)}`,
+    { ...opts },
+  );
+}
+
+export interface LibraryMatch {
+  reference: ReferenceEntry;
+  /** Cosine over the shared 512-point feature grid, 0..1. */
+  similarity: number;
+  overlap_fraction: number;
+  matched_peak_count: number;
+  unmatched_query_peaks_cm1: number[];
+}
+
+export interface LibraryMatchResult {
+  contract_version: string;
+  peak_index_version: string;
+  feature_version: string;
+  query_spectrum_id: string;
+  query_peaks: ReferencePeak[];
+  primary_peak_cm1: number | null;
+  peak_to_background: number | null;
+  /**
+   * Which rung of the prefilter answered. `full` means the query shared no
+   * band with anything indexed and the whole corpus was scanned — worth
+   * surfacing, since it is both slow and a hint the match is weak.
+   */
+  prefilter_stage: "narrow" | "widened" | "full";
+  candidates_screened: number;
+  candidates_scored: number;
+  matches: LibraryMatch[];
+  mixture_suspected: boolean;
+  mixture_reason: string | null;
+  suggested_component_reference_ids: string[];
+}
+
+export interface LibraryMatchBody {
+  spectrum_id: string;
+  top_k?: number;
+  trust_tiers?: ("curated" | "community")[];
+  /** Advisory only: the server recomputes peaks and never trusts these. */
+  client_peaks_cm1?: number[];
+}
+
+/** `POST /v1/library/match` — rank the reference corpus against a spectrum. */
+export function matchAgainstLibrary(
+  body: LibraryMatchBody,
+  opts?: ApiClientOptions,
+): Promise<LibraryMatchResult> {
+  return apiRequest<LibraryMatchResult>("/v1/library/match", {
+    ...opts,
+    method: "POST",
+    body,
+  });
+}
+
+export interface UnmixComponent {
+  reference: ReferenceEntry;
+  /**
+   * Fraction of *spectral contribution*, not concentration. Raman cross
+   * sections differ by orders of magnitude between compounds, so label this
+   * "spectral weight" in the UI and never "how much of the sample is X".
+   */
+  weight: number;
+  raw_coefficient: number;
+}
+
+export interface LibraryUnmixResult {
+  contract_version: string;
+  query_spectrum_id: string;
+  baseline_applied: string;
+  grid_wavenumbers: number[];
+  observed: number[];
+  fitted: number[];
+  residual: number[];
+  components: UnmixComponent[];
+  offset: number;
+  slope: number;
+  r_squared: number;
+  residual_norm_fraction: number;
+  /** High values mean the components are near-duplicates and the split
+   *  between them is arbitrary — show the warnings, do not bury them. */
+  condition_number: number;
+  collinear_warnings: string[];
+}
+
+export interface LibraryUnmixBody {
+  spectrum_id: string;
+  /** Two to six references; the server rejects more. */
+  reference_ids: string[];
+  grid_points?: number;
+  baseline?: "als" | "none";
+}
+
+/** `POST /v1/library/unmix` — fit a spectrum as a mixture of chosen references. */
+export function unmixAgainstLibrary(
+  body: LibraryUnmixBody,
+  opts?: ApiClientOptions,
+): Promise<LibraryUnmixResult> {
+  return apiRequest<LibraryUnmixResult>("/v1/library/unmix", {
+    ...opts,
+    method: "POST",
+    body,
+  });
+}
+
+export interface ContributeReferenceBody {
+  spectrum_id: string;
+  compound_name: string;
+  chemical_formula?: string;
+  cas_number?: string;
+  mineral_name?: string;
+  provenance_url?: string;
+  notes?: string;
+}
+
+/** `POST /v1/library/references` — promote your published spectrum to a reference. */
+export function contributeReference(
+  body: ContributeReferenceBody,
+  opts?: ApiClientOptions,
+): Promise<ReferenceEntry> {
+  return apiRequest<ReferenceEntry>("/v1/library/references", {
+    ...opts,
+    method: "POST",
+    body,
+  });
+}
+
+/** `POST /v1/library/references/{id}/report` — flag a mislabelled reference. */
+export function reportReference(
+  referenceId: string,
+  body: { reason: string },
+  opts?: ApiClientOptions,
+): Promise<void> {
+  return apiRequest<void>(
+    `/v1/library/references/${encodeURIComponent(referenceId)}/report`,
+    { ...opts, method: "POST", body },
+  );
+}
+
+/** `PATCH /v1/library/references/{id}` — moderator-only demote or remove. */
+export function moderateReference(
+  referenceId: string,
+  body: {
+    curation_status: "approved" | "demoted" | "removed";
+    trust_tier?: "curated" | "community";
+    note?: string;
+  },
+  opts?: ApiClientOptions,
+): Promise<ReferenceEntry> {
+  return apiRequest<ReferenceEntry>(
+    `/v1/library/references/${encodeURIComponent(referenceId)}`,
+    { ...opts, method: "PATCH", body },
+  );
+}
+
 /* --- processing: algorithm catalog + routines --------------------- */
 
 export interface AlgorithmInfo {
@@ -1033,6 +1301,11 @@ export interface DatasetSpectrum {
   title: string | null;
   modality: string;
   state: string;
+  /** Public handle, e.g. `RH-S-000042`. Null until the spectrum is published. */
+  accession: string | null;
+  excitation_wavelength_nm: number | null;
+  /** Set only on a fork — the spectrum this one was copied from. */
+  parent_spectrum_id: string | null;
 }
 
 /**
@@ -1048,6 +1321,58 @@ export interface Dataset {
   spectra: DatasetSpectrum[];
   created_at: string | null;
   updated_at: string | null;
+  /**
+   * Owner-chosen visual identity. Typed `string`, not a union, so a slot added
+   * server-side does not break this client; render through
+   * `projectColor()` / `projectIcon()`, which fall back on an unknown value.
+   */
+  color: string;
+  icon: string;
+  /** Public handle, e.g. `RH-D-000004`. Null until published. */
+  accession: string | null;
+  state: "draft" | "published";
+  published_at: string | null;
+  license_id: string | null;
+  doi: string | null;
+  /** Set only on a fork — the dataset this one was copied from. */
+  parent_dataset_id: string | null;
+  owner_id: string | null;
+  owner_handle: string | null;
+  is_owner: boolean;
+}
+
+/**
+ * One person's credited work inside a project. Derived server-side from
+ * spectrum ownership and Finding authorship — there is no membership table,
+ * so this list changes as data and write-ups are added, not by invitation.
+ *
+ * Counts are evaluated for the *requesting* user: an item is included only if
+ * it is published or the requester owns it.
+ */
+export interface DatasetContributor {
+  user_id: string;
+  handle: string | null;
+  display_name: string | null;
+  avatar_url: string | null;
+  affiliation: string | null;
+  spectra: number;
+  findings: number;
+  is_owner: boolean;
+}
+
+/**
+ * `GET /analysis/datasets/{id}/contributors` — no auth required for a
+ * published dataset; a draft is 404 to anyone but its owner. Ordered by total
+ * contribution, owner first on a tie.
+ */
+export function listDatasetContributors(
+  datasetId: string,
+  opts?: ApiClientOptions,
+): Promise<DatasetContributor[]> {
+  return apiRequest<DatasetContributor[]>(
+    `/analysis/datasets/${encodeURIComponent(datasetId)}/contributors`,
+    opts,
+  );
 }
 
 /** `GET /analysis/datasets` — the caller's datasets, newest-updated first. */
@@ -1062,7 +1387,14 @@ export function listDatasets(opts?: ApiClientOptions): Promise<Dataset[]> {
  * the existing dataset (201); a different list under a taken name is 409.
  */
 export function createDataset(
-  body: { name: string; description?: string; spectrum_ids?: string[] },
+  body: {
+    name: string;
+    description?: string;
+    spectrum_ids?: string[];
+    /** Omit both and the server assigns the next free palette slot. */
+    color?: string;
+    icon?: string;
+  },
   opts?: ApiClientOptions,
 ): Promise<Dataset> {
   return apiRequest<Dataset>("/analysis/datasets", {
@@ -1089,7 +1421,12 @@ export function getDataset(
  */
 export function updateDataset(
   datasetId: string,
-  body: { name?: string; description?: string | null },
+  body: {
+    name?: string;
+    description?: string | null;
+    color?: string;
+    icon?: string;
+  },
   opts?: ApiClientOptions,
 ): Promise<Dataset> {
   return apiRequest<Dataset>(
@@ -1131,6 +1468,41 @@ export function addDatasetSpectra(
 }
 
 /**
+ * `POST /analysis/datasets/{id}/publish` — draft -> published. Mints an
+ * `RH-D-*` accession and makes the dataset world-readable.
+ *
+ * 422 if the dataset is empty or holds a spectrum that is not itself
+ * published: a dataset that advertises data its readers can't fetch is worse
+ * than no dataset. 400 if it is already published.
+ */
+export function publishDataset(
+  datasetId: string,
+  body: { license_id: string },
+  opts?: ApiClientOptions,
+): Promise<Dataset> {
+  return apiRequest<Dataset>(
+    `/analysis/datasets/${encodeURIComponent(datasetId)}/publish`,
+    { ...opts, method: "POST", body },
+  );
+}
+
+/**
+ * `POST /analysis/datasets/{id}/fork` — 201. Copy a readable dataset and every
+ * spectrum in it into the caller's own lab as a new draft folder of forks.
+ * The new dataset records `parent_dataset_id`, and each fork records its own
+ * `parent_spectrum_id`.
+ */
+export function forkDataset(
+  datasetId: string,
+  opts?: ApiClientOptions,
+): Promise<Dataset> {
+  return apiRequest<Dataset>(
+    `/analysis/datasets/${encodeURIComponent(datasetId)}/fork`,
+    { ...opts, method: "POST" },
+  );
+}
+
+/**
  * `DELETE /analysis/datasets/{id}/spectra/{spectrumId}` — drop one membership
  * row, 204. The spectrum itself is untouched. 404 if it was not a member.
  */
@@ -1142,6 +1514,40 @@ export function removeDatasetSpectrum(
   return apiRequest<void>(
     `/analysis/datasets/${encodeURIComponent(datasetId)}/spectra/${encodeURIComponent(spectrumId)}`,
     { ...opts, method: "DELETE" },
+  );
+}
+
+/**
+ * `POST /spectra/{id}/fork` — 201. Copy a readable spectrum into the caller's
+ * own workspace as a new draft.
+ *
+ * Ledger creation requires owning the raw file, so this is how anyone
+ * experiments on a *public* spectrum: fork first, then process the copy. The
+ * source's processing ledger is replayed onto the fork, so it opens looking
+ * identical. Publish state, license and DOI are deliberately not copied.
+ */
+export function forkSpectrum(
+  spectrumId: string,
+  opts?: ApiClientOptions,
+): Promise<Spectrum> {
+  return apiRequest<Spectrum>(
+    `/spectra/${encodeURIComponent(spectrumId)}/fork`,
+    { ...opts, method: "POST" },
+  );
+}
+
+/**
+ * `GET /spectra/{id}/lineage` — where this spectrum came from, and how many
+ * copies came from it. A non-empty `ancestors` means "this is a working copy
+ * of someone else's data".
+ */
+export function getSpectrumLineage(
+  spectrumId: string,
+  opts?: ApiClientOptions,
+): Promise<SpectrumLineage> {
+  return apiRequest<SpectrumLineage>(
+    `/spectra/${encodeURIComponent(spectrumId)}/lineage`,
+    opts,
   );
 }
 
@@ -1277,6 +1683,8 @@ export interface FindingOverlay {
 
 export interface Spectrum {
   id: string;
+  /** Public handle, e.g. `RH-S-000042`. Null until published. */
+  accession: string | null;
   title: string | null;
   description: string | null;
   modality: string;
@@ -1287,6 +1695,38 @@ export interface Spectrum {
   published_at: string | null;
   is_owner: boolean;
   confirmed_metadata: Record<string, unknown> | null;
+  /**
+   * The spectrum this one was forked from, or null for an original. Written
+   * only by the fork path — applying a processing ledger mutates a spectrum
+   * in place rather than creating a child.
+   */
+  parent_spectrum_id: string | null;
+  raw_file_id?: string;
+  current_ledger_id?: string | null;
+}
+
+/**
+ * One ancestor in a fork chain. A spectrum that was public when it was forked
+ * can be unpublished later; rather than leak it or silently shorten the chain,
+ * such a node comes back with `redacted: true` and every descriptive field
+ * null.
+ */
+export interface LineageNode {
+  id: string | null;
+  accession: string | null;
+  title: string | null;
+  owner_handle: string | null;
+  state: string | null;
+  redacted: boolean;
+}
+
+export interface SpectrumLineage {
+  /** Ordered ROOT FIRST, ending at the immediate parent. Empty for an original. */
+  ancestors: LineageNode[];
+  /** How many spectra name this one as their direct parent. */
+  fork_count: number;
+  /** True when the chain was cut short by the server's depth cap. */
+  truncated: boolean;
 }
 
 /** `GET /spectra/{id}` — spectrum record metadata (no array data). */
@@ -1472,7 +1912,57 @@ export type IngestionStatus =
   | "running"
   | "succeeded"
   | "failed"
-  | "cancelled";
+  | "cancelled"
+  /**
+   * The file parsed, but its structure could not be worked out — how many
+   * spectra it holds and which columns they are. A question for the owner,
+   * not a failure: answer it with {@link declareIngestionJobLayout}.
+   */
+  | "needs_input";
+
+/** How a text spectral file is laid out, i.e. where its numbers are. */
+export interface FileLayout {
+  /**
+   * `column_major`: one column is the wavenumber axis, each other numeric
+   * column is a spectrum. `row_major`: one row is the axis and each other row
+   * is a spectrum. `stacked_blocks`: two-column blocks separated by blanks.
+   */
+  orientation: "column_major" | "row_major" | "stacked_blocks";
+  /** A literal character, or `"whitespace"` for "any run of blank space". */
+  delimiter: string;
+  decimal_separator: "." | ",";
+  comment_prefixes: string[];
+  /** Preamble rows skipped before the numeric body. All indexes below are
+   * counted AFTER these. */
+  header_rows: number;
+  /** Column (column_major) or row (row_major) holding the wavenumber axis. */
+  x_index: number;
+  /** Column carrying each trace's name, for row_major files. */
+  label_index: number | null;
+  traces: { index: number; label: string | null }[];
+  confidence: number;
+  source: "heuristic" | "llm" | "user";
+}
+
+/** A sample of the raw file's text, shown to the user when we have to ask
+ * them what shape it is. */
+export interface StructurePreview {
+  delimiter: string;
+  decimal_separator: "." | ",";
+  total_lines: number;
+  column_count: number;
+  header_rows: number;
+  header_cells: string[][];
+  /** Body rows, indexed from 0 after `header_rows` — the same numbering
+   * `FileLayout` uses, so a column the user clicks maps straight to an index. */
+  rows: string[][];
+  numeric_fraction: number[];
+  leading_comment_lines: number;
+  body_lines: number;
+  blank_separated_blocks: number;
+  truncated_rows: boolean;
+  truncated_columns: boolean;
+}
 
 export interface IngestionJob {
   id: string;
@@ -1486,10 +1976,19 @@ export interface IngestionJob {
   extracted_metadata_raw: Record<string, unknown> | null;
   sanity_check_flags: Record<string, unknown> | null;
   extracted_metadata_confirmed: Record<string, unknown> | null;
+  /** Null until structure detection has run, or when it gave up. */
+  file_layout: FileLayout | null;
+  structure_preview: StructurePreview | null;
+  /** Which rung answered: cache | heuristic | llm | llm-wide | user |
+   * unresolved. */
+  layout_source: string | null;
   error_message: string | null;
   attempt_count: number;
   max_attempts: number;
   draft_spectrum_id: string | null;
+  /** Set only when the file held more than one spectrum: the dataset its
+   * drafts were grouped into. */
+  draft_dataset_id: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;
@@ -1529,6 +2028,32 @@ export function uploadRawFile(
   });
 }
 
+/**
+ * An advisory short display name for a freshly uploaded file. `suggested_title`
+ * is null whenever a name could not be produced — no model configured, the
+ * model unreachable, or a reply that failed validation — with `reason`
+ * explaining which. That is a normal 200, not an error: naming is a
+ * convenience on top of an upload and must never block one.
+ */
+export interface NameSuggestion {
+  suggested_title: string | null;
+  reason: string | null;
+}
+
+/**
+ * `POST /raw-files/{id}/name-suggestion` — suggest a short display name from
+ * the file's extracted metadata. 400s until parsing has produced metadata.
+ */
+export function suggestSpectrumName(
+  rawFileId: string,
+  opts?: ApiClientOptions,
+): Promise<NameSuggestion> {
+  return apiRequest<NameSuggestion>(
+    `/raw-files/${encodeURIComponent(rawFileId)}/name-suggestion`,
+    { ...opts, method: "POST" },
+  );
+}
+
 /** `GET /ingestion-jobs/{id}` — poll parse progress. 404s for non-owners. */
 export function getIngestionJob(
   jobId: string,
@@ -1554,6 +2079,27 @@ export function confirmIngestionMetadata(
   return apiRequest<IngestionJob>(
     `/ingestion-jobs/${encodeURIComponent(jobId)}`,
     { ...opts, method: "PATCH", body: { metadata } },
+  );
+}
+
+/**
+ * `POST /ingestion-jobs/{id}/layout` — tell the server how this file is laid
+ * out, when detection could not work it out (`status === "needs_input"`).
+ *
+ * The declaration is checked against the file's actual bytes: a layout that
+ * cannot produce a readable spectrum comes back as a 422 with a message
+ * naming what to fix, rather than being stored and failing later. An accepted
+ * layout is remembered for this file format, so the next upload of it is read
+ * without asking again.
+ */
+export function declareIngestionJobLayout(
+  jobId: string,
+  layout: Partial<FileLayout> & Pick<FileLayout, "orientation" | "traces">,
+  opts?: ApiClientOptions,
+): Promise<IngestionJob> {
+  return apiRequest<IngestionJob>(
+    `/ingestion-jobs/${encodeURIComponent(jobId)}/layout`,
+    { ...opts, method: "POST", body: { layout } },
   );
 }
 

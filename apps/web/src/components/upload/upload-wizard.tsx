@@ -9,8 +9,11 @@
  *
  *   POST /raw-files          -> 202 { raw_file_id, ingestion_job_id }
  *   (worker parses the vendor header out of process)
- *   GET  /ingestion-jobs/id  -> poll until succeeded / failed
- *   PATCH /ingestion-jobs/id -> confirm metadata, creates the draft spectrum
+ *   GET  /ingestion-jobs/id  -> poll until succeeded / failed / needs_input
+ *   POST /ingestion-jobs/id/layout -> only when needs_input: the owner says
+ *                                     how the file is laid out
+ *   PATCH /ingestion-jobs/id -> confirm metadata, creates a draft spectrum
+ *                               per spectrum found in the file
  *
  * The parse step runs in `python -m app.ingestion.worker`, not in the API. If
  * no worker is running the job stays `pending` forever, so this component
@@ -32,6 +35,7 @@ import {
   getIngestionJob,
   isApiError,
   retryIngestionJob,
+  suggestSpectrumName,
   updateSpectrum,
   uploadRawFile,
 } from "@ramanhub/api-client";
@@ -46,6 +50,8 @@ import {
 import { Input } from "@ramanhub/ui/input";
 import { Label } from "@ramanhub/ui/label";
 import { toast } from "@ramanhub/ui/toast";
+
+import { LayoutDeclaration } from "./layout-declaration";
 
 /** Mirrors MAX_UPLOAD_SIZE_MB (backend default 50). */
 const MAX_UPLOAD_MB = 50;
@@ -101,8 +107,16 @@ function asString(value: unknown): string {
   return "";
 }
 
+/** The server's bounds on `raw_extra_fields` — see `MAX_RAW_EXTRA_*` in
+ *  `backend/app/schemas/ingestion.py`. Exceeding any of them is a 422. */
+const MAX_RAW_EXTRA_FIELDS = 20;
+const MAX_RAW_EXTRA_VALUE_CHARS = 500;
+
 /** Build the confirm payload, omitting blanks so `extra="forbid"` is happy. */
-function toMetadata(draft: Draft): ExtractedMetadata {
+function toMetadata(
+  draft: Draft,
+  extras: Record<string, string | number> = {},
+): ExtractedMetadata {
   const out: ExtractedMetadata & Record<string, unknown> = {
     modality: "raman",
   };
@@ -116,7 +130,40 @@ function toMetadata(draft: Draft): ExtractedMetadata {
   }
   const laser = draft.laser_wavelength_nm?.trim();
   if (laser) out.laser_wavelength_nm = Number(laser);
+  if (Object.keys(extras).length > 0) out.raw_extra_fields = extras;
   return out;
+}
+
+/**
+ * The extras to confirm alongside the typed fields.
+ *
+ * Anything the parser already put in `raw_extra_fields` is carried through —
+ * rebuilding the payload from the form alone used to drop it silently. The
+ * original filename is appended only when the user accepted a suggested short
+ * name, so it stays recoverable once the title no longer resembles the file.
+ */
+function toExtras(
+  /** Straight off `extracted_metadata_raw`, so genuinely `unknown`. */
+  parsedExtras: unknown,
+  originalFilename: string | null,
+): Record<string, string | number> {
+  const extras: Record<string, string | number> = {};
+  if (parsedExtras && typeof parsedExtras === "object") {
+    for (const [k, v] of Object.entries(parsedExtras)) {
+      if (typeof v === "string" || typeof v === "number") extras[k] = v;
+    }
+  }
+  if (
+    originalFilename &&
+    Object.keys(extras).length < MAX_RAW_EXTRA_FIELDS &&
+    !("original_filename" in extras)
+  ) {
+    extras.original_filename = originalFilename.slice(
+      0,
+      MAX_RAW_EXTRA_VALUE_CHARS,
+    );
+  }
+  return extras;
 }
 
 function errorMessage(e: unknown, fallback: string): string {
@@ -131,6 +178,14 @@ export function UploadWizard() {
    * parsed acquisition metadata. Seeded from the filename. */
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
+  /**
+   * Whether to label this record with a suggested short name instead of the
+   * filename. Off by default: importing must not depend on a language model,
+   * and nobody's record should be renamed without them asking.
+   */
+  const [useShortName, setUseShortName] = useState(false);
+  /** Cached so re-ticking the box doesn't spend another model call. */
+  const [suggestedTitle, setSuggestedTitle] = useState<string | null>(null);
   /** User edits only. Parsed values are derived, so re-parsing can't be lost. */
   const [edits, setEdits] = useState<Draft>({});
   const [pendingSince, setPendingSince] = useState<number | null>(null);
@@ -145,6 +200,8 @@ export function UploadWizard() {
       // Seed the title from the filename (sans extension) so it's never blank.
       setTitle(file.name.replace(/\.[^.]+$/, ""));
       setDescription("");
+      setUseShortName(false);
+      setSuggestedTitle(null);
       setEdits({});
       setPendingSince(Date.now());
       setNow(Date.now());
@@ -197,9 +254,66 @@ export function UploadWizard() {
     [parsed, edits],
   );
 
+  /** The filename with its extension dropped — the title when not renaming. */
+  const filenameStem = useMemo(
+    () => (fileName ? fileName.replace(/\.[^.]+$/, "") : ""),
+    [fileName],
+  );
+
+  /** Extras confirmed alongside the typed fields — see `toExtras`. */
+  const extras = useMemo(
+    () =>
+      toExtras(
+        job.data?.extracted_metadata_raw?.raw_extra_fields,
+        useShortName ? fileName : null,
+      ),
+    [job.data, useShortName, fileName],
+  );
+
+  const suggestName = useMutation({
+    mutationFn: (rawFileId: string) => suggestSpectrumName(rawFileId),
+    onSuccess: (res) => {
+      // A null title is the expected shape when no model is configured or the
+      // reply was unusable, not an error — say so and fall back to the
+      // filename rather than leaving a checkbox ticked that did nothing.
+      if (!res.suggested_title) {
+        setUseShortName(false);
+        toast.info(res.reason ?? "Could not suggest a shorter name.");
+        return;
+      }
+      setSuggestedTitle(res.suggested_title);
+      setTitle(res.suggested_title);
+    },
+    onError: (e) => {
+      setUseShortName(false);
+      toast.error(errorMessage(e, "Could not suggest a shorter name."));
+    },
+  });
+
+  /** Tick: adopt a suggested name. Untick: go back to the filename. */
+  const toggleShortName = useCallback(
+    (next: boolean) => {
+      setUseShortName(next);
+      if (!next) {
+        setTitle(filenameStem);
+        return;
+      }
+      if (suggestedTitle) {
+        setTitle(suggestedTitle);
+        return;
+      }
+      const rawFileId = job.data?.raw_file_id;
+      if (rawFileId) suggestName.mutate(rawFileId);
+    },
+    [filenameStem, suggestedTitle, job.data?.raw_file_id, suggestName],
+  );
+
   const confirm = useMutation({
     mutationFn: async (id: string) => {
-      const updated = await confirmIngestionMetadata(id, toMetadata(draft));
+      const updated = await confirmIngestionMetadata(
+        id,
+        toMetadata(draft, extras),
+      );
       // The draft Spectrum now exists; give it a title/description (those live
       // on the record, not in the parsed acquisition metadata).
       const t = title.trim();
@@ -244,6 +358,9 @@ export function UploadWizard() {
   );
 
   const draftSpectrumId = job.data?.draft_spectrum_id ?? null;
+  const draftDatasetId = job.data?.draft_dataset_id ?? null;
+  /** How many spectra the detected layout found in this one file. */
+  const traceCount = job.data?.file_layout?.traces.length ?? 1;
   const canConfirm =
     !!title.trim() &&
     !!draft.laser_wavelength_nm &&
@@ -264,23 +381,73 @@ export function UploadWizard() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <CheckCircle2 className="size-5 text-emerald-600" aria-hidden />
-            Draft spectrum created
+            {traceCount > 1
+              ? `${traceCount} draft spectra created`
+              : "Draft spectrum created"}
           </CardTitle>
           <CardDescription>
-            It is private to you until you publish it. Add a title, process it
-            in the Lab, then publish when you&apos;re ready.
+            {traceCount > 1
+              ? "This file held more than one spectrum, so each one became its own draft, grouped into a dataset. They are private to you until you publish them."
+              : "It is private to you until you publish it. Add a title, process it in the Lab, then publish when you're ready."}
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
-          <Button asChild>
-            <Link href={`/spectra/${draftSpectrumId}`}>Open the spectrum</Link>
-          </Button>
+          {draftDatasetId ? (
+            <Button asChild>
+              <Link href={`/lab?d=${draftDatasetId}`}>
+                Open the dataset
+              </Link>
+            </Button>
+          ) : (
+            <Button asChild>
+              <Link href={`/spectra/${draftSpectrumId}`}>
+                Open the spectrum
+              </Link>
+            </Button>
+          )}
           <Button asChild variant="outline">
-            <Link href={`/lab?s=${draftSpectrumId}`}>Open in the Lab</Link>
+            <Link href={`/lab?s=${draftSpectrumId}`}>
+              {traceCount > 1 ? "Open the first in the Lab" : "Open in the Lab"}
+            </Link>
           </Button>
           <Button variant="ghost" onClick={reset}>
             Upload another
           </Button>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  /* -------------------------------------------------------- needs layout */
+  if (status === "needs_input" && job.data?.structure_preview && jobId) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <AlertTriangle className="size-5 text-amber-600" aria-hidden />
+            Which numbers are the spectrum?
+          </CardTitle>
+          <CardDescription>
+            Your file is stored and its header read — we just can&apos;t tell
+            how the numbers are arranged. Point at the wavenumbers and the
+            spectra below and we&apos;ll finish reading it. We&apos;ll remember
+            this format, so you won&apos;t be asked again for files like it.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <LayoutDeclaration
+            jobId={jobId}
+            preview={job.data.structure_preview}
+            onResolved={(updated) => {
+              qc.setQueryData(["ingestion-job", updated.id], updated);
+              const found = updated.file_layout?.traces.length ?? 0;
+              toast.success(
+                found
+                  ? `Reading ${found} ${found === 1 ? "spectrum" : "spectra"} from this file.`
+                  : "Layout saved.",
+              );
+            }}
+          />
         </CardContent>
       </Card>
     );
@@ -442,6 +609,51 @@ export function UploadWizard() {
             <p className="text-muted-foreground text-xs">
               How this spectrum is labelled in your library and the feed.
             </p>
+
+            <div className="space-y-1.5 pt-1">
+              <label className="flex cursor-pointer items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={useShortName}
+                  disabled={suggestName.isPending}
+                  onChange={(e) => toggleShortName(e.target.checked)}
+                  className="accent-primary focus-visible:ring-ring/50 size-4 cursor-pointer rounded focus-visible:ring-[3px] focus-visible:outline-none disabled:cursor-not-allowed"
+                />
+                Suggest a shorter name
+                {suggestName.isPending && (
+                  <span className="text-muted-foreground inline-flex items-center gap-1 text-xs">
+                    <Loader2 className="size-3 animate-spin" aria-hidden />
+                    Suggesting…
+                  </span>
+                )}
+              </label>
+              <p className="text-muted-foreground text-xs">
+                {useShortName && fileName ? (
+                  <>
+                    Keeps{" "}
+                    <span className="font-mono break-all">{fileName}</span> in
+                    the record&apos;s metadata notes.
+                  </>
+                ) : (
+                  "Names the record from its contents instead of its filename. The original filename is kept in the metadata notes."
+                )}
+              </p>
+              {useShortName && suggestedTitle && !suggestName.isPending && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const rawFileId = job.data?.raw_file_id;
+                    if (rawFileId) {
+                      setSuggestedTitle(null);
+                      suggestName.mutate(rawFileId);
+                    }
+                  }}
+                  className="text-muted-foreground hover:text-foreground cursor-pointer text-xs underline underline-offset-2"
+                >
+                  Suggest another
+                </button>
+              )}
+            </div>
           </div>
 
           <div className="space-y-1.5">

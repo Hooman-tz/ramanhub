@@ -82,9 +82,6 @@ export function AttachedSpectraPreview({
       ) : series.length > 0 ? (
         <SpectrumChart
           mode="trace"
-          // `series` replaces these, but the type still requires them.
-          wavenumbers={series[0]?.wavenumbers ?? []}
-          intensities={series[0]?.intensities ?? []}
           series={series}
           height={180}
           ariaLabel={`Preview of ${series.length} attached ${series.length === 1 ? "spectrum" : "spectra"}`}

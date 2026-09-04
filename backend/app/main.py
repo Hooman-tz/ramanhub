@@ -41,10 +41,10 @@ from app.routers import (
     follows,
     ingestion_jobs,
     lab_consult,
+    llm_settings,
     ledgers,
     library,
     licenses,
-    llm_settings,
     onboarding,
     orcid,
     pins,
@@ -52,6 +52,7 @@ from app.routers import (
     profiles,
     public_records,
     raw_files,
+    reference_library,
     routines,
     search,
     shares,
@@ -99,6 +100,7 @@ app.include_router(public_records.router)
 app.include_router(doi.router)
 app.include_router(search.router)
 app.include_router(library.router)
+app.include_router(reference_library.router)
 app.include_router(votes.router)
 app.include_router(comments.router)
 app.include_router(trending.router)

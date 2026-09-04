@@ -100,6 +100,21 @@ class Finding(Base):
     # whole write-up to find it, and because it is the field that makes a
     # negative or incomplete result worth posting at all.
     next_steps_md: Mapped[str | None] = mapped_column(Text, nullable=True)
+    # The dataset this write-up is *about*. Optional: a Finding can attach
+    # loose spectra without ever naming a dataset, which is how every post
+    # written before datasets became publishable works. When set, the post
+    # page links through to `/datasets/{id}` as the canonical home of the
+    # data, and readers can fork the whole thing rather than picking spectra
+    # off one at a time.
+    #
+    # ON DELETE SET NULL, not CASCADE: deleting the folder must not delete
+    # the write-up about it.
+    dataset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("analysis_datasets.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
     published_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True, index=True
     )

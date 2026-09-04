@@ -19,7 +19,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
-from app.models.enums import Modality, modality_enum
+from app.models.enums import DatasetState, Modality, dataset_state_enum, modality_enum
 
 
 class AnalysisDataset(Base):
@@ -33,6 +33,37 @@ class AnalysisDataset(Base):
     modality: Mapped[Modality] = mapped_column(modality_enum, nullable=False)
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    # Owner-chosen presentation, not semantics: a colour and a symbol so the
+    # Office and the Lab can tell one project from another at a glance. Plain
+    # varchar rather than an enum because the palette will grow and extending
+    # a Postgres enum costs a migration each time; the allowed values are
+    # enforced in Pydantic (`ProjectColor` / `ProjectIcon` in
+    # `app.routers.analysis`), and readers fall back to the first slot on an
+    # unknown value.
+    color: Mapped[str] = mapped_column(String(16), nullable=False, default="teal", server_default=text("'teal'"))
+    icon: Mapped[str] = mapped_column(String(24), nullable=False, default="folder", server_default=text("'folder'"))
+
+    # Publishing. A dataset starts as a private project folder and only becomes
+    # citable when its owner publishes it; the accession is minted at that
+    # moment, not at create time, so abandoned drafts don't burn public
+    # identifiers. See `app.models.accession` for why gaps are fine and reuse
+    # is not.
+    accession: Mapped[str | None] = mapped_column(String, nullable=True, unique=True, index=True)
+    state: Mapped[DatasetState] = mapped_column(
+        dataset_state_enum, nullable=False, default=DatasetState.draft, server_default=DatasetState.draft.value
+    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    license_id: Mapped[str | None] = mapped_column(String, ForeignKey("licenses.id"), nullable=True)
+    doi: Mapped[str | None] = mapped_column(String, nullable=True)
+
+    # Dataset-level lineage, the container equivalent of
+    # `Spectrum.parent_spectrum_id`. Set by the dataset fork endpoint so a
+    # reader can trace a working copy back to the published original.
+    parent_dataset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("analysis_datasets.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
 

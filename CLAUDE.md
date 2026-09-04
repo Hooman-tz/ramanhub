@@ -79,3 +79,19 @@ needs `API_URL`.
 
 `PRODUCT_STATUS.md` at the repo root is the live milestone tracker. The full
 plan is in the session plan file referenced there.
+
+## Context discipline
+
+Input-side tokens dominate cost here — re-reading accumulated context, not
+generating output. Keep the main thread small.
+
+- **Offload noisy search.** Broad greps, multi-file sweeps, log trawls, and
+  "where is X used" questions go to the `Explore` agent
+  (`.claude/agents/`), not the main thread. You want its conclusion, not the
+  file dumps — those should die in the subagent's context.
+- **Offload verification output.** Full `pytest` / `pnpm typecheck` / build logs
+  go through `qa-verifier`. Only the pass/fail delta belongs in the transcript.
+- **Read narrowly.** When you know the region you need, read that range rather
+  than whole files. Don't re-read a file you just edited to confirm the edit.
+- **Start fresh per task.** `/clear` between unrelated tasks. A session carried
+  across three tasks re-reads all three on every turn.

@@ -1,7 +1,17 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Numeric, String, Text, func, text
+from sqlalchemy import (
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -14,13 +24,25 @@ class Spectrum(Base):
     (optionally) the processing ledger currently applied for display."""
 
     __tablename__ = "spectra"
+    __table_args__ = (
+        UniqueConstraint("raw_file_id", "source_trace_index", name="uq_spectrum_raw_file_trace"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")
     )
+    # NOT unique: one raw file can hold many spectra (a column per sample, a
+    # row per sample, stacked blocks). `source_trace_index` says which one
+    # this is, and the pair is unique instead — see __table_args__.
     raw_file_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("raw_files.id"), nullable=False, unique=True
+        UUID(as_uuid=True), ForeignKey("raw_files.id"), nullable=False, index=True
     )
+    # Which trace of the raw file this spectrum is, interpreted against the
+    # file's detected `FileLayout` (a column index, a data-row index, or a
+    # block ordinal). NULL on spectra ingested before layout detection
+    # existed, which are all single-trace and read with the default layout.
+    source_trace_index: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    source_trace_label: Mapped[str | None] = mapped_column(String, nullable=True)
     owner_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id"), nullable=False
     )

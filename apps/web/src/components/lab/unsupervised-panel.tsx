@@ -381,10 +381,6 @@ export function UnsupervisedPanel({
               <h3 className="text-sm font-semibold">Loadings</h3>
               <SpectrumChart
                 mode="trace"
-                // `series` replaces the single-line props, which the type
-                // still requires; PC1 doubles as the placeholder.
-                wavenumbers={result.value.grid}
-                intensities={result.value.components[0] ?? []}
                 series={result.value.components.map((values, i) => ({
                   name: `PC${i + 1}`,
                   wavenumbers: result.value.grid,

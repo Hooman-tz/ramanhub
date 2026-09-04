@@ -1,12 +1,12 @@
 import type { LucideIcon } from "lucide-react";
-import { FlaskConical, Home, Newspaper } from "lucide-react";
+import { FlaskConical, Home, Library, Newspaper } from "lucide-react";
 
 /**
  * Per-section theming ported from the Figma design system's `ZONES` map.
  * Each route family gets a background wash (`.zone-*` in styles.css) and an
  * accent colour (`--zone-*` tokens) that fills the active nav pill.
  */
-export type ZoneKey = "home" | "discover" | "mylab" | "viewer";
+export type ZoneKey = "home" | "discover" | "mylab" | "library" | "viewer";
 
 interface Zone {
   key: ZoneKey;
@@ -35,6 +35,12 @@ const MYLAB: Zone = {
   accentBg: "bg-zone-mylab",
   accentText: "text-zone-mylab",
 };
+const LIBRARY: Zone = {
+  key: "library",
+  wash: "zone-library",
+  accentBg: "bg-zone-library",
+  accentText: "text-zone-library",
+};
 const VIEWER: Zone = {
   key: "viewer",
   wash: "zone-viewer",
@@ -44,9 +50,11 @@ const VIEWER: Zone = {
 
 export function zoneForPath(pathname: string): Zone {
   if (pathname.startsWith("/office")) return HOME;
+  if (pathname.startsWith("/library")) return LIBRARY;
   if (pathname.startsWith("/lab") || pathname.startsWith("/upload"))
     return MYLAB;
-  if (pathname.startsWith("/spectra")) return VIEWER;
+  if (pathname.startsWith("/spectra") || pathname.startsWith("/datasets"))
+    return VIEWER;
   return DISCOVER;
 }
 
@@ -69,12 +77,21 @@ export const NAV_LINKS: NavLink[] = [
     label: "Feed",
     icon: Newspaper,
     isActive: (p) =>
-      p === "/" || p.startsWith("/findings") || p.startsWith("/spectra"),
+      p === "/" ||
+      p.startsWith("/findings") ||
+      p.startsWith("/spectra") ||
+      p.startsWith("/datasets"),
   },
   {
     href: "/lab",
     label: "Lab",
     icon: FlaskConical,
     isActive: (p) => p.startsWith("/lab") || p.startsWith("/upload"),
+  },
+  {
+    href: "/library",
+    label: "Library",
+    icon: Library,
+    isActive: (p) => p.startsWith("/library"),
   },
 ];

@@ -6,6 +6,7 @@ import { useEffect, useRef } from "react";
 // pulls every chart type into the web bundle.
 import { LineChart } from "echarts/charts";
 import {
+  DataZoomComponent,
   GridComponent,
   LegendComponent,
   MarkAreaComponent,
@@ -24,8 +25,15 @@ echarts.use([
   TooltipComponent,
   MarkAreaComponent,
   MarkLineComponent,
+  DataZoomComponent,
   CanvasRenderer,
 ]);
+
+/** A labelled vertical guide at one wavenumber. */
+export interface PeakMarker {
+  cm1: number;
+  label?: string;
+}
 
 export interface TraceSeries {
   name: string;
@@ -67,18 +75,62 @@ export const DEFAULT_DISPLAY_OPTIONS: SpectrumDisplayOptions = {
   lineWidth: 2,
 };
 
+/**
+ * A zoom window over the wavenumber axis, as percentages of the full range.
+ * `{ start: 0, end: 100 }` is "fully zoomed out".
+ *
+ * Percent rather than absolute cm⁻¹ because that is ECharts' own dataZoom
+ * unit, and because it keeps the reset value constant regardless of what data
+ * happens to be loaded.
+ */
+export interface ZoomRange {
+  start: number;
+  end: number;
+}
+
+export const FULL_ZOOM: ZoomRange = { start: 0, end: 100 };
+
 type SpectrumChartProps = {
-  /** Fixed pixel height for the chart canvas. */
-  height?: number;
+  /**
+   * Height for the chart canvas — a pixel number, or any CSS length. Pass
+   * `"100%"` to fill a parent that has a definite height; a `ResizeObserver`
+   * keeps ECharts in step as that height changes.
+   */
+  height?: number | string;
   /** Show ECharts' built-in loading spinner. */
   loading?: boolean;
   /** Accessible label — the chart canvas gets `role="img"`. */
   ariaLabel?: string;
+  /**
+   * Enable wheel/drag zoom plus a slider under the x-axis. Off by default so
+   * the feed and other read-only cards keep their current lightweight
+   * behaviour and bundle cost.
+   *
+   * Zoom must never be the ONLY way to reach a region: pair this with visible,
+   * keyboard-reachable zoom-in / zoom-out / reset controls (see
+   * `SpectrumExplorer`), which is what makes the chart usable without a mouse.
+   */
+  zoom?: boolean;
+  /** Controlled zoom window. Only meaningful when `zoom` is set. */
+  zoomRange?: ZoomRange;
+  /** Fired when the user zooms or pans with the mouse. */
+  onZoomChange?: (range: ZoomRange) => void;
 } & (
   | {
       mode: "trace";
-      wavenumbers: number[];
-      intensities: number[];
+      /**
+       * Vertical guides at given wavenumbers — detected peaks, in practice.
+       * Purely annotational: they do not affect scaling, the legend, or the
+       * tooltip, so adding them cannot change how the data itself reads.
+       */
+      markers?: PeakMarker[];
+      /**
+       * The single line to draw. Optional only because `series` replaces it:
+       * pass either these two, or `series`. Callers used to hand over dummy
+       * arrays alongside `series` to satisfy the type; they no longer need to.
+       */
+      wavenumbers?: number[];
+      intensities?: number[];
       /**
        * A second line drawn on its own right-hand axis — raw vs processed
        * intensities routinely differ by orders of magnitude, so sharing one
@@ -204,10 +256,28 @@ function zip(xs: number[], ys: number[]): [number, number][] {
 }
 
 export function SpectrumChart(props: SpectrumChartProps) {
-  const { height = 320, loading = false, ariaLabel } = props;
+  const {
+    height = 320,
+    loading = false,
+    ariaLabel,
+    zoom = false,
+    zoomRange,
+    onZoomChange,
+  } = props;
   const containerRef = useRef<HTMLDivElement | null>(null);
   const chartRef = useRef<echarts.ECharts | null>(null);
   const { resolvedTheme } = useTheme();
+
+  // The draw effect seeds the initial zoom window from this ref rather than
+  // depending on `zoomRange` directly. A wheel tick would otherwise re-run a
+  // `notMerge` redraw on every frame; instead the sync effect below nudges the
+  // existing chart with `dispatchAction`, which is cheap.
+  const zoomRangeRef = useRef<ZoomRange>(zoomRange ?? FULL_ZOOM);
+  zoomRangeRef.current = zoomRange ?? FULL_ZOOM;
+  // Same reason: keep the callback out of the draw effect's dependency list so
+  // an inline arrow from the parent can't force a redraw every render.
+  const onZoomChangeRef = useRef(onZoomChange);
+  onZoomChangeRef.current = onZoomChange;
 
   // Narrowed, referentially-stable data handles (the arrays come straight
   // from React Query cache) so the draw effect only re-runs on real change.
@@ -219,6 +289,7 @@ export function SpectrumChart(props: SpectrumChartProps) {
   const intensities = props.mode === "trace" ? props.intensities : undefined;
   const overlay = props.mode === "trace" ? props.overlay : undefined;
   const seriesProp = props.mode === "trace" ? props.series : undefined;
+  const markers = props.mode === "trace" ? props.markers : undefined;
   const displayProp = props.mode === "trace" ? props.display : undefined;
   // Spread `display` into primitive handles so the draw effect only re-runs on
   // a real value change, not on a fresh object identity each render.
@@ -280,7 +351,43 @@ export function SpectrumChart(props: SpectrumChartProps) {
         lineStyle: { color: c.grid, type: "dashed" as const, opacity: 0.5 },
       },
     };
-    const compact = height <= 200;
+    const compact = typeof height === "number" && height <= 200;
+
+    // `filterMode: "none"` keeps every point in the series and only moves the
+    // axis window. The alternative ("filter") drops out-of-window points and
+    // rescales y to whatever is left, which makes peak heights jump around as
+    // you pan — the opposite of what you want when comparing peaks.
+    const dataZoom = zoom
+      ? [
+          {
+            type: "inside" as const,
+            xAxisIndex: 0,
+            filterMode: "none" as const,
+            start: zoomRangeRef.current.start,
+            end: zoomRangeRef.current.end,
+          },
+          {
+            type: "slider" as const,
+            xAxisIndex: 0,
+            filterMode: "none" as const,
+            start: zoomRangeRef.current.start,
+            end: zoomRangeRef.current.end,
+            height: 22,
+            bottom: 8,
+            borderColor: c.grid,
+            fillerColor: hexToRgba(c.mean, 0.12) ?? c.band,
+            handleStyle: { color: c.mean },
+            moveHandleStyle: { color: c.mean },
+            textStyle: { color: c.axis },
+            dataBackground: {
+              lineStyle: { color: c.grid },
+              areaStyle: { color: c.band },
+            },
+          },
+        ]
+      : undefined;
+    // The slider needs its own strip of space under the axis label.
+    const gridBottom = zoom ? 88 : 44;
 
     // Respect the OS "reduce motion" setting — no entrance animation then.
     const reducedMotion =
@@ -336,7 +443,8 @@ export function SpectrumChart(props: SpectrumChartProps) {
         {
           ...drawAnimation,
           textStyle: baseTextStyle,
-          grid: { left: 56, right: 20, top: 16, bottom: 44 },
+          dataZoom,
+          grid: { left: 56, right: 20, top: 16, bottom: gridBottom },
           tooltip: {
             ...baseTooltip,
             trigger: "axis",
@@ -407,13 +515,14 @@ export function SpectrumChart(props: SpectrumChartProps) {
       return;
     }
 
-    if (mode === "trace" && wavenumbers && intensities) {
-      const multiSeries = seriesProp !== undefined && seriesProp.length > 0;
+    const multiSeries = seriesProp !== undefined && seriesProp.length > 0;
+    // Either shape is enough to draw: the single line, or `series`.
+    if (mode === "trace" && ((wavenumbers && intensities) || multiSeries)) {
 
       // ---- Legacy path: single trace (+ optional dual-axis overlay). ----
       // Byte-for-byte identical to before, so every existing caller (the
       // `spectra/[id]` viewer, findings overlay, feed cards) is untouched.
-      if (!multiSeries && !hasDisplay) {
+      if (!multiSeries && !hasDisplay && wavenumbers && intensities) {
         const series: Record<string, unknown>[] = [
           {
             type: "line",
@@ -460,11 +569,12 @@ export function SpectrumChart(props: SpectrumChartProps) {
                   textStyle: { color: c.axis },
                 }
               : undefined,
+            dataZoom,
             grid: {
               left: 56,
               right: overlay ? 56 : 20,
               top: overlay ? 34 : 16,
-              bottom: 44,
+              bottom: gridBottom,
             },
             tooltip: {
               ...baseTooltip,
@@ -525,16 +635,15 @@ export function SpectrumChart(props: SpectrumChartProps) {
         lineWidth: dLineWidth ?? 2,
       };
 
-      const rawList: TraceSeries[] =
-        seriesProp && seriesProp.length > 0
-          ? seriesProp.slice()
-          : [
-              {
-                name: overlay ? "Processed" : "Intensity",
-                wavenumbers,
-                intensities,
-              },
-            ];
+      const rawList: TraceSeries[] = multiSeries
+        ? seriesProp!.slice()
+        : [
+            {
+              name: overlay ? "Processed" : "Intensity",
+              wavenumbers: wavenumbers ?? [],
+              intensities: intensities ?? [],
+            },
+          ];
       if (!multiSeries && overlay) rawList.push(overlay);
 
       const legendVisible = opts.showLegend && rawList.length > 1;
@@ -567,7 +676,26 @@ export function SpectrumChart(props: SpectrumChartProps) {
           : "Intensity (normalised)";
       const splitLine = { ...axisStyle.splitLine, show: opts.showGrid };
 
-      const nSeries: Record<string, unknown>[] = built.map((b) => ({
+      const markLineOption =
+        markers && markers.length
+          ? {
+              symbol: "none" as const,
+              silent: true,
+              animation: false,
+              label: {
+                show: true,
+                formatter: (p: { data?: { label?: string } }) =>
+                  p.data?.label ?? "",
+                color: c.axis,
+                fontSize: 10,
+                position: "insideEndTop" as const,
+              },
+              lineStyle: { color: c.axis, type: "dashed" as const, width: 1, opacity: 0.55 },
+              data: markers.map((m) => ({ xAxis: m.cm1, label: m.label })),
+            }
+          : undefined;
+
+      const nSeries: Record<string, unknown>[] = built.map((b, i) => ({
         type: "line",
         name: b.name,
         data: b.data,
@@ -578,6 +706,9 @@ export function SpectrumChart(props: SpectrumChartProps) {
         itemStyle: { color: b.color },
         areaStyle: built.length === 1 ? areaFill : undefined,
         emphasis: { focus: "series" },
+        // Guides hang off the first series only; repeating them per series
+        // would stack identical lines and darken them.
+        markLine: i === 0 ? markLineOption : undefined,
         z: 3,
       }));
 
@@ -596,11 +727,12 @@ export function SpectrumChart(props: SpectrumChartProps) {
                 pageTextStyle: { color: c.axis },
               }
             : undefined,
+          dataZoom,
           grid: {
             left: 56,
             right: 20,
             top: legendVisible ? 34 : 16,
-            bottom: 44,
+            bottom: gridBottom,
           },
           tooltip: {
             ...baseTooltip,
@@ -653,6 +785,7 @@ export function SpectrumChart(props: SpectrumChartProps) {
     intensities,
     overlay,
     seriesProp,
+    markers,
     hasDisplay,
     dStacked,
     dOffset,
@@ -665,7 +798,46 @@ export function SpectrumChart(props: SpectrumChartProps) {
     // Read inside the effect (`compact = height <= 200`) to pick the axis /
     // label density, so a height change must re-render the chart.
     height,
+    // Toggling zoom changes the option shape (dataZoom + grid padding).
+    // `zoomRange` deliberately is NOT a dependency — see `zoomRangeRef`.
+    zoom,
   ]);
+
+  // Push a controlled zoom window onto the live chart without rebuilding it.
+  // `dispatchAction` is the cheap path; a full `setOption` here would redraw
+  // the series on every wheel tick.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !zoom || !zoomRange || chart.isDisposed()) return;
+    chart.dispatchAction({
+      type: "dataZoom",
+      dataZoomIndex: 0,
+      start: zoomRange.start,
+      end: zoomRange.end,
+    });
+  }, [zoom, zoomRange]);
+
+  // Report user-driven zoom/pan back up so the parent's controls stay in sync
+  // with what the chart is actually showing.
+  useEffect(() => {
+    const chart = chartRef.current;
+    if (!chart || !zoom) return;
+    const handler = () => {
+      const opt = chart.getOption() as {
+        dataZoom?: { start?: number; end?: number }[];
+      };
+      const first = opt.dataZoom?.[0];
+      if (!first) return;
+      onZoomChangeRef.current?.({
+        start: first.start ?? 0,
+        end: first.end ?? 100,
+      });
+    };
+    chart.on("datazoom", handler);
+    return () => {
+      if (!chart.isDisposed()) chart.off("datazoom", handler);
+    };
+  }, [zoom]);
 
   return (
     <div

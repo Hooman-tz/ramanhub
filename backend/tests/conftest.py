@@ -225,3 +225,58 @@ def app_client(db_session):
     client = TestClient(test_app)
     client.set_current_user = lambda user: current.__setitem__("user", user)
     return client
+
+
+@pytest.fixture()
+def lab_client(db_session):
+    """Like `app_client`, but with the analysis and findings routers mounted
+    too.
+
+    Forking data crosses three routers — `/spectra/{id}/fork`,
+    `/analysis/datasets/...`, `/v1/findings/{id}/fork-data` — so exercising it
+    end to end needs all of them in one app. Kept separate from `app_client`
+    rather than widening it, so the existing suite keeps testing the processing
+    module in isolation.
+
+    Also overrides `get_current_full_user`, which publishing depends on, and
+    honours `User.is_guest` so guest-rejection paths stay testable.
+    """
+    from fastapi import FastAPI, HTTPException
+    from fastapi.testclient import TestClient
+
+    from app.auth.deps import (
+        get_current_full_user,
+        get_current_user,
+        get_current_user_optional,
+    )
+    from app.db.session import get_db
+    from app.routers import analysis, findings, ledgers, routines, spectra
+
+    test_app = FastAPI()
+    for router in (spectra.router, ledgers.router, routines.router, analysis.router, findings.router):
+        test_app.include_router(router)
+
+    def _override_get_db():
+        yield db_session
+
+    current = {"user": None}
+
+    def _override_get_current_user():
+        if current["user"] is None:
+            raise HTTPException(status_code=401, detail="Not authenticated")
+        return current["user"]
+
+    def _override_get_current_full_user():
+        user = _override_get_current_user()
+        if getattr(user, "is_guest", False):
+            raise HTTPException(status_code=403, detail="Sign in to do this")
+        return user
+
+    test_app.dependency_overrides[get_db] = _override_get_db
+    test_app.dependency_overrides[get_current_user] = _override_get_current_user
+    test_app.dependency_overrides[get_current_full_user] = _override_get_current_full_user
+    test_app.dependency_overrides[get_current_user_optional] = lambda: current["user"]
+
+    client = TestClient(test_app)
+    client.set_current_user = lambda user: current.__setitem__("user", user)
+    return client

@@ -33,16 +33,32 @@ from app.discovery.raman_similarity import (
 from app.models.enums import Modality, SpectrumState
 from app.models.processing_ledger import ProcessingLedger
 from app.models.publication import PublicationSnapshot
-from app.models.raw_file import RawFile
+from app.models.reference import ReferenceEntry
 from app.models.similarity import SimilarityFeature
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.processing.cache import get_or_compute
 from app.processing.state_machine import effective_state, require_owner_or_public
 from app.schemas.ledger import Ledger, LedgerStep
-from app.spectra_io import load_raw_spectrum
+from app.spectra_io import load_spectrum_trace
 
 router = APIRouter(prefix="/search", tags=["search"])
+
+
+def _exclude_reference_library(query):
+    """Keep the bundled reference corpus out of the community commons.
+
+    The reference library is thousands of published, visible spectra that all
+    share a seeding timestamp. Left in, they would bury real user uploads in
+    `/search/spectra` (which orders by `published_at desc`) and dominate the
+    brute-force candidate set in `/search/similar`. They are not hidden — they
+    have their own surface at `/v1/library/*`, which is index-served and knows
+    how to rank them. This endpoint is discovery over user-contributed
+    science; identification against known compounds is a different question.
+    """
+    return query.outerjoin(
+        ReferenceEntry, ReferenceEntry.spectrum_id == Spectrum.id
+    ).filter(ReferenceEntry.id.is_(None))
 
 
 class SpectrumSearchResult(BaseModel):
@@ -94,11 +110,8 @@ def load_spectrum_arrays(spectrum: Spectrum, db: Session) -> tuple[np.ndarray, n
                 raw_file_id=ledger_row.raw_file_id,
                 steps=[LedgerStep.model_validate(step) for step in ledger_row.steps],
             )
-            return get_or_compute(spectrum.raw_file_id, ledger, db)
-    raw_file = db.get(RawFile, spectrum.raw_file_id)
-    if raw_file is None:
-        return np.array([]), np.array([])
-    return load_raw_spectrum(raw_file)
+            return get_or_compute(spectrum.raw_file_id, ledger, db, spectrum=spectrum)
+    return load_spectrum_trace(spectrum, db)
 
 
 def cosine_similarity(
@@ -165,9 +178,11 @@ def search_spectra(
     Module 4b's vote/comment counts must never appear in this endpoint's
     filtering or ordering.
     """
-    query = db.query(Spectrum).filter(
-        Spectrum.state == SpectrumState.published,
-        Spectrum.moderation_status == "visible",
+    query = _exclude_reference_library(
+        db.query(Spectrum).filter(
+            Spectrum.state == SpectrumState.published,
+            Spectrum.moderation_status == "visible",
+        )
     )
 
     if material_type:
@@ -230,11 +245,12 @@ def search_similar(
     require_owner_or_public(target, user)
 
     candidates = (
-        db.query(Spectrum)
-        .filter(
-            Spectrum.state == SpectrumState.published,
-            Spectrum.moderation_status == "visible",
-            Spectrum.id != target.id,
+        _exclude_reference_library(
+            db.query(Spectrum).filter(
+                Spectrum.state == SpectrumState.published,
+                Spectrum.moderation_status == "visible",
+                Spectrum.id != target.id,
+            )
         )
         .all()
     )

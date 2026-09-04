@@ -12,6 +12,7 @@ import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
+import app.routers.lab_consult as lab_consult
 from app.auth.deps import get_current_user
 from app.db.session import get_db
 from app.models.analysis import AnalysisRun
@@ -20,7 +21,6 @@ from app.models.ingestion_job import IngestionJob
 from app.models.processed_cache import ProcessedCache
 from app.models.processing_ledger import ProcessingLedger
 from app.models.spectrum import Spectrum
-from app.routers import lab_consult
 
 
 @pytest.fixture()

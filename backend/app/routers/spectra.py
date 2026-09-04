@@ -44,7 +44,7 @@ from app.processing.state_machine import (
 from app.raman_contract import checksum_bytes
 from app.schemas.ingestion import ExtractedMetadata
 from app.schemas.ledger import Ledger, LedgerStep
-from app.spectra_io import compute_snr, load_raw_spectrum
+from app.spectra_io import compute_snr, load_spectrum_trace
 from app.spectrum_lifecycle import (
     ingestion_job_for_raw,
     publication_readiness,
@@ -89,6 +89,7 @@ class PublishRequest(BaseModel):
 class SpectrumResponse(BaseModel):
     id: UUID
     raw_file_id: UUID
+    accession: str | None = None
     modality: str
     title: str | None
     description: str | None
@@ -114,6 +115,34 @@ class SpectrumResponse(BaseModel):
     publish_readiness: dict | None = None
 
     model_config = {"from_attributes": True}
+
+
+class LineageNode(BaseModel):
+    """One ancestor in a fork chain.
+
+    A spectrum that was public when it was forked can be unpublished later.
+    Rather than drop such a link (which would silently shorten the chain and
+    misrepresent the depth of the lineage) or leak it, the node is returned
+    with `redacted=True` and every descriptive field left empty.
+    """
+
+    id: UUID | None = None
+    accession: str | None = None
+    title: str | None = None
+    owner_handle: str | None = None
+    state: str | None = None
+    redacted: bool = False
+
+
+class SpectrumLineageResponse(BaseModel):
+    #: Ancestors ordered ROOT FIRST, ending at the immediate parent. Empty for
+    #: an original spectrum. Capped at `_LINEAGE_MAX_DEPTH`.
+    ancestors: list[LineageNode] = []
+    #: How many spectra name this one as their direct parent.
+    fork_count: int = 0
+    #: True when the chain was cut short by the depth cap, so the UI can say
+    #: "…" rather than implying the first node shown is the origin.
+    truncated: bool = False
 
 
 def _recompute_derived_fields(spectrum: Spectrum, db: Session) -> None:
@@ -153,12 +182,11 @@ def _recompute_derived_fields(spectrum: Spectrum, db: Session) -> None:
                 raw_file_id=ledger_row.raw_file_id,
                 steps=[LedgerStep.model_validate(step) for step in ledger_row.steps],
             )
-            _wavenumbers, intensities = get_or_compute(spectrum.raw_file_id, ledger, db)
+            _wavenumbers, intensities = get_or_compute(
+                spectrum.raw_file_id, ledger, db, spectrum=spectrum
+            )
         else:
-            raw_file = db.get(RawFile, spectrum.raw_file_id)
-            if raw_file is None:
-                return
-            _wavenumbers, intensities = load_raw_spectrum(raw_file)
+            _wavenumbers, intensities = load_spectrum_trace(spectrum, db)
     except Exception:  # noqa: BLE001 - derived-field computation must never block create/update/publish
         return
 
@@ -427,7 +455,7 @@ def delete_spectrum(
     for bucket, key in storage_targets:
         try:
             delete_object(bucket, key)
-        except Exception:
+        except Exception:  # noqa: BLE001 - a storage hiccup must not fail the delete
             logger.warning(
                 "delete_spectrum: could not remove object %s/%s", bucket, key, exc_info=True
             )
@@ -532,24 +560,14 @@ def publish_spectrum(
     return _serialize(spectrum, db, user)
 
 
-@router.post(
-    "/spectra/{spectrum_id}/fork",
-    response_model=SpectrumResponse,
-    status_code=status.HTTP_201_CREATED,
-)
-def fork_spectrum(
-    spectrum_id: UUID,
-    db: Session = Depends(get_db),
-    # Guests may fork — experimenting with the processing tools on public
-    # spectra is exactly the try-before-login loop. Publishing the fork is
-    # what needs a full account, and that's gated separately.
-    user: User = Depends(get_current_user),
-) -> SpectrumResponse:
-    """Copy a readable spectrum into the caller's own workspace as a new
-    draft — the GitHub-for-data fork, literally. Processing pipelines can
-    only be attached to raw files you own (see `create_ledger`'s ownership
-    check), so this is how anyone experiments on a *public* spectrum: fork
-    first, then process the copy freely.
+def fork_spectrum_record(source: Spectrum, user: User, db: Session) -> Spectrum:
+    """Copy `source` into `user`'s workspace as a new draft, flushed but NOT
+    committed.
+
+    Everything the fork route does minus the HTTP layer, so a bulk fork (a
+    whole dataset, or every spectrum attached to a finding) can copy N
+    spectra inside one transaction and commit once. The caller owns the
+    commit; on any raised HTTPException nothing is persisted.
 
     What's copied: the raw bytes (to a forker-scoped storage key — a real
     copy, so the fork's lifecycle is fully independent of the source),
@@ -558,14 +576,10 @@ def fork_spectrum(
     opens looking identical. What's NOT copied: publish state (forks start
     as drafts), license, DOI, and social signals — those belong to the
     source, not the copy.
-    """
-    source = db.get(Spectrum, spectrum_id)
-    if source is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-    # Drafts/embargoed spectra stay unforkable by anyone but their owner —
-    # same visibility rule as every other read.
-    require_owner_or_public(source, user)
 
+    Callers MUST have already gated `source` through
+    `require_owner_or_public`; this helper does not re-check readability.
+    """
     source_raw = db.get(RawFile, source.raw_file_id)
     if source_raw is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Raw file not found")
@@ -659,10 +673,119 @@ def fork_spectrum(
 
     _recompute_derived_fields(fork, db)
     db.add(fork)
+    db.flush()
+    return fork
+
+
+@router.post(
+    "/spectra/{spectrum_id}/fork",
+    response_model=SpectrumResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def fork_spectrum(
+    spectrum_id: UUID,
+    db: Session = Depends(get_db),
+    # Guests may fork — experimenting with the processing tools on public
+    # spectra is exactly the try-before-login loop. Publishing the fork is
+    # what needs a full account, and that's gated separately.
+    user: User = Depends(get_current_user),
+) -> SpectrumResponse:
+    """Copy a readable spectrum into the caller's own workspace as a new
+    draft — the GitHub-for-data fork, literally. Processing pipelines can
+    only be attached to raw files you own (see `create_ledger`'s ownership
+    check), so this is how anyone experiments on a *public* spectrum: fork
+    first, then process the copy freely.
+    """
+    source = db.get(Spectrum, spectrum_id)
+    if source is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    # Drafts/embargoed spectra stay unforkable by anyone but their owner —
+    # same visibility rule as every other read.
+    require_owner_or_public(source, user)
+
+    fork = fork_spectrum_record(source, user, db)
     db.commit()
     db.refresh(fork)
 
     return _serialize(fork, db, user)
+
+
+# A fork chain deeper than this is almost certainly a mistake, and walking it
+# unbounded turns one page load into an unbounded number of queries. Ten is
+# well past any real "forked a fork of a fork" workflow.
+_LINEAGE_MAX_DEPTH = 10
+
+
+@router.get("/spectra/{spectrum_id}/lineage", response_model=SpectrumLineageResponse)
+def get_spectrum_lineage(
+    spectrum_id: UUID,
+    db: Session = Depends(get_db),
+    user: User | None = Depends(get_current_user_optional),
+) -> SpectrumLineageResponse:
+    """Where this spectrum came from, and how many copies came from it.
+
+    `parent_spectrum_id` is written only by the fork path, so a non-empty
+    chain here means "this is a working copy of someone else's data" — the
+    breadcrumb a reader needs to find the original and cite it instead of
+    the copy.
+
+    Each ancestor is access-checked individually. Forking requires the source
+    to be public, but a source can be unpublished afterwards; when that
+    happens the node comes back redacted rather than leaking its title and
+    owner to someone who could no longer read it directly.
+    """
+    spectrum = db.get(Spectrum, spectrum_id)
+    if spectrum is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    require_owner_or_public(spectrum, user)
+
+    ancestors: list[LineageNode] = []
+    seen: set[UUID] = {spectrum.id}
+    truncated = False
+    cursor = spectrum.parent_spectrum_id
+
+    while cursor is not None:
+        if len(ancestors) >= _LINEAGE_MAX_DEPTH:
+            truncated = True
+            break
+        # A self-FK can in principle be cycled by a bad backfill; refuse to
+        # spin rather than trusting the data.
+        if cursor in seen:
+            break
+        seen.add(cursor)
+
+        parent = db.get(Spectrum, cursor)
+        if parent is None:
+            # Deleting a spectrum nulls its children's parent pointer, so a
+            # dangling id shouldn't happen — but the chain ends here if it does.
+            break
+
+        try:
+            require_owner_or_public(parent, user)
+        except HTTPException:
+            ancestors.append(LineageNode(redacted=True))
+        else:
+            owner = db.get(User, parent.owner_id)
+            ancestors.append(
+                LineageNode(
+                    id=parent.id,
+                    accession=parent.accession,
+                    title=parent.title,
+                    owner_handle=owner.profile_handle if owner else None,
+                    state=effective_state(parent),
+                )
+            )
+        cursor = parent.parent_spectrum_id
+
+    fork_count = (
+        db.query(Spectrum).filter(Spectrum.parent_spectrum_id == spectrum.id).count()
+    )
+
+    # Walked child -> parent; the reader wants origin -> here.
+    ancestors.reverse()
+    return SpectrumLineageResponse(
+        ancestors=ancestors, fork_count=fork_count, truncated=truncated
+    )
 
 
 @router.post("/spectra/{spectrum_id}/release-embargo", response_model=SpectrumResponse)

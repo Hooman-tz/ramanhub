@@ -33,10 +33,12 @@ from app.db.base import Base
 # spectrum_accession_seq does not exist".
 SPECTRUM_ACCESSION_SEQ = Sequence("spectrum_accession_seq", start=1, metadata=Base.metadata)
 FINDING_ACCESSION_SEQ = Sequence("finding_accession_seq", start=1, metadata=Base.metadata)
+DATASET_ACCESSION_SEQ = Sequence("dataset_accession_seq", start=1, metadata=Base.metadata)
 
 PREFIX = "RH"
 SPECTRUM_KIND = "S"
 FINDING_KIND = "F"
+DATASET_KIND = "D"
 
 # Zero-padding width. Six digits keeps identifiers visually uniform up to a
 # million records; past that they simply get longer rather than wrapping.
@@ -55,6 +57,7 @@ def format_accession(kind: str, number: int) -> str:
 _NEXTVAL_STATEMENTS = {
     SPECTRUM_KIND: text("SELECT nextval('spectrum_accession_seq')"),
     FINDING_KIND: text("SELECT nextval('finding_accession_seq')"),
+    DATASET_KIND: text("SELECT nextval('dataset_accession_seq')"),
 }
 
 
@@ -76,3 +79,7 @@ def next_spectrum_accession(db: Session) -> str:
 
 def next_finding_accession(db: Session) -> str:
     return next_accession(db, FINDING_KIND)
+
+
+def next_dataset_accession(db: Session) -> str:
+    return next_accession(db, DATASET_KIND)

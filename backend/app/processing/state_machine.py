@@ -13,7 +13,7 @@ from datetime import UTC, datetime
 from fastapi import HTTPException, status
 from sqlalchemy.orm import Session
 
-from app.models.enums import FindingState, SpectrumState
+from app.models.enums import DatasetState, FindingState, SpectrumState
 from app.models.spectrum import Spectrum
 from app.models.user import User
 
@@ -89,6 +89,28 @@ def require_finding_readable(finding, user: User | None) -> None:
     if is_owner:
         return
     if finding.state != FindingState.published:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+
+
+def require_dataset_readable(dataset, user: User | None) -> None:
+    """Row-level read gate for an AnalysisDataset, mirroring
+    `require_finding_readable`.
+
+    A draft dataset is visible only to its owner; a published one is visible
+    to everyone. Denial raises 404 (never 403) so a non-owner cannot tell a
+    private folder from a nonexistent id.
+
+    This deliberately does NOT reuse `require_owner_or_public`. That helper
+    compares against `SpectrumState.draft` specifically, and a `DatasetState`
+    member would never equal it — a draft dataset would silently test as
+    *public*. A separate gate is the safe shape, not a redundant one.
+    """
+    if dataset is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    is_owner = user is not None and dataset.owner_id == user.id
+    if is_owner:
+        return
+    if dataset.state != DatasetState.published:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
 
 

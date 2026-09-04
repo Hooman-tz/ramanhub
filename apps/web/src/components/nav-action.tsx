@@ -124,5 +124,8 @@ export function NavAction({ isFullUser }: { isFullUser: boolean }) {
   if (pathname.startsWith("/lab") || pathname.startsWith("/upload")) {
     return <NewDatasetAction />;
   }
+  // The Library is a read-and-identify surface; a "new post" button there
+  // would be an action about a different object entirely.
+  if (pathname.startsWith("/library")) return null;
   return <ComposeFab variant="nav-button" />;
 }

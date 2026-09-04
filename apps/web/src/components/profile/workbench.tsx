@@ -101,8 +101,10 @@ import {
 } from "~/components/lab/data-management";
 import { DatabaseOverview } from "~/components/lab/database-overview";
 import { LabModeNav, parseLabMode } from "~/components/lab/lab-mode-nav";
+import { LibraryPanel } from "~/components/lab/library-panel";
 import { SupervisedPanel } from "~/components/lab/supervised-panel";
 import { UnsupervisedPanel } from "~/components/lab/unsupervised-panel";
+import { VIEWER_HEIGHT } from "~/components/lab/viewer";
 import { ReadinessBadge } from "~/components/profile/profile-tabs";
 import {
   BUFFER_MAX_POINTS,
@@ -655,10 +657,13 @@ export function Workbench() {
       : "";
 
   return (
-    <div className="flex flex-col gap-3 lg:flex-row lg:items-start">
+    // 1 : 2 : 6 — the viewer owns two thirds of the row, and the rails scale
+    // with the window instead of eating 40% of a 1280px screen. The `minmax`
+    // floors stop either rail collapsing at the `lg` breakpoint itself.
+    <div className="flex flex-col gap-3 lg:grid lg:grid-cols-[minmax(180px,1fr)_minmax(240px,2fr)_minmax(0,6fr)] lg:items-start lg:gap-4">
       {/* -------- Far left: Datasets (scopes the spectra list) -------- */}
-      <Card className="flex max-h-[70vh] flex-col gap-0 overflow-hidden p-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:w-[210px] lg:shrink-0">
-        <div className="bg-card flex items-center gap-2 border-b px-3 py-2">
+      <Card className="flex max-h-[70vh] flex-col gap-0 overflow-hidden p-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)]">
+        <div className="bg-card flex min-h-10 items-center gap-2 border-b px-3 py-2">
           <FolderOpen className="text-muted-foreground size-4" aria-hidden />
           <h3 className="min-w-0 flex-1 truncate text-sm font-semibold">
             My datasets
@@ -667,7 +672,7 @@ export function Workbench() {
         </div>
 
         <ScrollArea className="min-h-0 flex-1">
-          <div className="p-2">
+          <div className="min-w-0 p-2">
             {datasets.isLoading && (
               <div className="space-y-2">
                 {[0, 1, 2].map((i) => (
@@ -700,7 +705,7 @@ export function Workbench() {
                   <li
                     key={d.id}
                     className={cn(
-                      "flex items-center gap-1 rounded-lg pr-1 transition-colors duration-150 motion-reduce:transition-none",
+                      "flex min-w-0 items-center gap-1 rounded-lg pr-1 transition-colors duration-150 motion-reduce:transition-none",
                       sel ? "bg-muted" : "hover:bg-muted/60",
                     )}
                   >
@@ -710,7 +715,9 @@ export function Workbench() {
                       onClick={() => selectDataset(d.id)}
                       className="focus-visible:ring-ring/50 flex min-w-0 flex-1 cursor-pointer items-center justify-between gap-2 rounded-lg px-2 py-2 text-left outline-none focus-visible:ring-[3px]"
                     >
-                      <span className="truncate text-sm">{d.name}</span>
+                      <span className="truncate text-sm" title={d.name}>
+                        {d.name}
+                      </span>
                       <span className="text-muted-foreground shrink-0 text-xs tabular-nums">
                         {d.spectra.length}
                       </span>
@@ -740,8 +747,8 @@ export function Workbench() {
       </Card>
 
       {/* -------- Left: Files -------- */}
-      <Card className="flex max-h-[70vh] flex-col gap-0 overflow-hidden p-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)] lg:w-[300px] lg:shrink-0">
-        <div className="bg-card flex items-center justify-between gap-2 border-b px-3 py-2">
+      <Card className="flex max-h-[70vh] flex-col gap-0 overflow-hidden p-0 lg:sticky lg:top-20 lg:max-h-[calc(100vh-6rem)]">
+        <div className="bg-card flex min-h-10 items-center justify-between gap-2 border-b px-3 py-2">
           <h3 className="min-w-0 truncate text-sm font-semibold">
             {selectedDataset ? selectedDataset.name : "My spectra"}
           </h3>
@@ -788,7 +795,7 @@ export function Workbench() {
         )}
 
         <ScrollArea className="min-h-0 flex-1">
-          <div className="p-2">
+          <div className="min-w-0 p-2">
             {lib.isLoading && (
               <div className="space-y-2">
                 {[0, 1, 2, 3].map((i) => (
@@ -812,7 +819,7 @@ export function Workbench() {
                   <li
                     key={s.id}
                     className={cn(
-                      "flex items-start gap-1 rounded-lg pr-1 transition-colors duration-150 motion-reduce:transition-none",
+                      "flex min-w-0 items-start gap-1 rounded-lg pr-1 transition-colors duration-150 motion-reduce:transition-none",
                       sel ? "bg-muted" : "hover:bg-muted/60",
                     )}
                   >
@@ -822,7 +829,10 @@ export function Workbench() {
                       onClick={() => select(s.id)}
                       className="focus-visible:ring-ring/50 flex min-w-0 flex-1 cursor-pointer flex-col gap-1 rounded-lg px-2 py-2 text-left outline-none focus-visible:ring-[3px]"
                     >
-                      <span className="truncate text-sm font-medium">
+                      <span
+                        className="truncate text-sm font-medium"
+                        title={s.title ?? "Untitled"}
+                      >
                         {s.title ?? "Untitled"}
                       </span>
                       <span className="flex flex-wrap items-center gap-1.5">
@@ -840,7 +850,7 @@ export function Workbench() {
                         <ReadinessBadge s={s} />
                       </span>
                     </button>
-                    <div className="pt-2">
+                    <div className="shrink-0 pt-2">
                       <SpectrumRowMenu
                         spectrum={s}
                         datasets={datasets.data ?? []}
@@ -874,7 +884,7 @@ export function Workbench() {
       </Card>
 
       {/* -------- Main column: spectrum preview + processing toolbox -------- */}
-      <div className="flex min-w-0 flex-1 flex-col gap-3">
+      <div className="flex min-w-0 flex-col gap-4">
         <LabModeNav mode={mode} onSelect={selectMode} />
 
         {mode === "database" && (
@@ -895,12 +905,26 @@ export function Workbench() {
 
         {mode === "supervised" && <SupervisedPanel />}
 
+        {mode === "library" && (
+          <LibraryPanel
+            spectrumId={selectedId}
+            spectrum={spectrum.data}
+            buffer={buffer.data}
+            bufferLoading={buffer.isLoading}
+          />
+        )}
+
         {mode === "prep" && (
           <>
         {/* -------- Spectrum preview -------- */}
-        <Card className="min-w-0 gap-3 p-3">
+        <Card className="min-w-0 gap-3 p-4">
           {!selectedId ? (
-            <div className="flex h-[360px] flex-col items-center justify-center gap-2 text-center">
+            <div
+              className={cn(
+                "flex flex-col items-center justify-center gap-2 text-center",
+                VIEWER_HEIGHT,
+              )}
+            >
               <SlidersHorizontal
                 className="text-muted-foreground size-8"
                 aria-hidden
@@ -925,7 +949,7 @@ export function Workbench() {
                 </div>
 
                 <div
-                  className="flex overflow-hidden rounded-md border"
+                  className="flex shrink-0 overflow-hidden rounded-md border"
                   role="group"
                   aria-label="Curve view"
                 >
@@ -967,20 +991,20 @@ export function Workbench() {
                 </div>
               </div>
 
-              <div className="rounded-lg border p-2">
+              <div className={cn("rounded-lg border p-2", VIEWER_HEIGHT)}>
                 {!buffer.data && buffer.isLoading ? (
-                  <Skeleton className="h-[360px] w-full" />
+                  <Skeleton className="size-full" />
                 ) : chart ? (
                   <SpectrumChart
                     mode="trace"
                     wavenumbers={chart.wavenumbers}
                     intensities={chart.intensities}
-                    height={360}
+                    height="100%"
                     loading={storedProcessed.isFetching}
                     ariaLabel={`${view} spectrum trace`}
                   />
                 ) : (
-                  <p className="text-muted-foreground p-4 text-center text-sm">
+                  <p className="text-muted-foreground flex size-full items-center justify-center p-4 text-center text-sm">
                     {previewProblem ?? "Could not load spectrum data."}
                   </p>
                 )}

@@ -9,9 +9,10 @@ import { Skeleton } from "@ramanhub/ui/skeleton";
 import { ContributionGraph } from "~/components/profile/contribution-graph";
 import { ProfileHeader } from "~/components/profile/profile-header";
 import { CollabNetwork } from "./collab-network";
+import { ProjectBoard } from "./project-board";
+import { ProjectStatus } from "./project-status";
 import { RecentActivity } from "./recent-activity";
 import { SavedPosts } from "./saved-posts";
-import { ProjectStatus } from "./project-status";
 
 const STAT_KEYS = [
   ["spectrum_count", "Spectra"],
@@ -58,6 +59,7 @@ export function OfficeView({ handle }: { handle: string }) {
       )}
 
       <ContributionGraph handle={handle} />
+      <ProjectBoard />
       <ProjectStatus />
       <RecentActivity />
       <SavedPosts handle={handle} />

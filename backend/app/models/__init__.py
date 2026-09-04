@@ -16,10 +16,13 @@ from app.models.enums import (
     IngestionStatus,
     Modality,
     ParseSource,
+    ReferenceCurationStatus,
+    ReferenceTrustTier,
     SpectrumState,
     UploadStatus,
 )
 from app.models.field_registry import LedgerStepDefinition, MetadataFieldDefinition
+from app.models.file_layout_cache import FileLayoutCache
 from app.models.finding import (
     Finding,
     FindingCoAuthor,
@@ -37,6 +40,7 @@ from app.models.processing_ledger import ProcessingLedger
 from app.models.processing_routine import ProcessingRoutine
 from app.models.publication import Publication, PublicationSnapshot
 from app.models.raw_file import RawFile
+from app.models.reference import ReferenceEntry
 from app.models.similarity import SimilarityFeature
 from app.models.social import (
     Comment,
@@ -50,6 +54,7 @@ from app.models.social import (
     Vote,
 )
 from app.models.spectrum import Spectrum
+from app.models.spectrum_peaks import SpectrumPeaks
 from app.models.user import User
 from app.models.user_llm_credential import UserLLMCredential
 from app.models.vendor_parse_cache import VendorParseCache
@@ -63,6 +68,7 @@ __all__ = [
     "CommunityPost",
     "CommunityPostSpectrum",
     "FieldDataType",
+    "FileLayoutCache",
     "Finding",
     "FindingCoAuthor",
     "FindingEntry",
@@ -91,10 +97,14 @@ __all__ = [
     "Publication",
     "PublicationSnapshot",
     "RawFile",
+    "ReferenceCurationStatus",
+    "ReferenceEntry",
+    "ReferenceTrustTier",
     "Report",
     "Share",
     "SimilarityFeature",
     "Spectrum",
+    "SpectrumPeaks",
     "SpectrumState",
     "UploadStatus",
     "User",

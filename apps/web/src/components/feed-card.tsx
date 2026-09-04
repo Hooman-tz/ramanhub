@@ -5,17 +5,7 @@ import type { FeedItem } from "@ramanhub/api-client";
 import { cn } from "@ramanhub/ui";
 
 import { FeedCardMedia, FeedCardSpectrum } from "./feed-card-media";
-
-function initials(name: string | null): string {
-  if (!name) return "?";
-  return name
-    .split(/\s+/)
-    .map((p) => p[0])
-    .filter(Boolean)
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
-}
+import { avatarAccent, initials } from "./user-chip";
 
 function timeAgo(iso: string | null): string {
   if (!iso) return "";
@@ -35,21 +25,6 @@ function timeAgo(iso: string | null): string {
     v /= step;
   }
   return "";
-}
-
-const AVATAR_PALETTE = [
-  "#0d6b6e",
-  "#b45309",
-  "#1e3a5f",
-  "#6d28d9",
-  "#44403c",
-] as const;
-
-/** Deterministic warm accent for an author avatar, keyed off their id/handle. */
-function avatarAccent(seed: string): string {
-  let h = 0;
-  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) >>> 0;
-  return AVATAR_PALETTE[h % AVATAR_PALETTE.length] ?? AVATAR_PALETTE[0];
 }
 
 export function FeedCard({ item }: { item: FeedItem }) {

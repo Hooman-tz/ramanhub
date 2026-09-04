@@ -2,15 +2,18 @@
 
 import { useMemo } from "react";
 import Link from "next/link";
-import { Boxes, ExternalLink } from "lucide-react";
+import { ExternalLink } from "lucide-react";
 
 import type { Dataset, LibrarySpectrum, Spectrum } from "@ramanhub/api-client";
+import { cn } from "@ramanhub/ui";
 import { Badge } from "@ramanhub/ui/badge";
 import { Card } from "@ramanhub/ui/card";
 import { Skeleton } from "@ramanhub/ui/skeleton";
 
 import type { SpectrumBuffer } from "~/lib/spectra-buffer";
 import { SpectrumChart } from "~/components/charts/spectrum-chart";
+import { VIEWER_HEIGHT } from "~/components/lab/viewer";
+import { projectColor, ProjectSymbol } from "~/components/project-identity";
 
 /**
  * The Data Lab's database view: what a record *is*, as stored.
@@ -22,6 +25,17 @@ import { SpectrumChart } from "~/components/charts/spectrum-chart";
 
 const asText = (v: unknown) =>
   typeof v === "string" || typeof v === "number" ? String(v) : null;
+
+/**
+ * The file this record was imported from, kept when the user accepted a
+ * shorter display name at upload. It lives in the metadata's bounded extras
+ * rather than a column of its own, so it has to be narrowed out of `unknown`.
+ */
+function originalFilenameOf(confirmedMetadata: Record<string, unknown>) {
+  const extras = confirmedMetadata.raw_extra_fields;
+  if (!extras || typeof extras !== "object") return null;
+  return asText((extras as Record<string, unknown>).original_filename);
+}
 
 /** Acquisition rows worth showing, when `confirmed_metadata` has them. */
 const ACQ_ROWS: [label: string, keys: string[], suffix?: string][] = [
@@ -45,7 +59,11 @@ function DatasetSummary({
   return (
     <Card className="gap-2 p-4">
       <div className="flex flex-wrap items-center gap-2">
-        <Boxes className="text-muted-foreground size-4" aria-hidden />
+        {/* The project's chosen symbol in its chosen colour, matching the Office. */}
+        <ProjectSymbol
+          icon={dataset.icon}
+          className={cn("size-4", projectColor(dataset.color).text)}
+        />
         <h2 className="text-sm font-semibold">{dataset.name}</h2>
         <Badge variant="outline" className="text-[0.7rem] font-normal">
           {dataset.modality}
@@ -109,13 +127,18 @@ export function DatabaseOverview({
     : [];
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="flex flex-col gap-4">
       {dataset && (
         <DatasetSummary dataset={dataset} loadedCount={loadedCount} />
       )}
 
       {!row ? (
-        <Card className="text-muted-foreground flex h-[320px] flex-col items-center justify-center gap-1 p-6 text-center text-sm">
+        <Card
+          className={cn(
+            "text-muted-foreground flex flex-col items-center justify-center gap-1 p-6 text-center text-sm",
+            VIEWER_HEIGHT,
+          )}
+        >
           <span className="font-medium">No spectrum selected</span>
           <span className="text-xs">
             Pick one from the list to see what was measured and filed.
@@ -123,7 +146,7 @@ export function DatabaseOverview({
         </Card>
       ) : (
         <>
-          <Card className="min-w-0 gap-3 p-3">
+          <Card className="min-w-0 gap-3 p-4">
             <div className="flex flex-wrap items-start justify-between gap-2">
               <div className="min-w-0">
                 <h2 className="truncate text-sm font-semibold">
@@ -168,19 +191,19 @@ export function DatabaseOverview({
               </p>
             )}
 
-            <div className="rounded-lg border p-2">
+            <div className={cn("rounded-lg border p-2", VIEWER_HEIGHT)}>
               {bufferLoading && !trace ? (
-                <Skeleton className="h-[300px] w-full" />
+                <Skeleton className="size-full" />
               ) : trace ? (
                 <SpectrumChart
                   mode="trace"
                   wavenumbers={trace.wavenumbers}
                   intensities={trace.intensities}
-                  height={300}
+                  height="100%"
                   ariaLabel="Raw spectrum trace as stored"
                 />
               ) : (
-                <p className="text-muted-foreground p-4 text-center text-sm">
+                <p className="text-muted-foreground flex size-full items-center justify-center p-4 text-center text-sm">
                   No chartable trace could be read from this file.
                 </p>
               )}
@@ -211,6 +234,7 @@ export function DatabaseOverview({
                       row.snr != null ? String(Math.round(row.snr)) : "—",
                     ],
                     ["DOI", row.doi ?? "—"],
+                    ["Original file", originalFilenameOf(cm) ?? "—"],
                     [
                       "Added",
                       new Date(row.created_at).toLocaleDateString(undefined, {
@@ -260,8 +284,15 @@ export function DatabaseOverview({
                     <Badge
                       key={d.id}
                       variant="outline"
-                      className="text-[0.7rem] font-normal"
+                      className="gap-1.5 text-[0.7rem] font-normal"
                     >
+                      <span
+                        className={cn(
+                          "size-1.5 rounded-full",
+                          projectColor(d.color).solid,
+                        )}
+                        aria-hidden
+                      />
                       {d.name}
                     </Badge>
                   ))}

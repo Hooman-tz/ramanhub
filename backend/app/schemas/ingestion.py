@@ -82,6 +82,126 @@ class ExtractedMetadata(BaseModel):
         return f"{lower:g}-{upper:g}"
 
 
+# Upper bounds for a detected layout. A Raman export with more than this many
+# traces is a hyperspectral map, not a stack of spectra, and is out of scope
+# for the per-trace import path; the bound also stops a confused model from
+# asking us to create thousands of draft spectra.
+MAX_TRACES = 512
+MAX_PREVIEW_ROWS = 40
+MAX_PREVIEW_COLUMNS = 25
+
+# "whitespace" means "split on any run of blank space", which is its own rule
+# rather than a single character.
+WHITESPACE_DELIMITER = "whitespace"
+
+
+class TraceSpec(BaseModel):
+    """One spectrum inside a raw file.
+
+    `index` is interpreted against the layout's orientation: a column index
+    for `column_major`, a data-row index for `row_major`, a block ordinal for
+    `stacked_blocks`.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    index: int = Field(ge=0, lt=100_000)
+    label: str | None = Field(default=None, max_length=200)
+
+
+class FileLayout(BaseModel):
+    """How to read numeric traces out of a text spectral file.
+
+    This is the deterministic contract that structure detection produces and
+    array loading consumes. It is deliberately small and fully declarative:
+    whether it came from a heuristic, an LLM, or the user typing it in, the
+    same code applies it, and the result is always verified against
+    `raman_contract.canonicalize_raman_arrays` before anything is stored.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    orientation: Literal["column_major", "row_major", "stacked_blocks"] = "column_major"
+    delimiter: str = Field(default=WHITESPACE_DELIMITER, max_length=12)
+    decimal_separator: Literal[".", ","] = "."
+    comment_prefixes: list[str] = Field(default_factory=lambda: ["#"])
+    # Rows of preamble to skip before the numeric body. For `row_major` this
+    # counts rows before the wavenumber-axis row.
+    header_rows: int = Field(default=0, ge=0, le=10_000)
+    # Column (column_major) or data-row (row_major) holding the wavenumber
+    # axis. Ignored for `stacked_blocks`, where every block carries its own.
+    x_index: int = Field(default=0, ge=0, lt=100_000)
+    # Column (row_major) carrying each trace's label. None means unlabelled.
+    label_index: int | None = Field(default=None, ge=0, lt=100_000)
+    traces: list[TraceSpec] = Field(default_factory=list)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    source: Literal["heuristic", "llm", "user"] = "heuristic"
+
+    @field_validator("comment_prefixes")
+    @classmethod
+    def _bound_comment_prefixes(cls, value: list[str]) -> list[str]:
+        if len(value) > 8:
+            raise ValueError("at most 8 comment prefixes")
+        for prefix in value:
+            if not prefix or len(prefix) > 4:
+                raise ValueError(f"implausible comment prefix: {prefix!r}")
+        return value
+
+    @field_validator("traces")
+    @classmethod
+    def _bound_traces(cls, value: list[TraceSpec]) -> list[TraceSpec]:
+        if len(value) > MAX_TRACES:
+            raise ValueError(f"layout declares {len(value)} traces, max is {MAX_TRACES}")
+        seen = {trace.index for trace in value}
+        if len(seen) != len(value):
+            raise ValueError("trace indexes must be unique")
+        return value
+
+    def trace(self, index: int) -> TraceSpec | None:
+        """The declared trace at `index`, or None when this layout has none."""
+        return next((t for t in self.traces if t.index == index), None)
+
+    @property
+    def default_trace_index(self) -> int:
+        """The trace a caller gets when it does not ask for a specific one."""
+        return self.traces[0].index if self.traces else 1
+
+
+class PreviewGrid(BaseModel):
+    """A small, deterministic sample of a raw file's text body.
+
+    This is what structure detection reasons over — both the heuristics and
+    the LLM. Keeping it small is the point: it turns a 37k-token whole-file
+    prompt into a ~2k-token one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    delimiter: str
+    decimal_separator: Literal[".", ","] = "."
+    total_lines: int
+    column_count: int
+    # Leading non-empty lines that are not numeric data — the vendor preamble.
+    # Counted over the whole file, not just the sampled rows, so a 200-line
+    # header does not hide the body.
+    header_rows: int = 0
+    # The last few of those preamble lines, which is where column names live.
+    header_cells: list[list[str]] = Field(default_factory=list)
+    # `rows[r][c]` — the first rows of the numeric BODY, i.e. after
+    # `header_rows`. Row indexes are body-relative, matching how `FileLayout`
+    # counts them, so an index quoted against this grid can be used directly.
+    rows: list[list[str]] = Field(default_factory=list)
+    # Fraction of sampled body rows whose cell in this column parses as a
+    # number, per column. The single strongest structural signal available
+    # without an LLM.
+    numeric_fraction: list[float] = Field(default_factory=list)
+    leading_comment_lines: int = 0
+    body_lines: int = 0
+    blank_separated_blocks: int = 0
+    truncated_rows: bool = False
+    truncated_columns: bool = False
+
+
 class IngestionJobOut(BaseModel):
     """Response shape for GET /ingestion-jobs/{id}."""
 
@@ -98,12 +218,16 @@ class IngestionJobOut(BaseModel):
     extracted_metadata_raw: dict[str, Any] | None = None
     sanity_check_flags: dict[str, Any] | None = None
     extracted_metadata_confirmed: dict[str, Any] | None = None
+    file_layout: dict[str, Any] | None = None
+    structure_preview: dict[str, Any] | None = None
+    layout_source: str | None = None
     error_message: str | None = None
     attempt_count: int = 0
     max_attempts: int = 3
     run_after: datetime | None = None
     lease_expires_at: datetime | None = None
     draft_spectrum_id: uuid.UUID | None = None
+    draft_dataset_id: uuid.UUID | None = None
     created_at: datetime
     started_at: datetime | None = None
     finished_at: datetime | None = None
@@ -126,3 +250,13 @@ class ConfirmMetadataRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     metadata: ExtractedMetadata
+
+
+class DeclareLayoutRequest(BaseModel):
+    """Body for POST /ingestion-jobs/{id}/layout — the owner telling us how
+    their file is laid out after automatic detection gave up. Verified against
+    the file's bytes before it is accepted."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    layout: FileLayout

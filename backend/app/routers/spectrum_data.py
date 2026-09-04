@@ -18,14 +18,13 @@ from sqlalchemy.orm import Session
 from app.auth.deps import get_current_user_optional
 from app.db.session import get_db
 from app.models.processing_ledger import ProcessingLedger
-from app.models.raw_file import RawFile
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.processing.cache import get_or_compute
 from app.processing.state_machine import require_owner_or_public
 from app.raman_contract import RamanDataError
 from app.schemas.ledger import Ledger, LedgerStep
-from app.spectra_io import load_raw_spectrum, lttb_downsample
+from app.spectra_io import load_spectrum_trace, lttb_downsample
 
 router = APIRouter(tags=["spectrum-data"])
 
@@ -66,12 +65,11 @@ def get_spectrum_data(
                 raw_file_id=ledger_row.raw_file_id,
                 steps=[LedgerStep.model_validate(step) for step in ledger_row.steps],
             )
-            wavenumbers, intensities = get_or_compute(spectrum.raw_file_id, ledger, db)
+            wavenumbers, intensities = get_or_compute(
+                spectrum.raw_file_id, ledger, db, spectrum=spectrum
+            )
         else:
-            raw_file = db.get(RawFile, spectrum.raw_file_id)
-            if raw_file is None:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-            wavenumbers, intensities = load_raw_spectrum(raw_file)
+            wavenumbers, intensities = load_spectrum_trace(spectrum, db)
     except RamanDataError as exc:
         # The upload has a readable header but no chartable trace (header-only
         # export, unreadable data layout, canonicalization failure). That's a

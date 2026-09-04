@@ -1,4 +1,4 @@
-"""Raw file upload + rename-suggestion endpoints. Mounted at prefix
+"""Raw file upload + display-name suggestion endpoints. Mounted at prefix
 `/raw-files`.
 """
 from __future__ import annotations
@@ -18,13 +18,13 @@ from app.auth.deps import get_current_user
 from app.config import settings
 from app.db.session import get_db
 from app.llm import LLMError, complete_json
-from app.llm_credentials import resolve_for_user
+from app.llm_credentials import llm_available_for, resolve_for_user
 from app.logging_config import log_event
 from app.models.enums import IngestionStatus, Modality, UploadStatus
 from app.models.ingestion_job import IngestionJob
 from app.models.raw_file import RawFile
 from app.models.user import User
-from app.ratelimit import rate_limit_uploads
+from app.ratelimit import rate_limit_llm_consult, rate_limit_uploads
 from app.security.file_validation import validate_upload_content, validate_upload_size
 from app.storage.s3_client import object_exists, upload_bytes
 
@@ -138,36 +138,43 @@ async def upload_raw_file(
     return {"raw_file_id": raw_file.id, "ingestion_job_id": ingestion_job.id, "deduplicated": False}
 
 
-# --- Rename suggestion -------------------------------------------------
+# --- Display-name suggestion ----------------------------------------------
 
-_RENAME_TOOL_NAME = "suggest_filename"
-
-_RENAME_TOOL_SCHEMA = {
+_NAME_TOOL_SCHEMA = {
     "type": "object",
     "properties": {
-        "filename": {
+        "title": {
             "type": "string",
             "description": (
-                "A single suggested filename (no path, no extension change), "
-                "using only letters, digits, dashes, and underscores."
+                "A short, human-readable display name for the spectrum — at most "
+                "60 characters. Name what was measured and under what conditions, "
+                "e.g. 'Polystyrene reference 785 nm'. Not a filename: no path and "
+                "no extension. Letters, digits, spaces, dashes, underscores, "
+                "periods and parentheses only."
             ),
         }
     },
-    "required": ["filename"],
+    "required": ["title"],
 }
 
-_SAFE_FILENAME_RE = re.compile(r"^[A-Za-z0-9._\-]+$")
+#: A display name, not a filename — spaces and parentheses are the whole point.
+_SAFE_TITLE_RE = re.compile(r"^[A-Za-z0-9 ._\-()]{1,80}$")
 
 
-@router.post("/{raw_file_id}/rename-suggestion")
-async def suggest_rename(
+@router.post("/{raw_file_id}/name-suggestion")
+async def suggest_name(
     raw_file_id: str,
     db: Session = Depends(get_db),
     user: User = Depends(get_current_user),
+    _: None = Depends(rate_limit_llm_consult),
 ) -> dict:
-    """Suggest a filename based on a raw file's extracted metadata. This is
-    advisory only — it returns a single validated string and never renames
-    anything itself."""
+    """Suggest a short display name for a raw file, from its extracted metadata.
+
+    Advisory only: it returns a single validated string and never renames
+    anything itself. Naming is a convenience on top of an upload, so it degrades
+    to ``suggested_title: null`` rather than failing — an unreachable model or an
+    unusable reply must never block someone from importing their data.
+    """
     try:
         raw_file_uuid = uuid.UUID(raw_file_id)
     except ValueError as exc:
@@ -190,34 +197,45 @@ async def suggest_rename(
             detail="No extracted metadata available yet for this file",
         )
 
+    if not llm_available_for(db, user.id):
+        return {
+            "suggested_title": None,
+            "reason": "No language model is configured for your account.",
+        }
+
     try:
         result = await complete_json(
             system=(
-                "Suggest a short, descriptive filename (no extension) for a Raman "
-                "spectroscopy data file, based on its extracted metadata. Use only "
-                "letters, digits, dashes, and underscores."
+                "Suggest a short, human-readable display name for a Raman "
+                "spectroscopy record, based on its extracted metadata and the "
+                "name of the file it came from. Name the sample and the notable "
+                "acquisition conditions. Keep it under 60 characters. This is a "
+                "label a scientist will read in a list, not a filename."
             ),
-            user=f"Metadata:\n\n{json.dumps(metadata, default=str)}",
-            schema=_RENAME_TOOL_SCHEMA,
+            # The filename carries signal the parsed header often lacks — sample
+            # IDs, dates, the laser line — so the model sees both.
+            user=(
+                f"Original filename: {raw_file.original_filename or 'unknown'}\n\n"
+                f"Metadata:\n\n{json.dumps(metadata, default=str)}"
+            ),
+            schema=_NAME_TOOL_SCHEMA,
             # Reasoning models bill their chain of thought against this budget;
-            # 256 truncates before the filename is even emitted.
+            # 256 truncates before the name is even emitted.
             max_tokens=1024,
             credential=resolve_for_user(db, user.id),
         )
     except LLMError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY, detail=f"Rename suggestion failed: {exc}"
-        ) from exc
+        logger.info("name suggestion unavailable for raw_file=%s: %s", raw_file_id, exc)
+        return {
+            "suggested_title": None,
+            "reason": "The naming model could not be reached.",
+        }
 
-    suggestion: str | None = None
-    candidate = result.get("filename")
-    if isinstance(candidate, str) and _SAFE_FILENAME_RE.match(candidate):
-        suggestion = candidate
+    candidate = result.get("title")
+    if isinstance(candidate, str) and _SAFE_TITLE_RE.match(candidate.strip()):
+        return {"suggested_title": candidate.strip(), "reason": None}
 
-    if suggestion is None:
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Model did not return a usable filename suggestion",
-        )
-
-    return {"suggested_filename": suggestion}
+    return {
+        "suggested_title": None,
+        "reason": "The model did not return a usable name.",
+    }

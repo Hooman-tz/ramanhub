@@ -101,6 +101,13 @@
     var(--background)
   );
 }
+.zone-library {
+  background-color: color-mix(
+    in oklab,
+    var(--zone-library) 4%,
+    var(--background)
+  );
+}
 .zone-viewer {
   background-color: var(--background);
 }

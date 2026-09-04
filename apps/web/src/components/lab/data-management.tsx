@@ -38,7 +38,9 @@ import { Input } from "@ramanhub/ui/input";
 import { Label } from "@ramanhub/ui/label";
 import { toast } from "@ramanhub/ui/toast";
 
+import type { ProjectColor, ProjectIcon } from "~/components/project-identity";
 import { RECORD_DELETE_COPY } from "~/components/delete-record-button";
+import { ProjectIdentityPicker } from "~/components/project-identity-picker";
 
 /**
  * Data management for the lab: create, rename and delete datasets, move
@@ -78,6 +80,10 @@ export function NewDatasetDialog({
   const qc = useQueryClient();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
+  // Null means "unset": the API assigns the next free palette slot, so a
+  // user who never touches the picker still gets projects that look distinct.
+  const [color, setColor] = useState<ProjectColor | null>(null);
+  const [icon, setIcon] = useState<ProjectIcon | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const create = useMutation({
@@ -85,12 +91,16 @@ export function NewDatasetDialog({
       createDataset({
         name: name.trim(),
         ...(description.trim() ? { description: description.trim() } : {}),
+        ...(color ? { color } : {}),
+        ...(icon ? { icon } : {}),
       }),
     onSuccess: async (dataset) => {
       await qc.invalidateQueries({ queryKey: ["datasets"] });
       onOpenChange(false);
       setName("");
       setDescription("");
+      setColor(null);
+      setIcon(null);
       setError(null);
       toast.success(`Created ${dataset.name}`);
       onCreated?.(dataset);
@@ -143,6 +153,14 @@ export function NewDatasetDialog({
               onChange={(e) => setDescription(e.target.value)}
             />
           </div>
+
+          <ProjectIdentityPicker
+            color={color}
+            icon={icon}
+            onColorChange={setColor}
+            onIconChange={setIcon}
+            hint="Leave these alone and one is picked for you, different from your other projects."
+          />
 
           {error && (
             <p className="text-destructive text-sm" role="alert">
@@ -216,6 +234,12 @@ export function DatasetRowMenu({
   const qc = useQueryClient();
   const [dialog, setDialog] = useState<"rename" | "delete" | null>(null);
   const [name, setName] = useState(dataset.name);
+  const [color, setColor] = useState<ProjectColor | null>(
+    dataset.color as ProjectColor,
+  );
+  const [icon, setIcon] = useState<ProjectIcon | null>(
+    dataset.icon as ProjectIcon,
+  );
   const [error, setError] = useState<string | null>(null);
 
   const close = () => {
@@ -224,13 +248,23 @@ export function DatasetRowMenu({
   };
 
   const rename = useMutation({
-    mutationFn: () => updateDataset(dataset.id, { name: name.trim() }),
+    mutationFn: () =>
+      updateDataset(dataset.id, {
+        name: name.trim(),
+        ...(color ? { color } : {}),
+        ...(icon ? { icon } : {}),
+      }),
     onSuccess: async () => {
       await qc.invalidateQueries({ queryKey: ["datasets"] });
+      // The colour/symbol shows up on the contributor board too, which caches
+      // per dataset.
+      await qc.invalidateQueries({
+        queryKey: ["dataset-contributors", dataset.id],
+      });
       close();
-      toast.success("Dataset renamed");
+      toast.success("Dataset updated");
     },
-    onError: (e) => setError(apiMessage(e, "Could not rename the dataset.")),
+    onError: (e) => setError(apiMessage(e, "Could not update the dataset.")),
   });
 
   const remove = useMutation({
@@ -262,11 +296,15 @@ export function DatasetRowMenu({
         <DropdownMenuContent align="end">
           <DropdownMenuItem
             onSelect={() => {
+              // Reset every field from the record, so a cancelled edit does
+              // not leave stale state behind for the next open.
               setName(dataset.name);
+              setColor(dataset.color as ProjectColor);
+              setIcon(dataset.icon as ProjectIcon);
               setDialog("rename");
             }}
           >
-            Rename
+            Rename &amp; restyle
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem
@@ -284,7 +322,7 @@ export function DatasetRowMenu({
       >
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Rename dataset</DialogTitle>
+            <DialogTitle>Edit project</DialogTitle>
           </DialogHeader>
           <form
             className="space-y-3"
@@ -303,6 +341,14 @@ export function DatasetRowMenu({
                 onChange={(e) => setName(e.target.value)}
               />
             </div>
+
+            <ProjectIdentityPicker
+              color={color}
+              icon={icon}
+              onColorChange={setColor}
+              onIconChange={setIcon}
+            />
+
             {error && (
               <p className="text-destructive text-sm" role="alert">
                 {error}

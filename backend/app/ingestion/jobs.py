@@ -25,9 +25,10 @@ from app.db.base import SessionLocal
 from app.ingestion import filename_overlay
 from app.ingestion.header_hash import compute_header_hash
 from app.ingestion.llm_fallback import extract_metadata_via_llm
+from app.llm_credentials import resolve_for_user
 from app.ingestion.parsers.registry import find_parser
 from app.ingestion.sanity_check import check as run_sanity_check
-from app.llm_credentials import resolve_for_user
+from app.ingestion.structure import build_preview, extract_trace, resolve_layout
 from app.logging_config import log_event
 from app.models.enums import IngestionStatus, UploadStatus
 from app.models.ingestion_job import IngestionJob
@@ -37,6 +38,7 @@ from app.raman_contract import (
     canonicalize_raman_arrays,
     checksum_bytes,
 )
+from app.schemas.ingestion import FileLayout
 from app.spectra_io import parse_two_column_raman
 from app.storage.s3_client import download_bytes
 
@@ -238,14 +240,24 @@ def _renew_lease(db, job_id: uuid.UUID, lease_token: str) -> bool:
     return updated == 1
 
 
-def _quality_flags_for_arrays(raw_bytes: bytes) -> dict[str, str]:
-    """Report canonical-array readiness without mutating the immutable raw file."""
+def _quality_flags_for_arrays(raw_bytes: bytes, layout: FileLayout | None = None) -> dict[str, str]:
+    """Report canonical-array readiness without mutating the immutable raw file.
+
+    Checks the first trace of the detected layout, falling back to the
+    historical two-column read when no layout was resolved.
+    """
     try:
-        x, y = parse_two_column_raman(raw_bytes)
+        if layout is not None and layout.traces:
+            x, y = extract_trace(raw_bytes, layout, layout.default_trace_index)
+        else:
+            x, y = parse_two_column_raman(raw_bytes)
         _canonical_x, _canonical_y, repairs = canonicalize_raman_arrays(x, y)
     except Exception as exc:  # noqa: BLE001 - parser support gaps are actionable QC, not worker crashes
         return {"array": f"canonical Raman array unavailable: {exc}"}
-    return {f"array.{repair}": "canonicalization repair applied" for repair in repairs}
+    flags = {f"array.{repair}": "canonicalization repair applied" for repair in repairs}
+    if layout is not None and len(layout.traces) > 1:
+        flags["array.multi_trace"] = f"{len(layout.traces)} spectra found in this file"
+    return flags
 
 
 def _retry_or_fail(
@@ -287,6 +299,67 @@ def _retry_or_fail(
         return
     db.query(RawFile).filter(RawFile.id == raw_file.id).update(
         {RawFile.upload_status: raw_status}, synchronize_session=False
+    )
+    db.commit()
+
+
+def _park_for_user_input(
+    db,
+    job: IngestionJob,
+    raw_file: RawFile,
+    lease_token: str,
+    *,
+    metadata,
+    flags: dict[str, str],
+    header_hash: str,
+    parser: tuple[str, str, float],
+    preview,
+) -> None:
+    """Stop and ask the owner what shape this file is.
+
+    Everything already worked out is persisted first — the header metadata,
+    the quality flags, and the preview grid the UI will show — so answering
+    the question is the *only* work left. Deliberately not a failure and
+    deliberately not retried: no number of retries will make an unrecognisable
+    layout recognisable, and the bytes are fine.
+    """
+    parser_used, parser_version, parser_confidence = parser
+    now = datetime.now(UTC)
+    updated = (
+        db.query(IngestionJob)
+        .filter(
+            IngestionJob.id == job.id,
+            IngestionJob.status == IngestionStatus.running,
+            IngestionJob.lease_token == lease_token,
+        )
+        .update(
+            {
+                IngestionJob.header_hash: header_hash,
+                IngestionJob.parser_used: parser_used,
+                IngestionJob.parser_version: parser_version,
+                IngestionJob.parser_confidence: parser_confidence,
+                IngestionJob.canonicalization_version: RAMAN_CANONICALIZATION_VERSION,
+                IngestionJob.extracted_metadata_raw: metadata.model_dump(mode="json"),
+                IngestionJob.sanity_check_flags: flags,
+                IngestionJob.structure_preview: preview.model_dump(mode="json"),
+                IngestionJob.layout_source: "unresolved",
+                IngestionJob.status: IngestionStatus.needs_input,
+                IngestionJob.error_message: (
+                    "We couldn't work out how this file is laid out. Tell us where the "
+                    "wavenumbers and intensities are and we'll finish reading it."
+                ),
+                IngestionJob.lease_token: None,
+                IngestionJob.lease_expires_at: None,
+                IngestionJob.last_heartbeat_at: now,
+            },
+            synchronize_session=False,
+        )
+    )
+    if updated != 1:
+        db.rollback()
+        return
+    db.query(RawFile).filter(RawFile.id == raw_file.id).update(
+        {RawFile.upload_status: UploadStatus.uploaded}, synchronize_session=False
     )
     db.commit()
 
@@ -356,6 +429,11 @@ def run_ingestion_job(
             header_text = _extract_header_text(raw_bytes)
             header_hash = compute_header_hash(header_text)
 
+            # This runs in a background worker, so there is no request user —
+            # the file's owner is who the LLM work is being done for, and
+            # whose own provider key (if they set one) it must use.
+            credential = resolve_for_user(db, raw_file.owner_id)
+
             parser = find_parser(raw_bytes, raw_file.original_filename)
             if parser is not None:
                 # Resource-limited parsing: bound vendor-parser execution so
@@ -379,9 +457,6 @@ def run_ingestion_job(
                 # this belongs on the parser branch only.
                 metadata = filename_overlay.apply(metadata, raw_file.original_filename)
             else:
-                # This runs in a background worker, so there is no request
-                # user — the file's owner is who the LLM work is being done
-                # for, and whose own provider key (if set) it must use.
                 llm_meta: dict = {}
                 metadata, source = asyncio.run(
                     await_with_lease_heartbeats(
@@ -389,7 +464,7 @@ def run_ingestion_job(
                             header_text,
                             db,
                             filename=raw_file.original_filename,
-                            credential=resolve_for_user(db, raw_file.owner_id),
+                            credential=credential,
                             meta=llm_meta,
                         ),
                         on_heartbeat=lambda: _renew_lease(db, job.id, active_lease_token),
@@ -399,9 +474,50 @@ def run_ingestion_job(
                     source, llm_meta.get("model")
                 )
 
+            # Where the numbers are is a separate question from what the
+            # header says, and it has to be answered for every file — a
+            # deterministic vendor parser reads metadata, not the data body.
+            layout, layout_source = asyncio.run(
+                await_with_lease_heartbeats(
+                    resolve_layout(
+                        raw_bytes,
+                        db,
+                        filename=raw_file.original_filename,
+                        credential=credential,
+                    ),
+                    on_heartbeat=lambda: _renew_lease(db, job.id, active_lease_token),
+                )
+            )
+            preview = build_preview(raw_bytes)
+
             flags = run_sanity_check(metadata, metadata.modality, db)
-            flags.update(_quality_flags_for_arrays(raw_bytes))
+            flags.update(_quality_flags_for_arrays(raw_bytes, layout))
             now = datetime.now(UTC)
+
+            if layout is None:
+                # Not a failure: the header parsed, the bytes are intact, and
+                # the owner can tell us the shape. Parking here rather than
+                # retrying avoids burning attempts on a question only a human
+                # can answer.
+                _park_for_user_input(
+                    db,
+                    job,
+                    raw_file,
+                    active_lease_token,
+                    metadata=metadata,
+                    flags=flags,
+                    header_hash=header_hash,
+                    parser=(parser_used, parser_version, parser_confidence),
+                    preview=preview,
+                )
+                log_event(
+                    logger,
+                    "ingestion_job.needs_input",
+                    ingestion_job_id=str(job.id),
+                    raw_file_id=str(raw_file.id),
+                    reason="file layout unresolved",
+                )
+                return
             succeeded = (
                 db.query(IngestionJob)
                 .filter(
@@ -418,6 +534,9 @@ def run_ingestion_job(
                         IngestionJob.canonicalization_version: RAMAN_CANONICALIZATION_VERSION,
                         IngestionJob.extracted_metadata_raw: metadata.model_dump(mode="json"),
                         IngestionJob.sanity_check_flags: flags,
+                        IngestionJob.file_layout: layout.model_dump(mode="json"),
+                        IngestionJob.structure_preview: preview.model_dump(mode="json"),
+                        IngestionJob.layout_source: layout_source,
                         IngestionJob.status: IngestionStatus.succeeded,
                         IngestionJob.finished_at: now,
                         IngestionJob.lease_token: None,
@@ -446,6 +565,8 @@ def run_ingestion_job(
                 ingestion_job_id=str(job.id),
                 raw_file_id=str(raw_file.id),
                 parser_used=parser_used,
+                layout_source=layout_source,
+                trace_count=len(layout.traces),
             )
         except Exception as exc:  # noqa: BLE001 - any failure here must land as a failed job, not crash the background task
             db.rollback()

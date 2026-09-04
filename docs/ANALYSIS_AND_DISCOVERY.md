@@ -44,6 +44,64 @@ index is based on corpus and latency measurements, not speculation.
 Search remains objective: reactions, votes, comments, reports, and trending
 activity cannot affect feature eligibility, ranking, or similarity scores.
 
+## Reference library and mixture deconvolution
+
+The Data Lab's **Library** tab identifies a spectrum against a public corpus of
+named compounds — bundled open reference data (RRUFF unoriented high-resolution,
+CC-BY) plus user contributions. A reference is not a separate kind of spectrum:
+it is an ordinary published `Spectrum` plus a `reference_entries` row carrying
+the identity claim, so imports and contributions share one ingestion, storage
+and indexing path.
+
+Matching runs in stages, because cosine over the feature vectors is accurate but
+linear in corpus size:
+
+1. **Prefilter (SQL).** `spectrum_peaks.binned_cm1` holds each spectrum's peak
+   positions quantized to 4 cm-1 buckets under a GIN index, so "which references
+   have a band near 1085?" is one index scan. The query fans out ±8 cm-1 around
+   its three strongest bands, because a band landing on a bucket edge would
+   otherwise be missed. Peak positions are parabola-refined before binning for
+   the same reason.
+2. **Score.** Cosine over the existing 512-point similarity vectors, on the
+   survivors only, reusing `raman_similarity` unchanged.
+3. **Deconvolve, on request.** Non-negative least squares over a caller-chosen
+   set of references.
+
+If the narrow rung finds nothing the query widens to the primary band alone, and
+only then falls back to a full scan. Which rung answered is reported as
+`prefilter_stage` — a full scan is both slow and a hint the match is weak, so it
+is surfaced rather than hidden. Finding *few* peak-sharing candidates is a
+success, not a shortfall: an early draft treated it as failure and fell through
+to the full scan the index exists to avoid.
+
+**Trust tiers.** Bundled references are `curated`; user contributions are
+`community` — matchable immediately, with no moderation gate, but ranked below a
+curated entry at equal similarity (similarity is rounded to 4 dp before the tier
+term, or float noise defeats the tie-break). The tier is returned with every
+match so the UI can badge it. This is an accepted, bounded risk: a community
+entry with a genuinely higher cosine *will* win, which is what "matchable
+immediately" means. Reporting flags an entry for review without removing it;
+only a moderator can demote or remove.
+
+**Deconvolution returns spectral weights, not concentrations.** Reference
+columns are clipped non-negative and L2-normalized before the fit, so a weight
+is the share of *spectral contribution*. Raman cross-sections differ by orders
+of magnitude between compounds, so converting these to mole or mass fractions
+would need per-compound response factors the platform does not have. Two extra
+non-negative design columns (constant and ramp) absorb residual background;
+without them NNLS inflates the largest component to soak up a DC pedestal and
+the composition is quietly wrong. Near-duplicate references — polymorphs, solid
+solutions — make the split between them arbitrary while the residual still looks
+excellent, so pairwise collinearity and the design matrix's condition number are
+reported and shown, not buried.
+
+The reference corpus is excluded from `/search/spectra` and
+`/search/similar/{id}` by an anti-join. Those endpoints are discovery over
+user-contributed science; identification against known compounds is
+`/v1/library/match`, which is index-served. Without the exclusion, thousands of
+seeded minerals sharing one publication timestamp would bury real uploads in a
+feed ordered by `published_at`.
+
 ## Modality verticals
 
 Raman is the sole accepted analysis and similarity adapter today. NMR and mass

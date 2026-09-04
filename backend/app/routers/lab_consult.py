@@ -45,9 +45,9 @@ from app.models.raw_file import RawFile
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.processing.algorithms.registry import ALGORITHM_REGISTRY
-from app.raman_contract import RamanDataError
 from app.ratelimit import rate_limit_llm_consult
-from app.spectra_io import load_raw_spectrum
+from app.raman_contract import RamanDataError
+from app.spectra_io import load_spectrum_trace
 
 router = APIRouter(prefix="/v1/lab", tags=["lab-consult"])
 logger = logging.getLogger(__name__)
@@ -256,7 +256,7 @@ def _summarize(spectra: list[Spectrum], db: Session) -> dict:
         raw_file = db.get(RawFile, spectrum.raw_file_id)
         if raw_file is not None:
             try:
-                wavenumbers, intensities = load_raw_spectrum(raw_file)
+                wavenumbers, intensities = load_spectrum_trace(spectrum, db)
             except (RamanDataError, ValueError, OSError, KeyError):
                 wavenumbers = intensities = np.asarray([], dtype=float)
             if wavenumbers.size:

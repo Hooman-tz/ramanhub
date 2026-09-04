@@ -41,12 +41,25 @@ export function SpectrumPickerDialog({
   /** Already attached — shown ticked and not re-added. */
   alreadyAttached = [],
   confirmLabel = "Attach",
+  /**
+   * Pick exactly one. Choosing replaces the current selection rather than
+   * adding to it, and the tick renders as a radio so the control looks like
+   * the choice it is. Without this a caller that only uses the first id — the
+   * Library's "which unknown are we identifying?" — would silently discard the
+   * other ticks.
+   */
+  single = false,
+  title = "Attach spectra",
+  description = "Pick from a dataset, or browse everything you own.",
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onConfirm: (spectrumIds: string[]) => void;
   alreadyAttached?: string[];
   confirmLabel?: string;
+  single?: boolean;
+  title?: string;
+  description?: string;
 }) {
   const [datasetId, setDatasetId] = useState<string | null>(null);
   const [picked, setPicked] = useState<Set<string>>(new Set());
@@ -75,6 +88,7 @@ export function SpectrumPickerDialog({
 
   const toggle = (id: string) =>
     setPicked((prev) => {
+      if (single) return prev.has(id) ? new Set() : new Set([id]);
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
@@ -96,10 +110,8 @@ export function SpectrumPickerDialog({
     >
       <DialogContent className="sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>Attach spectra</DialogTitle>
-          <DialogDescription>
-            Pick from a dataset, or browse everything you own.
-          </DialogDescription>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
 
         <div className="flex min-h-0 gap-3">
@@ -185,7 +197,8 @@ export function SpectrumPickerDialog({
                         >
                           <span
                             className={cn(
-                              "flex size-4 shrink-0 items-center justify-center rounded border",
+                              "flex size-4 shrink-0 items-center justify-center border",
+                              single ? "rounded-full" : "rounded",
                               isPicked || isAttached
                                 ? "bg-primary border-primary text-primary-foreground"
                                 : "border-input",

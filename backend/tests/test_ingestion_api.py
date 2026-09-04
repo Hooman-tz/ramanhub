@@ -24,12 +24,16 @@ from fastapi import FastAPI
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker
 
+from app import llm as llm_module
+from app import spectra_io
 from app.auth.jwt import encode_session_token
 from app.db.base import Base
 from app.db.session import get_db
 from app.ingestion import jobs as jobs_module
+from app.models.analysis import AnalysisDataset, AnalysisDatasetSpectrum
 from app.models.enums import FieldDataType, IngestionStatus, Modality
 from app.models.field_registry import MetadataFieldDefinition
+from app.models.file_layout_cache import FileLayoutCache
 from app.models.ingestion_job import IngestionJob
 from app.models.raw_file import RawFile
 from app.models.spectrum import Spectrum
@@ -84,8 +88,14 @@ def db_session(engine):
         # references raw_files.id; clear it before raw_files or the DELETE
         # trips spectra_raw_file_id_fkey and poisons every later test.
         session.query(Spectrum).delete()
+        # A multi-spectrum upload also creates a dataset grouping its drafts;
+        # clear the membership rows and the dataset before users, or the
+        # DELETE trips analysis_datasets_owner_id_fkey.
+        session.query(AnalysisDatasetSpectrum).delete()
+        session.query(AnalysisDataset).delete()
         session.query(RawFile).delete()
         session.query(VendorParseCache).delete()
+        session.query(FileLayoutCache).delete()
         session.query(MetadataFieldDefinition).delete()
         session.query(User).delete()
         session.commit()
@@ -110,6 +120,11 @@ def fake_storage(engine):
     with (
         patch.object(raw_files_router, "upload_bytes", side_effect=_upload),
         patch.object(jobs_module, "download_bytes", side_effect=_download),
+        # The layout-declaration endpoint re-reads the bytes to check the
+        # owner's answer against them.
+        patch.object(ingestion_jobs_router, "download_bytes", side_effect=_download),
+        # Reading a spectrum's own trace back out of the raw object.
+        patch.object(spectra_io, "download_bytes", side_effect=_download),
         patch.object(jobs_module, "SessionLocal", test_session_factory),
     ):
         yield store
@@ -325,3 +340,257 @@ def test_direct_duplicate_upload_reuses_private_raw_file_and_job(test_app, db_se
     assert second.json()["deduplicated"] is True
     assert second.json()["raw_file_id"] == first.json()["raw_file_id"]
     assert second.json()["ingestion_job_id"] == first.json()["ingestion_job_id"]
+
+
+# ---------------------------------------------------------------------------
+# Multi-spectrum files
+#
+# A Raman export routinely holds more than one spectrum. These cover the whole
+# path: detect the layout, make one draft per trace, group them, and — the
+# regression that matters most — keep each draft reading its OWN column.
+# ---------------------------------------------------------------------------
+
+
+def _column_major_bytes(traces: int = 3, points: int = 30) -> bytes:
+    header = "Wavenumber\t" + "\t".join(f"sample_{n}" for n in range(traces))
+    lines = [header]
+    for index in range(points):
+        row = [f"{100 + index * 0.5:.4f}"]
+        row += [f"{(n + 1) * 1000 + index:.3f}" for n in range(traces)]
+        lines.append("\t".join(row))
+    return "\n".join(lines).encode()
+
+
+def _row_major_bytes(traces: int = 3, points: int = 30) -> bytes:
+    axis = ["wavenumber"] + [f"{100 + index * 0.5:.4f}" for index in range(points)]
+    lines = [",".join(axis)]
+    for n in range(traces):
+        lines.append(
+            ",".join(
+                [f"sample_{n}"] + [f"{(n + 1) * 1000 + index:.3f}" for index in range(points)]
+            )
+        )
+    return "\n".join(lines).encode()
+
+
+async def _upload_bytes(test_app, user, content: bytes, filename: str):
+    token = encode_session_token(user)
+    async with _client(test_app) as client:
+        client.cookies.set("session", token)
+        return await client.post(
+            "/raw-files", files={"file": (filename, content, "text/plain")}
+        )
+
+
+def _confirm(test_app, user, job_id: str):
+    token = encode_session_token(user)
+
+    async def _run():
+        async with _client(test_app) as client:
+            client.cookies.set("session", token)
+            return await client.patch(
+                f"/ingestion-jobs/{job_id}",
+                json={"metadata": {"modality": "raman", "instrument_vendor": "Test"}},
+            )
+
+    return run_async(_run())
+
+
+def _ingest(test_app, db_session, user, content: bytes, filename: str, *, llm: bool = True) -> str:
+    resp = run_async(_upload_bytes(test_app, user, content, filename))
+    assert resp.status_code == 202, resp.text
+    job_id = resp.json()["ingestion_job_id"]
+    if llm:
+        jobs_module.run_ingestion_job(uuid.UUID(job_id))
+    else:
+        # No key configured => `llm_configured()` is False and the model rungs
+        # are skipped, which is also how a real deployment behaves without
+        # OPENROUTER_API_KEY. Keeps these tests off the network.
+        with patch.object(llm_module.settings, "OPENROUTER_API_KEY", ""):
+            jobs_module.run_ingestion_job(uuid.UUID(job_id))
+    db_session.expire_all()
+    return job_id
+
+
+@requires_db
+def test_a_multi_spectrum_file_becomes_one_draft_per_trace(test_app, db_session, fake_storage):
+    user = _make_user(db_session, "sub-multi-1", "multi1@example.com")
+    job_id = _ingest(test_app, db_session, user, _column_major_bytes(), "three_samples.txt")
+
+    job = db_session.get(IngestionJob, uuid.UUID(job_id))
+    assert job.status == IngestionStatus.succeeded
+    assert job.layout_source == "heuristic"
+    assert len(job.file_layout["traces"]) == 3
+    assert job.sanity_check_flags["array.multi_trace"]
+
+    assert _confirm(test_app, user, job_id).status_code == 200
+    db_session.expire_all()
+
+    drafts = (
+        db_session.query(Spectrum)
+        .filter(Spectrum.raw_file_id == job.raw_file_id)
+        .order_by(Spectrum.source_trace_index)
+        .all()
+    )
+    assert [draft.source_trace_index for draft in drafts] == [1, 2, 3]
+    assert [draft.source_trace_label for draft in drafts] == ["sample_0", "sample_1", "sample_2"]
+
+    from app.models.analysis import AnalysisDatasetSpectrum
+
+    job = db_session.get(IngestionJob, uuid.UUID(job_id))
+    assert job.draft_dataset_id is not None
+    assert job.draft_spectrum_id == drafts[0].id
+    members = (
+        db_session.query(AnalysisDatasetSpectrum)
+        .filter(AnalysisDatasetSpectrum.dataset_id == job.draft_dataset_id)
+        .all()
+    )
+    assert len(members) == 3
+
+
+@requires_db
+def test_each_draft_reads_its_own_trace(test_app, db_session, fake_storage):
+    """The regression this whole change exists to prevent: two spectra from
+    one file must not serve each other's numbers."""
+    from app.processing.cache import compute_cache_key
+    from app.spectra_io import load_spectrum_trace
+
+    user = _make_user(db_session, "sub-multi-2", "multi2@example.com")
+    job_id = _ingest(test_app, db_session, user, _column_major_bytes(), "three_samples.txt")
+    assert _confirm(test_app, user, job_id).status_code == 200
+    db_session.expire_all()
+
+    job = db_session.get(IngestionJob, uuid.UUID(job_id))
+    drafts = (
+        db_session.query(Spectrum)
+        .filter(Spectrum.raw_file_id == job.raw_file_id)
+        .order_by(Spectrum.source_trace_index)
+        .all()
+    )
+    loaded = [load_spectrum_trace(draft, db_session) for draft in drafts]
+    first_intensities = [float(intensities[0]) for _x, intensities in loaded]
+    assert first_intensities == [1000.0, 2000.0, 3000.0]
+    # Shared wavenumber axis, distinct intensities.
+    assert all(list(loaded[0][0]) == list(x) for x, _y in loaded)
+
+    keys = {compute_cache_key(job.raw_file_id, "ledger-hash", d.source_trace_index) for d in drafts}
+    assert len(keys) == 3
+    # The first trace keeps the key it had when a file could only hold one
+    # spectrum, so nothing cached before this change is orphaned.
+    assert compute_cache_key(job.raw_file_id, "ledger-hash") in keys
+
+
+@requires_db
+def test_reconfirming_a_multi_spectrum_file_does_not_duplicate_drafts(
+    test_app, db_session, fake_storage
+):
+    user = _make_user(db_session, "sub-multi-3", "multi3@example.com")
+    job_id = _ingest(test_app, db_session, user, _column_major_bytes(), "three_samples.txt")
+    assert _confirm(test_app, user, job_id).status_code == 200
+    db_session.expire_all()
+    job = db_session.get(IngestionJob, uuid.UUID(job_id))
+    drafts = db_session.query(Spectrum).filter(Spectrum.raw_file_id == job.raw_file_id).all()
+    drafts[0].title = "Renamed by the scientist"
+    db_session.commit()
+
+    assert _confirm(test_app, user, job_id).status_code == 200
+    db_session.expire_all()
+    again = db_session.query(Spectrum).filter(Spectrum.raw_file_id == job.raw_file_id).all()
+    assert len(again) == 3
+    assert {d.title for d in again} >= {"Renamed by the scientist"}
+
+
+# ---------------------------------------------------------------------------
+# Asking the owner when detection gives up
+# ---------------------------------------------------------------------------
+
+
+def _declare(test_app, user, job_id: str, layout: dict):
+    token = encode_session_token(user)
+
+    async def _run():
+        async with _client(test_app) as client:
+            client.cookies.set("session", token)
+            return await client.post(f"/ingestion-jobs/{job_id}/layout", json={"layout": layout})
+
+    return run_async(_run())
+
+
+@requires_db
+def test_an_unresolvable_file_asks_the_owner_instead_of_failing(
+    test_app, db_session, fake_storage
+):
+    """A row-major file defeats the heuristics, and with no LLM key there is
+    no rung left. The upload must survive as a question, not die as a
+    failure."""
+    user = _make_user(db_session, "sub-layout-1", "layout1@example.com")
+    job_id = _ingest(test_app, db_session, user, _row_major_bytes(), "transposed.csv", llm=False)
+
+    job = db_session.get(IngestionJob, uuid.UUID(job_id))
+    assert job.status == IngestionStatus.needs_input
+    assert job.layout_source == "unresolved"
+    # Everything already worked out is kept, so answering is the only work left.
+    assert job.extracted_metadata_raw is not None
+    assert job.structure_preview["column_count"] == 31
+    raw_file = db_session.get(RawFile, job.raw_file_id)
+    assert raw_file.upload_status.value == "uploaded"
+
+
+@requires_db
+def test_a_declared_layout_that_cannot_be_read_is_refused(test_app, db_session, fake_storage):
+    user = _make_user(db_session, "sub-layout-2", "layout2@example.com")
+    job_id = _ingest(test_app, db_session, user, _row_major_bytes(), "transposed.csv", llm=False)
+
+    resp = _declare(
+        test_app,
+        user,
+        job_id,
+        {"orientation": "column_major", "delimiter": ",", "traces": [{"index": 1}]},
+    )
+    assert resp.status_code == 422
+    db_session.expire_all()
+    assert db_session.get(IngestionJob, uuid.UUID(job_id)).status == IngestionStatus.needs_input
+
+
+@requires_db
+def test_a_declared_layout_finishes_the_job_and_is_remembered(
+    test_app, db_session, fake_storage
+):
+    from app.ingestion.structure import build_preview, cached_layout, compute_structure_hash
+
+    user = _make_user(db_session, "sub-layout-3", "layout3@example.com")
+    content = _row_major_bytes()
+    job_id = _ingest(test_app, db_session, user, content, "transposed.csv", llm=False)
+
+    resp = _declare(
+        test_app,
+        user,
+        job_id,
+        {
+            "orientation": "row_major",
+            "delimiter": ",",
+            "header_rows": 0,
+            "x_index": 0,
+            "label_index": 0,
+            "traces": [
+                {"index": 1, "label": "sample_0"},
+                {"index": 2, "label": "sample_1"},
+                {"index": 3, "label": "sample_2"},
+            ],
+        },
+    )
+    assert resp.status_code == 200, resp.text
+    db_session.expire_all()
+    job = db_session.get(IngestionJob, uuid.UUID(job_id))
+    assert job.status == IngestionStatus.succeeded
+    assert job.layout_source == "user"
+
+    assert _confirm(test_app, user, job_id).status_code == 200
+    db_session.expire_all()
+    drafts = db_session.query(Spectrum).filter(Spectrum.raw_file_id == job.raw_file_id).all()
+    assert len(drafts) == 3
+
+    # The next upload of this format must not ask again.
+    remembered = cached_layout(db_session, compute_structure_hash(build_preview(content)))
+    assert remembered is not None
+    assert remembered.source == "user"

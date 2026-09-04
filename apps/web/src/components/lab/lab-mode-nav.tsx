@@ -1,7 +1,7 @@
 "use client";
 
 import type { LucideIcon } from "lucide-react";
-import { Boxes, Brain, Network, SlidersHorizontal } from "lucide-react";
+import { Boxes, Brain, Network, ScanSearch, SlidersHorizontal } from "lucide-react";
 
 import { cn } from "@ramanhub/ui";
 
@@ -12,13 +12,19 @@ import { cn } from "@ramanhub/ui";
  * over it. The office is for paperwork — activity, messages, project status —
  * so nothing here duplicates it.
  */
-export type LabMode = "database" | "prep" | "unsupervised" | "supervised";
+export type LabMode =
+  | "database"
+  | "prep"
+  | "unsupervised"
+  | "supervised"
+  | "library";
 
 export const LAB_MODES: LabMode[] = [
   "database",
   "prep",
   "unsupervised",
   "supervised",
+  "library",
 ];
 
 /** Narrow an untrusted `?mode=` value; anything unknown falls back to the home tab. */
@@ -59,6 +65,15 @@ const TABS: {
     icon: Brain,
     hint: "Classification and regression",
   },
+  {
+    // `ScanSearch` rather than a book glyph: the job here is identifying the
+    // selected spectrum, and `Boxes` already owns the container metaphor for
+    // Database.
+    mode: "library",
+    label: "Library",
+    icon: ScanSearch,
+    hint: "Match against reference spectra",
+  },
 ];
 
 export function LabModeNav({
@@ -70,7 +85,9 @@ export function LabModeNav({
 }) {
   return (
     <div
-      className="flex flex-wrap items-center gap-1 rounded-lg border p-1"
+      // `min-h-10` matches the rail header strips, so all three columns start
+      // on the same line rather than stepping down by a few pixels.
+      className="flex min-h-10 flex-wrap items-center gap-1 rounded-lg border p-1"
       role="tablist"
       aria-label="Data Lab section"
     >

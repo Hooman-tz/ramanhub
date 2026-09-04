@@ -50,6 +50,7 @@ from app.enrichment import EnrichmentError, summarize_abstract
 from app.journals import match_journal
 from app.llm_credentials import llm_available_for, resolve_for_user
 from app.models.accession import next_finding_accession
+from app.models.analysis import AnalysisDataset
 from app.models.enums import FindingEntryKind, FindingState, SpectrumState
 from app.models.finding import (
     Finding,
@@ -117,6 +118,7 @@ class FindingCreate(BaseModel):
     tags: list[str] | None = None
     repo_url: str | None = REPO_URL_FIELD
     co_author_handles: list[str] | None = CO_AUTHOR_FIELD
+    dataset_id: UUID | None = None
 
 
 class FindingUpdate(BaseModel):
@@ -127,6 +129,8 @@ class FindingUpdate(BaseModel):
     doi: str | None = None
     repo_url: str | None = REPO_URL_FIELD
     co_author_handles: list[str] | None = CO_AUTHOR_FIELD
+    #: Explicit null unlinks the dataset; omitting the key leaves it alone.
+    dataset_id: UUID | None = None
 
 
 class FindingPublish(BaseModel):
@@ -220,6 +224,13 @@ class FindingOut(BaseModel):
     license_id: str | None
     doi: str | None
     repo_url: str | None
+    # The dataset this write-up is about, denormalised onto the response so the
+    # post page renders its Data card without a second round trip. `dataset_*`
+    # are all None when the post attaches loose spectra and names no dataset.
+    dataset_id: UUID | None = None
+    dataset_accession: str | None = None
+    dataset_name: str | None = None
+    dataset_state: str | None = None
     publication_metadata: dict | None
     tags: list | None
     published_at: datetime | None
@@ -403,6 +414,22 @@ def _apply_co_authors(finding: Finding, users: list[User], db: Session) -> None:
         db.add(FindingCoAuthor(finding_id=finding.id, user_id=user.id, position=position))
 
 
+def _resolve_owned_dataset_id(dataset_id: UUID | None, user: User, db: Session) -> UUID | None:
+    """Validate a `dataset_id` a post wants to name as its main dataset.
+
+    Only a dataset you own qualifies — otherwise anyone could point their
+    write-up at someone else's folder and imply an association that isn't
+    there. 404 (not 403) so an unowned id is indistinguishable from a
+    nonexistent one, matching every other gate in this module.
+    """
+    if dataset_id is None:
+        return None
+    dataset = db.get(AnalysisDataset, dataset_id)
+    if dataset is None or dataset.owner_id != user.id:
+        raise HTTPException(status_code=404, detail="Analysis dataset not found")
+    return dataset.id
+
+
 def serialize_finding(finding: Finding, db: Session, include_body: bool = True) -> FindingOut:
     owner = db.get(User, finding.owner_id)
     out = FindingOut(
@@ -425,7 +452,17 @@ def serialize_finding(finding: Finding, db: Session, include_body: bool = True) 
         created_at=finding.created_at,
         updated_at=finding.updated_at,
         co_authors=_co_authors(finding.id, db),
+        dataset_id=finding.dataset_id,
     )
+
+    if finding.dataset_id is not None:
+        dataset = db.get(AnalysisDataset, finding.dataset_id)
+        if dataset is not None:
+            out.dataset_accession = dataset.accession
+            out.dataset_name = dataset.name
+            out.dataset_state = (
+                dataset.state.value if hasattr(dataset.state, "value") else dataset.state
+            )
 
     if include_body:
         entries = (
@@ -547,6 +584,7 @@ def create_finding(
         next_steps_md=body.next_steps_md,
         tags=_normalize_tags(body.tags),
         repo_url=body.repo_url,
+        dataset_id=_resolve_owned_dataset_id(body.dataset_id, user, db),
         state=FindingState.draft,
     )
     db.add(finding)
@@ -615,6 +653,9 @@ def update_finding(
         finding.doi = body.doi or None
     if body.repo_url is not None:
         finding.repo_url = body.repo_url or None
+    if "dataset_id" in body.model_fields_set:
+        # Explicit None unlinks; omitting the key leaves the link alone.
+        finding.dataset_id = _resolve_owned_dataset_id(body.dataset_id, user, db)
     if body.next_steps_md is not None:
         finding.next_steps_md = body.next_steps_md or None
     if body.co_author_handles is not None:
@@ -692,6 +733,54 @@ async def link_doi(
     db.commit()
     db.refresh(finding)
     return serialize_finding(finding, db)
+
+
+@router.post(
+    "/findings/{finding_id}/fork-data",
+    status_code=status.HTTP_201_CREATED,
+)
+def fork_finding_data(
+    finding_id: UUID,
+    db: Session = Depends(get_db),
+    # Guests may fork, matching `POST /spectra/{id}/fork`.
+    user: User = Depends(get_current_user),
+):
+    """Fork every spectrum attached to this post into a new dataset in the
+    caller's lab — the one call behind the post page's "Fork to my lab".
+
+    Deliberately works whether or not the finding names a `dataset_id`: the
+    posts that predate publishable datasets attach loose spectra, and their
+    readers should still be able to take the data and work on it. The result
+    is always a fresh draft dataset of the caller's own copies, with each
+    source spectrum's processing ledger replayed onto its fork.
+
+    Returns the new dataset (an `analysis.DatasetOut`); the response model is
+    left unannotated to avoid importing the analysis router's schema at module
+    scope, which would close the acyclic import graph the routers maintain.
+    """
+    finding = db.get(Finding, finding_id)
+    if finding is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+    require_finding_readable(finding, user)
+
+    members = _members(finding_id, db)
+    if not members:
+        raise HTTPException(
+            status_code=422, detail="This post has no attached spectra to fork."
+        )
+
+    spectra = [spectrum for _link, spectrum in members]
+    # A published post can still hold a member whose own state was pulled back;
+    # gate each one rather than assuming the post's readability covers them.
+    for spectrum in spectra:
+        require_owner_or_public(spectrum, user)
+
+    from app.routers.analysis import _dataset_payload, fork_spectra_into_dataset
+
+    dataset = fork_spectra_into_dataset(spectra, user, db, name=finding.title)
+    db.commit()
+    db.refresh(dataset)
+    return _dataset_payload(dataset, db, user)
 
 
 @router.get("/findings/{finding_id}/overlay", response_model=FindingOverlayResponse)

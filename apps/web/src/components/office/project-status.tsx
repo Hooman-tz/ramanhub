@@ -25,6 +25,10 @@ function status(s: LibrarySpectrum): { dot: string; label: string } {
  * A read-only status board: where each of the owner's spectra sits in the
  * draft -> metadata -> QC -> published pipeline.
  *
+ * Titled "Spectrum pipeline", not "Project status": it lists spectra, and a
+ * project is an `AnalysisDataset` — rendered by `ProjectBoard` directly above
+ * this card. One word cannot mean both things on one page.
+ *
  * Deliberately has no management controls. The office is for paperwork —
  * tracking what state things are in — while creating, moving and deleting
  * data belongs to the Data Lab, so there is exactly one place to change a
@@ -40,7 +44,7 @@ export function ProjectStatus() {
   return (
     <Card className="gap-0 overflow-hidden py-0">
       <div className="border-border flex items-center justify-between border-b px-5 py-3.5">
-        <div className="text-sm font-semibold">Project status</div>
+        <div className="text-sm font-semibold">Spectrum pipeline</div>
         <Link
           href="/lab"
           className="text-primary text-[11px] font-medium hover:underline"

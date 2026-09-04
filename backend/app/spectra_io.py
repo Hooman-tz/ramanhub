@@ -16,10 +16,20 @@ long-term design.
 from __future__ import annotations
 
 import numpy as np
+from sqlalchemy.orm import Session
 
+from app.ingestion.structure import build_preview, extract_trace, fallback_layout
+from app.models.ingestion_job import IngestionJob
 from app.models.raw_file import RawFile
+from app.models.spectrum import Spectrum
 from app.raman_contract import canonicalize_raman_arrays
+from app.schemas.ingestion import FileLayout
 from app.storage.s3_client import download_bytes
+
+# The trace every pre-layout spectrum was implicitly read from: column 1 of a
+# two-column file. Spectra on this trace keep the processing cache keys they
+# have always had, so no existing cached array or ledger is invalidated.
+DEFAULT_TRACE_INDEX = 1
 
 
 def parse_two_column_raman(raw_bytes: bytes) -> tuple[np.ndarray, np.ndarray]:
@@ -50,9 +60,62 @@ def parse_two_column_raman(raw_bytes: bytes) -> tuple[np.ndarray, np.ndarray]:
 
 
 def load_raw_spectrum(raw_file: RawFile) -> tuple[np.ndarray, np.ndarray]:
-    """Load a raw object into the canonical Raman array representation."""
+    """Load a raw object into the canonical Raman array representation, using
+    the historical two-column assumption.
+
+    Still correct for the single-trace files that make up everything ingested
+    before layout detection, and for callers that verify immutable bytes
+    rather than serve a particular spectrum. Anything rendering or processing
+    a specific `Spectrum` should call `load_spectrum_trace`, which honours
+    the file's detected layout and that spectrum's trace.
+    """
     raw_bytes = download_bytes(raw_file.storage_bucket, raw_file.storage_key)
     wavenumbers, intensities = parse_two_column_raman(raw_bytes)
+    canonical_x, canonical_y, _flags = canonicalize_raman_arrays(wavenumbers, intensities)
+    return canonical_x, canonical_y
+
+
+def layout_for_raw_file(raw_file_id, db: Session) -> FileLayout | None:
+    """The layout detected for this file at ingestion time, or None when the
+    file predates detection or its structure was never resolved."""
+    stored = (
+        db.query(IngestionJob.file_layout)
+        .filter(IngestionJob.raw_file_id == raw_file_id)
+        .scalar()
+    )
+    if not stored:
+        return None
+    try:
+        return FileLayout.model_validate(stored)
+    except ValueError:
+        return None
+
+
+def load_spectrum_trace(spectrum: Spectrum, db: Session) -> tuple[np.ndarray, np.ndarray]:
+    """Canonical arrays for ONE spectrum, honouring its file's layout.
+
+    A raw file can hold many spectra; `spectrum.source_trace_index` says which
+    of them this row is. Falling back to the two-column read when no layout
+    was stored keeps every pre-existing spectrum reading exactly as before.
+    """
+    raw_file = db.get(RawFile, spectrum.raw_file_id)
+    if raw_file is None:
+        return np.array([]), np.array([])
+    raw_bytes = download_bytes(raw_file.storage_bucket, raw_file.storage_key)
+    layout = layout_for_raw_file(spectrum.raw_file_id, db)
+    trace_index = spectrum.source_trace_index
+    if layout is None:
+        if trace_index is None or trace_index == DEFAULT_TRACE_INDEX:
+            wavenumbers, intensities = parse_two_column_raman(raw_bytes)
+        else:
+            # A trace was recorded but the layout is gone; read it under the
+            # historical shape rather than silently serving trace 1's data.
+            layout = fallback_layout(build_preview(raw_bytes))
+            wavenumbers, intensities = extract_trace(raw_bytes, layout, trace_index)
+    else:
+        if trace_index is None:
+            trace_index = layout.default_trace_index
+        wavenumbers, intensities = extract_trace(raw_bytes, layout, trace_index)
     canonical_x, canonical_y, _flags = canonicalize_raman_arrays(wavenumbers, intensities)
     return canonical_x, canonical_y
 

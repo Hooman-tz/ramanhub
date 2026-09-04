@@ -46,6 +46,17 @@ class IngestionJob(Base):
     extracted_metadata_raw: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     sanity_check_flags: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
     extracted_metadata_confirmed: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # How to read numbers out of this file: a serialized
+    # `app.schemas.ingestion.FileLayout`. NULL means detection has not run or
+    # could not resolve it (see `status == needs_input`), in which case array
+    # loading falls back to the historical two-column assumption.
+    file_layout: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # A serialized `PreviewGrid`, kept so the UI can show the user the actual
+    # cells when asking them to declare a layout by hand.
+    structure_preview: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    # Which rung of the detection ladder answered: cache | heuristic | llm |
+    # llm-wide | user | unresolved. Provenance, same as `parser_used`.
+    layout_source: Mapped[str | None] = mapped_column(String, nullable=True)
     error_message: Mapped[str | None] = mapped_column(Text, nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, server_default=text("0"))
     max_attempts: Mapped[int] = mapped_column(Integer, default=3, server_default=text("3"))
@@ -53,8 +64,15 @@ class IngestionJob(Base):
     lease_token: Mapped[str | None] = mapped_column(String, nullable=True)
     lease_expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # The FIRST draft created from this file. Not unique any more: a
+    # multi-spectrum file yields one draft per trace, and they are grouped by
+    # `draft_dataset_id`. This column stays as the "open this upload" target.
     draft_spectrum_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("spectra.id"), nullable=True, unique=True
+        UUID(as_uuid=True), ForeignKey("spectra.id"), nullable=True, index=True
+    )
+    # Set only when a file produced more than one draft.
+    draft_dataset_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("analysis_datasets.id"), nullable=True, index=True
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

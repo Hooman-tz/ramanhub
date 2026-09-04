@@ -36,6 +36,8 @@ import { PREVIEW_ALGORITHMS, PreviewError } from "./algorithms";
 export { PreviewError } from "./algorithms";
 export { analyzePca, AnalysisError } from "./multivariate";
 export type { AnalysisInput, PcaResult } from "./multivariate";
+export { detectPeaks, binPeak, PeakError, PEAK_DETECTOR_VERSION, PEAK_BIN_WIDTH_CM1 } from "./peaks";
+export type { DetectedPeak, PeakProfile, PeakOptions } from "./peaks";
 
 /** A spectrum held in the client-side working buffer. */
 export interface BufferedSpectrum {
