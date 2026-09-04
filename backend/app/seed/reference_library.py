@@ -353,8 +353,16 @@ def import_source(
 ROD_BASE_URL = "https://solsa.crystallography.net/rod"
 #: ROD serves one CIF-ish file per entry under a COD-style fanned-out path,
 #: e.g. id 1000001 -> cif/1/00/00/1000001.rod.
-ROD_MIN_ID = 1000001
-ROD_MAX_ID = 1001400
+#:
+#: Ids are not one contiguous block: probing found two series, the main
+#: deposit series and a smaller second one (RRUFF-derived spectra contributed
+#: into ROD). Each range is carried a little past its observed end so newly
+#: deposited entries are picked up without editing this file; unused ids just
+#: 404 and cost one polite request each.
+ROD_ID_RANGES: tuple[tuple[int, int], ...] = (
+    (1000001, 1000800),
+    (2000001, 2000100),
+)
 
 
 def rod_entry_path(rod_id: int) -> str:
@@ -510,8 +518,7 @@ class RamanOpenDatabase:
 def fetch_rod_archive(
     target_dir: Path,
     *,
-    start: int = ROD_MIN_ID,
-    end: int = ROD_MAX_ID,
+    ranges: tuple[tuple[int, int], ...] = ROD_ID_RANGES,
     delay_seconds: float = 0.5,
     limit: int | None = None,
 ) -> int:
@@ -523,11 +530,12 @@ def fetch_rod_archive(
     404 as "that id is unused" rather than an error — the range is sparse.
     """
     target_dir.mkdir(parents=True, exist_ok=True)
+    ids = [i for start, end in ranges for i in range(start, end + 1)]
     saved = 0
     with httpx.Client(
         timeout=30.0, headers={"User-Agent": "RamanHub reference-library importer"}
     ) as client:
-        for rod_id in range(start, end + 1):
+        for rod_id in ids:
             if limit is not None and saved >= limit:
                 break
             destination = target_dir / f"{rod_id}.rod"
@@ -538,14 +546,16 @@ def fetch_rod_archive(
             try:
                 response = client.get(url)
             except httpx.HTTPError:
-                continue
-            if response.status_code == 404:
-                continue
-            if response.status_code != 200:
+                response = None
+            # Delay after *every* request, not just the ones that returned a
+            # file. The id range is sparse, so skipping the wait on a 404 would
+            # burst through the unused stretches at full speed — the opposite
+            # of what a delay is for.
+            time.sleep(delay_seconds)
+            if response is None or response.status_code != 200:
                 continue
             destination.write_bytes(response.content)
             saved += 1
-            time.sleep(delay_seconds)
     return saved
 
 
