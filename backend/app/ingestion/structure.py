@@ -44,12 +44,20 @@ from app.llm_credentials import LLMCredential, platform_credential
 from app.models.file_layout_cache import FileLayoutCache
 from app.raman_contract import MIN_CANONICAL_POINTS, RamanDataError, canonicalize_raman_arrays
 from app.schemas.ingestion import (
+    MAX_NUMERIC_FRACTION_COLUMNS,
     MAX_PREVIEW_COLUMNS,
     MAX_PREVIEW_ROWS,
+    MAX_PREVIEW_SHOWN_COLUMNS,
     MAX_TRACES,
+    NUMERIC_FRACTION_SAMPLE_ROWS,
+    PREVIEW_HEAD_COLUMNS,
+    PREVIEW_MID_COLUMNS,
+    PREVIEW_PATCH_FRACTIONS,
+    PREVIEW_PATCH_ROWS,
     WHITESPACE_DELIMITER,
     FileLayout,
     PreviewGrid,
+    PreviewPatch,
     TraceSpec,
 )
 
@@ -180,11 +188,58 @@ def _data_line_stats(
     return counts[modal], round(sum(ratios[modal]) / len(ratios[modal]), 3), modal
 
 
+def _shown_columns(column_count: int, limit: int) -> list[int]:
+    """Absolute indexes of the columns worth printing.
+
+    A narrow file shows everything. A wide one shows the first few (where an
+    axis lives), a few from the middle (are they all the same shape?) and the
+    last few (is there a trailing label or junk column?) — which answers the
+    questions that matter without printing two hundred columns at a model.
+    """
+    if column_count <= limit:
+        return list(range(column_count))
+    tail = limit - PREVIEW_HEAD_COLUMNS - PREVIEW_MID_COLUMNS
+    mid_start = max(PREVIEW_HEAD_COLUMNS, (column_count - PREVIEW_MID_COLUMNS) // 2)
+    picked = set(range(PREVIEW_HEAD_COLUMNS))
+    picked.update(range(mid_start, min(mid_start + PREVIEW_MID_COLUMNS, column_count)))
+    picked.update(range(max(0, column_count - tail), column_count))
+    return sorted(picked)
+
+
+def _patch_plan(body_len: int, *, size: int, after: int) -> list[tuple[str, int]]:
+    """Where to take the extra body samples, as `(label, body_relative_start)`.
+
+    Dynamic in the file's length: a body the head window already covers gets
+    no patches at all, a short one gets whatever fits without overlapping, and
+    a long one gets the full spread. Overlapping windows would spend prompt
+    tokens re-showing rows the model has already seen.
+    """
+    if body_len <= after:
+        return []
+    anchors: list[tuple[str, int]] = [
+        (f"{int(fraction * 100)}%", int(body_len * fraction))
+        for fraction in PREVIEW_PATCH_FRACTIONS
+    ]
+    anchors.append(("tail", body_len - size))
+
+    plan: list[tuple[str, int]] = []
+    for label, start in anchors:
+        start = min(max(start, after), max(after, body_len - size))
+        if start >= body_len:
+            continue
+        if start < after:
+            continue
+        if plan and start < plan[-1][1] + size:
+            continue
+        plan.append((label, start))
+    return plan
+
+
 def build_preview(
     raw_bytes: bytes,
     *,
     max_rows: int = 10,
-    max_columns: int = 10,
+    max_columns: int = MAX_PREVIEW_SHOWN_COLUMNS,
     comment_prefixes: list[str] | None = None,
 ) -> PreviewGrid:
     """Summarize a raw file's text body: delimiter, column count, where the
@@ -258,9 +313,14 @@ def build_preview(
             blank_separated_blocks += 1
             in_block = True
 
+    columns_shown = _shown_columns(column_count, max_columns)
+
     def _cells(line: str) -> list[str]:
-        cells = split_cells(line, best_delimiter)[:max_columns]
-        return [cell[:MAX_PREVIEW_CELL_CHARS] for cell in cells]
+        cells = split_cells(line, best_delimiter)
+        return [
+            cells[column][:MAX_PREVIEW_CELL_CHARS] if column < len(cells) else ""
+            for column in columns_shown
+        ]
 
     # Only the tail of the preamble is worth showing: column names sit
     # directly above the numbers.
@@ -268,14 +328,36 @@ def build_preview(
     body_lines = content_lines[header_rows:]
     rows = [_cells(line) for line in body_lines[:max_rows]]
 
+    # Everything the head window cannot see: block boundaries further down,
+    # a shape change mid-file, a ragged footer.
+    patches = [
+        PreviewPatch(
+            label=label,
+            start_row=start,
+            rows=[_cells(line) for line in body_lines[start : start + PREVIEW_PATCH_ROWS]],
+        )
+        for label, start in _patch_plan(
+            len(body_lines), size=PREVIEW_PATCH_ROWS, after=max_rows
+        )
+    ]
+
     numeric_fraction: list[float] = []
     # Data lines only. Exports routinely end with a footer marker
     # (`>>>>>End Spectral Data<<<<<`), and counting it would drag a perfectly
     # numeric column below the threshold and make the file look ambiguous.
+    #
+    # Strided across the whole body rather than taken from the first 200 rows:
+    # a file whose columns change character halfway down should not be judged
+    # on its opening.
+    stride = max(1, len(body_lines) // NUMERIC_FRACTION_SAMPLE_ROWS)
     sampled = [
-        split_cells(line, best_delimiter) for line in body_lines[:200] if _is_data(line)
+        split_cells(line, best_delimiter)
+        for line in body_lines[::stride][:NUMERIC_FRACTION_SAMPLE_ROWS]
+        if _is_data(line)
     ]
-    for column in range(min(column_count, max_columns)):
+    # Every column, not just the printed ones — one float per column is cheap
+    # and is what the heuristic rung reasons over.
+    for column in range(min(column_count, MAX_NUMERIC_FRACTION_COLUMNS)):
         cells = [row[column] for row in sampled if column < len(row)]
         numeric_fraction.append(round(_numeric_ratio(cells, decimal_separator), 3))
 
@@ -287,12 +369,14 @@ def build_preview(
         header_rows=header_rows,
         header_cells=[_cells(line) for line in header_lines],
         rows=rows,
+        columns_shown=columns_shown,
+        patches=patches,
         numeric_fraction=numeric_fraction,
         leading_comment_lines=leading_comments,
         body_lines=len(body_lines),
         blank_separated_blocks=blank_separated_blocks,
         truncated_rows=len(body_lines) > max_rows,
-        truncated_columns=column_count > max_columns,
+        truncated_columns=column_count > len(columns_shown),
     )
 
 
@@ -542,9 +626,19 @@ _LAYOUT_SCHEMA = {
 
 _LAYOUT_SYSTEM_PROMPT = (
     "You work out how a Raman spectroscopy text file is laid out, so its "
-    "spectra can be read. You are shown a small grid of the file's first "
-    "cells (already split into columns), plus per-column statistics. Decide "
-    "where the wavenumber axis is and where each spectrum's intensities are.\n"
+    "spectra can be read. You are shown a grid of the file's cells (already "
+    "split into columns), plus per-column statistics. Decide where the "
+    "wavenumber axis is and where each spectrum's intensities are.\n"
+    "\n"
+    "The grid is a SAMPLE, not the whole file:\n"
+    "- After the first rows you may see further blocks labelled `sample at "
+    "25%/50%/75%/tail of the body`. Row numbers are absolute positions in the "
+    "body, so a jump from `row 9` to `row 30` means rows were skipped, not "
+    "that they are missing. Use these to spot a wavenumber axis that RESTARTS "
+    "part-way down (stacked blocks) or a footer marker at the end.\n"
+    "- On a wide file only some columns are printed. The number in brackets is "
+    "the real column index, so `[98]` is column 98 even if `[5]` was never "
+    "shown. `columns per row` is the true count.\n"
     "\n"
     "Indexes are ZERO-BASED and are counted AFTER skipping `header_rows` "
     "non-empty, non-comment rows.\n"
@@ -590,6 +684,29 @@ def render_preview(preview: PreviewGrid) -> str:
     delimiter_name = (
         "whitespace" if preview.delimiter == WHITESPACE_DELIMITER else repr(preview.delimiter)
     )
+    shown = preview.columns_shown or list(range(len(preview.numeric_fraction)))
+
+    def _row(cells: list[str]) -> str:
+        # Always label with the ABSOLUTE column index. On a wide file the
+        # printed columns are not contiguous, and an index the model reads
+        # here has to be usable verbatim in its answer.
+        return " | ".join(
+            f"[{shown[position]}] {cell}"
+            for position, cell in enumerate(cells)
+            if position < len(shown)
+        )
+
+    # One float per column, but only spelled out for the columns actually
+    # printed — a 200-column matrix would otherwise bury the grid.
+    fractions = ", ".join(
+        f"col {index}={preview.numeric_fraction[index]}"
+        for index in shown
+        if index < len(preview.numeric_fraction)
+    )
+    all_numeric = [
+        index for index, fraction in enumerate(preview.numeric_fraction) if fraction >= 0.9
+    ]
+
     lines = [
         f"delimiter: {delimiter_name}",
         f"decimal separator: {preview.decimal_separator!r}",
@@ -597,25 +714,36 @@ def render_preview(preview: PreviewGrid) -> str:
         f"preamble rows before the numeric body (header_rows): {preview.header_rows}",
         f"rows in the numeric body: {preview.body_lines}",
         f"blank-line-separated blocks: {preview.blank_separated_blocks}",
-        "fraction of each column that parses as a number: "
-        + ", ".join(
-            f"col {index}={fraction}" for index, fraction in enumerate(preview.numeric_fraction)
+        f"fraction of each shown column that parses as a number: {fractions}",
+        (
+            f"columns that are >=90% numeric across the whole file: "
+            f"{len(all_numeric)} of {preview.column_count}"
         ),
     ]
+    if preview.truncated_columns:
+        lines.append(
+            f"showing {len(shown)} of {preview.column_count} columns: "
+            + ", ".join(str(index) for index in shown)
+        )
     if preview.header_cells:
         lines.append("")
         lines.append("last preamble rows (column names, if any, are usually here):")
         for row in preview.header_cells:
-            lines.append("  " + " | ".join(f"[{column}] {cell}" for column, cell in enumerate(row)))
+            lines.append("  " + _row(row))
     lines.append("")
     lines.append("numeric body, row 0 onwards (indexes are counted AFTER header_rows):")
     for row_index, row in enumerate(preview.rows):
-        cells = " | ".join(f"[{column}] {cell}" for column, cell in enumerate(row))
-        lines.append(f"row {row_index}: {cells}")
+        lines.append(f"row {row_index}: {_row(row)}")
     if preview.truncated_rows:
-        lines.append("(further body rows not shown)")
-    if preview.truncated_columns:
-        lines.append(f"(columns beyond {len(preview.numeric_fraction)} not shown)")
+        lines.append("(further body rows not shown; samples from deeper in the file follow)")
+    # Windows from further down. Row numbers stay body-relative and absolute,
+    # so a gap between blocks is visible as a jump in the numbering rather
+    # than being silently closed up.
+    for patch in preview.patches:
+        lines.append("")
+        lines.append(f"sample at {patch.label} of the body:")
+        for offset, row in enumerate(patch.rows):
+            lines.append(f"row {patch.start_row + offset}: {_row(row)}")
     return "\n".join(lines)
 
 

@@ -19,6 +19,7 @@ from app.ingestion.structure import (
     compute_structure_hash,
     detect_layout_heuristic,
     extract_trace,
+    render_preview,
     resolve_layout,
     verify_layout,
 )
@@ -401,3 +402,117 @@ def test_repair_does_not_touch_row_major_answers():
         source="llm",
     )
     assert structure._repair_traces(layout, preview).traces == layout.traces
+
+
+# ---------------------------------------------------------------------------
+# patch sampling — the head window alone is blind to most of a file
+# ---------------------------------------------------------------------------
+
+
+def _two_column_block(start_wavenumber: int, rows: int = 60) -> str:
+    return "\n".join(f"{start_wavenumber + i}.0\t{100 + i}.5" for i in range(rows))
+
+
+def test_patches_sample_four_regions_beyond_the_head_window():
+    raw = ("\n".join(f"{200 + i}.0\t{i}.5" for i in range(400))).encode()
+    preview = build_preview(raw)
+
+    assert [patch.label for patch in preview.patches] == ["25%", "50%", "75%", "tail"]
+    starts = [patch.start_row for patch in preview.patches]
+    assert starts == sorted(starts), "patches must be ordered and non-overlapping"
+    # The last patch reaches the real end of the body.
+    assert preview.patches[-1].start_row + len(preview.patches[-1].rows) == preview.body_lines
+
+
+def test_a_body_the_head_window_already_covers_gets_no_patches():
+    """Sampling a 8-row file five times would just re-print it."""
+    raw = ("\n".join(f"{200 + i}.0\t{i}.5" for i in range(8))).encode()
+    assert build_preview(raw).patches == []
+
+
+def test_patches_do_not_overlap_on_a_short_body():
+    raw = ("\n".join(f"{200 + i}.0\t{i}.5" for i in range(30))).encode()
+    preview = build_preview(raw)
+    seen: list[int] = []
+    for sample in preview.patches:
+        assert all(start + 6 <= sample.start_row for start in seen)
+        seen.append(sample.start_row)
+
+
+def test_a_restarting_axis_is_visible_in_the_samples():
+    """Stacked blocks are the case the old head-only window could not see:
+    the second block begins at body row 60."""
+    raw = (_two_column_block(200) + "\n\n" + _two_column_block(200)).encode()
+    preview = build_preview(raw)
+
+    assert preview.blank_separated_blocks == 2
+    rendered = render_preview(preview)
+    # The axis restarting at 200.0 well down the body is the whole signal.
+    midpoint = [p for p in preview.patches if p.start_row == 60]
+    assert midpoint and midpoint[0].rows[0][0] == "200.0"
+    assert "sample at 50% of the body" in rendered
+
+
+def test_a_trailing_footer_reaches_the_model():
+    body = "\n".join(f"{200 + i}.0,{i}.5" for i in range(300))
+    raw = (body + "\n>>>>>End Spectral Data<<<<<\n").encode()
+    rendered = render_preview(build_preview(raw))
+    assert ">>>>>End Spectral Data<<<<<" in rendered
+
+
+# ---------------------------------------------------------------------------
+# wide files — column sampling
+# ---------------------------------------------------------------------------
+
+
+def _wide_matrix(columns: int, rows: int = 50) -> bytes:
+    header = "\t".join(["wavenumber"] + [f"s{i}" for i in range(columns - 1)])
+    body = [
+        "\t".join([f"{200 + r}.0"] + [f"{r + c}.00" for c in range(columns - 1)])
+        for r in range(rows)
+    ]
+    return (header + "\n" + "\n".join(body)).encode()
+
+
+def test_wide_files_show_head_middle_and_tail_columns():
+    preview = build_preview(_wide_matrix(200))
+    assert preview.column_count == 200
+    assert preview.truncated_columns is True
+    shown = preview.columns_shown
+    assert len(shown) == 12
+    assert shown[:5] == [0, 1, 2, 3, 4], "the axis end of the file must be visible"
+    assert shown[-4:] == [196, 197, 198, 199], "so must the far end"
+    assert any(90 < index < 110 for index in shown), "and something from the middle"
+
+
+def test_numeric_fractions_cover_every_column_not_just_the_printed_ones():
+    """One float per column is cheap, and 'are all 200 columns numeric?' is
+    the question that distinguishes a trace matrix from a labelled export."""
+    preview = build_preview(_wide_matrix(200))
+    assert len(preview.numeric_fraction) == 200
+    assert all(fraction >= 0.9 for fraction in preview.numeric_fraction)
+
+
+def test_rendered_columns_are_labelled_with_absolute_indexes():
+    """On a wide file the printed columns are not contiguous, so an index the
+    model reads off the grid must still be usable verbatim."""
+    rendered = render_preview(build_preview(_wide_matrix(200)))
+    assert "[199]" in rendered
+    assert "showing 12 of 200 columns" in rendered
+    # ...and the whole-file summary it needs to conclude "axis + 199 traces".
+    assert "200 of 200" in rendered
+
+
+def test_narrow_files_are_unchanged_and_show_every_column():
+    preview = build_preview(_wide_matrix(4))
+    assert preview.columns_shown == [0, 1, 2, 3]
+    assert preview.truncated_columns is False
+
+
+def test_patch_sampling_does_not_change_the_layout_cache_key():
+    """`compute_structure_hash` keys on format, not on sampled rows — so
+    richer sampling must not invalidate every cached layout."""
+    raw = _wide_matrix(8)
+    assert compute_structure_hash(build_preview(raw)) == compute_structure_hash(
+        build_preview(raw, max_rows=40, max_columns=25)
+    )

@@ -90,6 +90,29 @@ MAX_TRACES = 512
 MAX_PREVIEW_ROWS = 40
 MAX_PREVIEW_COLUMNS = 25
 
+# Structure detection samples the body in several places rather than only at
+# the top. A ten-row window at the head is blind to the things that actually
+# distinguish these formats: a stacked-blocks export shows its second block
+# hundreds of rows down, a footer marker only appears at the end, and a file
+# that changes shape halfway through looks perfectly ordinary from row 0.
+PREVIEW_PATCH_ROWS = 6
+# Where the extra patches sit, as fractions through the numeric body. A tail
+# patch is always appended on top of these.
+PREVIEW_PATCH_FRACTIONS = (0.25, 0.50, 0.75)
+# Columns shown in the grid for a wide file: the first few, a few from the
+# middle, and the last few — enough to tell "axis then N traces" from "N
+# traces then junk" without printing 200 columns.
+MAX_PREVIEW_SHOWN_COLUMNS = 12
+PREVIEW_HEAD_COLUMNS = 5
+PREVIEW_MID_COLUMNS = 3
+# One float per column is cheap and is the strongest structural signal we
+# have without a model, so it covers every column up to this cap.
+MAX_NUMERIC_FRACTION_COLUMNS = 512
+# Body rows sampled (with a stride, across the whole file) to compute those
+# fractions. Strided rather than the first N, so a file whose columns change
+# character halfway down is not mischaracterised by its opening.
+NUMERIC_FRACTION_SAMPLE_ROWS = 200
+
 # "whitespace" means "split on any run of blank space", which is its own rule
 # rather than a single character.
 WHITESPACE_DELIMITER = "whitespace"
@@ -167,6 +190,21 @@ class FileLayout(BaseModel):
         return self.traces[0].index if self.traces else 1
 
 
+class PreviewPatch(BaseModel):
+    """One sampled window of the numeric body, taken from somewhere other than
+    the top of the file."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    # "25%", "50%", "75%", "tail" — where in the body this window came from.
+    label: str
+    # Body-relative index of `rows[0]`, i.e. counted AFTER `header_rows`, so
+    # it is directly comparable to the indexes in `PreviewGrid.rows`.
+    start_row: int
+    # Aligned to `PreviewGrid.columns_shown`, exactly like `PreviewGrid.rows`.
+    rows: list[list[str]] = Field(default_factory=list)
+
+
 class PreviewGrid(BaseModel):
     """A small, deterministic sample of a raw file's text body.
 
@@ -190,7 +228,15 @@ class PreviewGrid(BaseModel):
     # `rows[r][c]` — the first rows of the numeric BODY, i.e. after
     # `header_rows`. Row indexes are body-relative, matching how `FileLayout`
     # counts them, so an index quoted against this grid can be used directly.
+    # Cell `c` is column `columns_shown[c]`, which is c itself unless the file
+    # is too wide to print whole.
     rows: list[list[str]] = Field(default_factory=list)
+    # Absolute column indexes present in `rows` and in every patch. Equal to
+    # `range(column_count)` unless the file is wider than can be shown.
+    columns_shown: list[int] = Field(default_factory=list)
+    # Further windows sampled from deeper in the body — see `PreviewPatch`.
+    # Empty for a body short enough that `rows` already covers it.
+    patches: list[PreviewPatch] = Field(default_factory=list)
     # Fraction of sampled body rows whose cell in this column parses as a
     # number, per column. The single strongest structural signal available
     # without an LLM.
