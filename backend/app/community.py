@@ -15,6 +15,29 @@ def canonical_url(path: str) -> str | None:
     return f"{base_url}{path}" if base_url else None
 
 
+def public_profile_predicates() -> list[Any]:
+    """The definition of "a profile a stranger is allowed to find".
+
+    `is_profile_public` server-defaults to false, so this is opt-in: a user
+    appears here only if they chose to publish a profile. That is what makes
+    searching people acceptable at all — the result set is the set of pages
+    already readable at `/profiles/{handle}`, not the user table.
+
+    Shared by `/users/suggested` and `/v1/search/suggest` so the two cannot
+    drift into disagreeing about who is public.
+    """
+    return [
+        User.is_active.is_(True),
+        User.is_guest.is_(False),
+        User.is_profile_public.is_(True),
+        User.profile_handle.is_not(None),
+        # Not in the original `/users/suggested` predicate, but `public_author`
+        # has always rendered a deleted user as "Former contributor" — so they
+        # should not be reachable by name either.
+        User.deleted_at.is_(None),
+    ]
+
+
 def public_author(user: User | None) -> dict[str, Any]:
     """Minimal attribution safe for public spectra, posts, and comments."""
     if user is None or not user.is_active or user.deleted_at is not None:

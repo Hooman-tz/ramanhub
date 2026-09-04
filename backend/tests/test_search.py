@@ -24,12 +24,13 @@ def client(db_session):
 
     from app.auth.deps import get_current_user, get_current_user_optional
     from app.db.session import get_db
-    from app.routers import library, search, spectra
+    from app.routers import library, search, spectra, suggest
 
     test_app = FastAPI()
     test_app.include_router(spectra.router)
     test_app.include_router(search.router)
     test_app.include_router(library.router)
+    test_app.include_router(suggest.router)
 
     def _override_get_db():
         yield db_session
@@ -345,3 +346,195 @@ def test_library_mine_filters_like_search(client, make_user, make_raw_file):
     ids = [row["id"] for row in resp.json()]
     assert graphene_draft["id"] in ids
     assert polymer_draft["id"] not in ids
+
+
+# ---------------------------------------------------------------------------
+# /v1/search/suggest
+# ---------------------------------------------------------------------------
+
+
+def _publish_finding(db_session, owner, *, title, tags=None, published_at=None):
+    """A published Finding, built directly. `/v1/findings` is the owner's own
+    workspace list, so there is no public API path that creates one visible to
+    a stranger — which is exactly why the suggest endpoint needs its own
+    visibility predicate, and why this helper exists."""
+    from app.models.enums import FindingState
+    from app.models.finding import Finding
+
+    finding = Finding(
+        owner_id=owner.id,
+        title=title,
+        tags=tags or [],
+        state=FindingState.published,
+        published_at=published_at or datetime.now(UTC),
+    )
+    db_session.add(finding)
+    db_session.commit()
+    db_session.refresh(finding)
+    return finding
+
+
+def _public_person(db_session, *, handle, display_name=None, affiliation=None, **flags):
+    from app.models.user import User
+
+    user = User(
+        google_sub=str(uuid.uuid4()),
+        email=f"{uuid.uuid4()}@example.com",
+        display_name=display_name,
+        profile_handle=handle,
+        affiliation=affiliation,
+        is_profile_public=flags.get("is_profile_public", True),
+        is_guest=flags.get("is_guest", False),
+    )
+    db_session.add(user)
+    db_session.commit()
+    db_session.refresh(user)
+    return user
+
+
+def _groups(payload):
+    return {g["kind"]: g for g in payload["groups"]}
+
+
+def test_suggest_returns_all_four_groups_in_a_stable_order(client, make_user):
+    body = client.get("/v1/search/suggest", params={"q": "calcite"}).json()
+    assert [g["kind"] for g in body["groups"]] == [
+        "compound", "spectrum", "finding", "person",
+    ]
+
+
+def test_suggest_short_query_returns_empty_groups(client):
+    """The first keystroke of every search lands here, so it is a 200 with
+    nothing in it rather than a 422."""
+    resp = client.get("/v1/search/suggest", params={"q": "c"})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [g["kind"] for g in body["groups"]] == [
+        "compound", "spectrum", "finding", "person",
+    ]
+    assert all(g["items"] == [] for g in body["groups"])
+
+
+def test_suggest_finds_a_spectrum_by_title_and_tolerates_a_typo(
+    client, make_user, make_raw_file
+):
+    owner = make_user()
+    _create_and_publish(client, owner, make_raw_file, material_type="Calcite mineral")
+    client.set_current_user(None)
+
+    exact = _groups(client.get("/v1/search/suggest", params={"q": "calcite"}).json())
+    assert len(exact["spectrum"]["items"]) == 1
+
+    typo = _groups(client.get("/v1/search/suggest", params={"q": "calcyte"}).json())
+    assert len(typo["spectrum"]["items"]) == 1
+
+
+def test_suggest_never_returns_drafts(client, make_user, make_raw_file):
+    owner = make_user()
+    client.set_current_user(owner)
+    raw_file = make_raw_file(owner)
+    draft = client.post(
+        "/spectra", json={"raw_file_id": str(raw_file.id), "material_type": "Draftonite"}
+    ).json()
+    assert draft["state"] == "draft"
+
+    # Even to the owner: a typeahead over the public commons is not a
+    # workspace list.
+    body = _groups(client.get("/v1/search/suggest", params={"q": "draftonite"}).json())
+    assert body["spectrum"]["items"] == []
+
+
+def test_suggest_never_returns_a_private_profile(client, db_session):
+    """`is_profile_public` server-defaults to false, so people search is
+    opt-in. Three ways to not be findable, all of which must hold."""
+    _public_person(db_session, handle="marievisible", display_name="Marie Visible")
+    _public_person(
+        db_session, handle="marieprivate", display_name="Marie Private",
+        is_profile_public=False,
+    )
+    _public_person(
+        db_session, handle="marieguest", display_name="Marie Guest", is_guest=True,
+    )
+
+    body = _groups(client.get("/v1/search/suggest", params={"q": "marie"}).json())
+    handles = [item["handle"] for item in body["person"]["items"]]
+    assert handles == ["marievisible"]
+
+    # And nothing in the payload may leak an address.
+    assert "@example.com" not in client.get(
+        "/v1/search/suggest", params={"q": "marie"}
+    ).text
+
+
+def test_suggest_excludes_reference_library_spectra_from_the_spectra_group(
+    client, db_session, make_user, make_raw_file
+):
+    """A seeded reference is a compound, not a community upload. Without the
+    exclusion the same row answers twice and buries real contributions."""
+    from app.models.reference import (
+        ReferenceCurationStatus,
+        ReferenceEntry,
+        ReferenceTrustTier,
+    )
+
+    owner = make_user()
+    published = _create_and_publish(
+        client, owner, make_raw_file, material_type="Calcite reference"
+    )
+    db_session.add(
+        ReferenceEntry(
+            spectrum_id=uuid.UUID(published["id"]),
+            compound_name="Calcite",
+            source="rruff",
+            source_id="SUG1",
+            trust_tier=ReferenceTrustTier.curated,
+            curation_status=ReferenceCurationStatus.approved,
+        )
+    )
+    db_session.commit()
+    client.set_current_user(None)
+
+    body = _groups(client.get("/v1/search/suggest", params={"q": "calcite"}).json())
+    assert [i["title"] for i in body["compound"]["items"]] == ["Calcite"]
+    assert body["spectrum"]["items"] == []
+
+
+def test_suggest_ranking_ignores_votes(client, db_session, make_user):
+    """The structural guard on `search.py`'s quarantine rule. The less
+    relevant finding is the popular one; relevance must still win."""
+    owner = make_user()
+    exact = _publish_finding(db_session, owner, title="Graphene")
+    loose = _publish_finding(db_session, owner, title="Graphene oxide composites")
+
+    for _ in range(5):
+        voter = make_user()
+        db_session.add(Vote(user_id=voter.id, finding_id=loose.id))
+    db_session.commit()
+
+    body = _groups(client.get("/v1/search/suggest", params={"q": "graphene"}).json())
+    items = body["finding"]["items"]
+    assert [i["title"] for i in items] == ["Graphene", "Graphene oxide composites"]
+    assert items[0]["id"] == str(exact.id)
+
+
+def test_suggest_caps_each_group_and_reports_truncation(client, db_session, make_user):
+    owner = make_user()
+    for i in range(8):
+        _publish_finding(db_session, owner, title=f"Raman study number {i}")
+
+    body = _groups(
+        client.get("/v1/search/suggest", params={"q": "raman study", "limit": 5}).json()
+    )
+    assert len(body["finding"]["items"]) == 5
+    assert body["finding"]["truncated"] is True
+
+
+def test_suggest_is_rate_limited(client, monkeypatch):
+    from app import ratelimit
+
+    monkeypatch.setattr(
+        ratelimit, "_search_suggest_limiter", ratelimit.RateLimiter(2, 3600)
+    )
+    assert client.get("/v1/search/suggest", params={"q": "calcite"}).status_code == 200
+    assert client.get("/v1/search/suggest", params={"q": "calcite"}).status_code == 200
+    assert client.get("/v1/search/suggest", params={"q": "calcite"}).status_code == 429

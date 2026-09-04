@@ -41,10 +41,10 @@ from app.routers import (
     follows,
     ingestion_jobs,
     lab_consult,
-    llm_settings,
     ledgers,
     library,
     licenses,
+    llm_settings,
     onboarding,
     orcid,
     pins,
@@ -58,6 +58,7 @@ from app.routers import (
     shares,
     spectra,
     spectrum_data,
+    suggest,
     trending,
     users,
     votes,
@@ -99,6 +100,7 @@ app.include_router(profiles.router)
 app.include_router(public_records.router)
 app.include_router(doi.router)
 app.include_router(search.router)
+app.include_router(suggest.router)
 app.include_router(library.router)
 app.include_router(reference_library.router)
 app.include_router(votes.router)

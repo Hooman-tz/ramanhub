@@ -45,7 +45,7 @@ from app.spectra_io import load_spectrum_trace
 router = APIRouter(prefix="/search", tags=["search"])
 
 
-def _exclude_reference_library(query):
+def exclude_reference_library(query):
     """Keep the bundled reference corpus out of the community commons.
 
     The reference library is thousands of published, visible spectra that all
@@ -59,6 +59,12 @@ def _exclude_reference_library(query):
     return query.outerjoin(
         ReferenceEntry, ReferenceEntry.spectrum_id == Spectrum.id
     ).filter(ReferenceEntry.id.is_(None))
+
+
+# Kept as a private alias for this module's existing call sites; the public
+# name is what `suggest.py` imports, since any search over `spectra` needs the
+# same treatment or the seeded corpus buries every user upload.
+_exclude_reference_library = exclude_reference_library
 
 
 class SpectrumSearchResult(BaseModel):
