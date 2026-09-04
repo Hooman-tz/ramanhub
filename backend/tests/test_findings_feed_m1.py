@@ -100,3 +100,75 @@ def test_following_feed_is_empty_for_anonymous(client):
     resp = client.get("/v1/feed", params={"filter": "following"})
     assert resp.status_code == 200
     assert resp.json() == []
+
+
+def _publish(client, author, *, title, abstract=None, tags=None):
+    client.set_current_user(author)
+    created = client.post(
+        "/v1/findings",
+        json={"title": title, "abstract_md": abstract, "tags": tags or []},
+    )
+    assert created.status_code == 201, created.text
+    fid = created.json()["id"]
+    published = client.post(f"/v1/findings/{fid}/publish", json={"license_id": "CC-BY-4.0"})
+    assert published.status_code == 200, published.text
+    return fid
+
+
+def test_feed_free_text_matches_more_than_the_first_word(client, make_user):
+    """The bug this fixes: the search box used to keep only the first word and
+    treat it as an exact tag, so "graphene oxide" searched the tag "graphene"
+    and threw the rest away. Abstracts were never searched at all."""
+    author = make_user()
+    oxide = _publish(
+        client, author,
+        title="Reduction kinetics",
+        abstract="A study of graphene oxide films under 785 nm excitation.",
+        tags=["raman"],
+    )
+    unrelated = _publish(
+        client, author, title="Calcite polymorphs", abstract="Nothing to do with carbon.",
+        tags=["raman"],
+    )
+
+    client.set_current_user(None)
+    ids = [i["id"] for i in client.get("/v1/feed", params={"q": "graphene oxide"}).json()]
+    assert oxide in ids
+    assert unrelated not in ids
+
+
+def test_feed_tag_filter_is_unchanged_and_composes_with_q(client, make_user):
+    """`tag` stays exact JSONB containment. `q` is additive, so the two
+    together mean AND rather than either replacing the other."""
+    author = make_user()
+    tagged = _publish(
+        client, author, title="Graphene on copper", abstract="CVD growth.", tags=["graphene"],
+    )
+    untagged = _publish(
+        client, author, title="Graphene on nickel", abstract="Also CVD.", tags=["metals"],
+    )
+
+    client.set_current_user(None)
+    by_tag = [i["id"] for i in client.get("/v1/feed", params={"tag": "graphene"}).json()]
+    assert by_tag == [tagged]
+
+    both = [
+        i["id"]
+        for i in client.get("/v1/feed", params={"tag": "metals", "q": "graphene"}).json()
+    ]
+    assert both == [untagged]
+
+
+def test_feed_ordering_is_unchanged_without_a_query(client, make_user):
+    """Text rank only applies when there is text. With no `q` every rank is
+    zero and the feed keeps the engagement ordering it has always had."""
+    author = make_user()
+    first = _publish(client, author, title="One", abstract="a")
+    second = _publish(client, author, title="Two", abstract="b")
+
+    client.set_current_user(None)
+    ids = [i["id"] for i in client.get("/v1/feed").json()]
+    assert set(ids) == {first, second}
+    # Newest first, which is what the existing score ordering yields for two
+    # items with no votes between them.
+    assert ids[0] == second

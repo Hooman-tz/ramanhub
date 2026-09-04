@@ -100,11 +100,13 @@ def make_reference(
     source: str = "rruff",
     source_id: str | None = None,
     formula: str | None = None,
+    common_names: list[str] | None = None,
 ) -> ReferenceEntry:
     entry = ReferenceEntry(
         spectrum_id=spectrum_id,
         compound_name=name,
         chemical_formula=formula,
+        common_names=common_names or [],
         source=source,
         source_id=source_id or f"X{name}",
         source_dataset="test-set",
@@ -576,3 +578,178 @@ def test_reference_spectra_are_excluded_from_similar_search(
     assert resp.status_code == 200
     ids = [row["spectrum"]["id"] for row in resp.json()]
     assert ref_spectrum["id"] not in ids
+
+
+def test_deconvolution_is_rate_limited(client, db_session, make_user, make_raw_file, monkeypatch):
+    """Unmixing downloads N+1 full spectra per call and solves a dense system,
+    so its cost is object-storage egress. Unthrottled it is the cheapest way
+    for a script to run up someone else's storage bill."""
+    from app import ratelimit
+
+    owner = make_user()
+    _sa, a = seed_reference(
+        client, db_session, owner, make_raw_file, name="A",
+        peaks=[(500.0, 100.0)], source_id="A1",
+    )
+    _sb, b = seed_reference(
+        client, db_session, owner, make_raw_file, name="B",
+        peaks=[(1300.0, 100.0)], source_id="B1",
+    )
+    blend = publish_spectrum(
+        client, owner, make_raw_file, spectrum_bytes([(500.0, 70.0), (1300.0, 30.0)])
+    )
+    client.set_current_user(owner)
+
+    # A fresh limiter, so this test neither inherits nor leaks call counts.
+    monkeypatch.setattr(
+        ratelimit, "_library_unmix_limiter", ratelimit.RateLimiter(2, 3600)
+    )
+
+    body = {"spectrum_id": blend["id"], "reference_ids": [str(a.id), str(b.id)]}
+    assert client.post("/v1/library/unmix", json=body).status_code == 200
+    assert client.post("/v1/library/unmix", json=body).status_code == 200
+    assert client.post("/v1/library/unmix", json=body).status_code == 429
+
+
+def test_browse_lists_real_names_before_composition_strings(
+    client, db_session, make_user, make_raw_file
+):
+    """A minority of imported entries carry a composition string instead of a
+    name. Plain alphabetical sorting puts every one of those on the first page,
+    which is the worst possible first impression of the library."""
+    owner = make_user()
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="(Pb1.924 Ba0.018 Ca0.007) O", peaks=[(500.0, 100.0)], source_id="U1",
+    )
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="Calcite", peaks=[(1085.0, 100.0)], source_id="U2",
+    )
+
+    names = [r["compound_name"] for r in client.get("/v1/library/references").json()]
+    assert names[0] == "Calcite"
+    assert names[-1].startswith("(")
+
+
+# ---------------------------------------------------------------------------
+# ranked, typo-tolerant browse
+# ---------------------------------------------------------------------------
+
+
+def test_browse_ranks_an_exact_name_above_a_substring_match(
+    client, db_session, make_user, make_raw_file
+):
+    """The whole point of the change. Every one of these contains "calcite",
+    so the old unanchored ILIKE matched all three and then handed them back in
+    alphabetical order — putting "Calcite, magnesian" first and the thing the
+    user actually typed second."""
+    owner = make_user()
+    for i, name in enumerate(["Sodium calcitrate", "Calcite, magnesian", "Calcite"]):
+        seed_reference(
+            client, db_session, owner, make_raw_file,
+            name=name, peaks=[(1085.0 + i, 100.0)], source_id=f"K{i}",
+        )
+
+    names = [
+        r["compound_name"]
+        for r in client.get("/v1/library/references", params={"q": "calcite"}).json()
+    ]
+    assert names[0] == "Calcite"
+    assert set(names) == {"Calcite", "Calcite, magnesian", "Sodium calcitrate"}
+
+
+def test_browse_tolerates_a_typo(client, db_session, make_user, make_raw_file):
+    """Pins TRIGRAM_THRESHOLD. Postgres' default word_similarity threshold is
+    0.6, which scores calcyte->Calcite at 0.500 and therefore returns nothing
+    at all; if someone restores the default, this fails loudly rather than
+    quietly removing typo tolerance."""
+    owner = make_user()
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="Calcite", peaks=[(1085.0, 100.0)], source_id="T1",
+    )
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="Quartz", peaks=[(464.0, 100.0)], source_id="T2",
+    )
+
+    misspelled = client.get("/v1/library/references", params={"q": "calcyte"}).json()
+    assert [r["compound_name"] for r in misspelled] == ["Calcite"]
+
+    also_misspelled = client.get("/v1/library/references", params={"q": "quarz"}).json()
+    assert [r["compound_name"] for r in also_misspelled] == ["Quartz"]
+
+
+def test_browse_finds_an_entry_by_its_synonym(
+    client, db_session, make_user, make_raw_file
+):
+    """`common_names` has existed since the model was written, documented as
+    the reason "calcite" and "calcium carbonate" find the same entry, and was
+    never actually searched. It is also the only column reached through the
+    JSONB flattening, so this is the test that covers that expression."""
+    owner = make_user()
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="Calcite", peaks=[(1085.0, 100.0)], source_id="S1",
+        common_names=["calcium carbonate", "limestone"],
+    )
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="Quartz", peaks=[(464.0, 100.0)], source_id="S2",
+    )
+
+    by_synonym = client.get(
+        "/v1/library/references", params={"q": "calcium carbonate"}
+    ).json()
+    assert [r["compound_name"] for r in by_synonym] == ["Calcite"]
+
+    by_other_synonym = client.get(
+        "/v1/library/references", params={"q": "limestone"}
+    ).json()
+    assert [r["compound_name"] for r in by_other_synonym] == ["Calcite"]
+
+
+def test_browse_ordering_is_unchanged_without_a_query(
+    client, db_session, make_user, make_raw_file
+):
+    """Ranking applies only when there is something to rank against. With no
+    `q`, the ordering must stay exactly what it was — curated first, real
+    names before composition strings, then alphabetical."""
+    owner = make_user()
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="(Pb1.924 Ba0.018 Ca0.007) O", peaks=[(500.0, 100.0)], source_id="O1",
+    )
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="Zircon", peaks=[(1008.0, 100.0)], source_id="O2",
+    )
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="Albite", peaks=[(507.0, 100.0)], source_id="O3",
+    )
+
+    names = [r["compound_name"] for r in client.get("/v1/library/references").json()]
+    assert names == ["Albite", "Zircon", "(Pb1.924 Ba0.018 Ca0.007) O"]
+
+
+def test_browse_is_rate_limited(client, db_session, make_user, make_raw_file, monkeypatch):
+    """The browse endpoint is public, unauthenticated and now fires once per
+    debounced keystroke. It previously had no limit at all."""
+    from app import ratelimit
+
+    owner = make_user()
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="Calcite", peaks=[(1085.0, 100.0)], source_id="RL1",
+    )
+
+    # A fresh limiter, so this test neither inherits nor leaks call counts.
+    monkeypatch.setattr(
+        ratelimit, "_search_browse_limiter", ratelimit.RateLimiter(2, 3600)
+    )
+
+    assert client.get("/v1/library/references", params={"q": "calc"}).status_code == 200
+    assert client.get("/v1/library/references", params={"q": "calc"}).status_code == 200
+    assert client.get("/v1/library/references", params={"q": "calc"}).status_code == 429

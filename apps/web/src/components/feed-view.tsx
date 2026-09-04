@@ -19,23 +19,26 @@ type Tab = "following" | "discover";
 interface FeedQuery {
   tag?: string;
   author?: string;
+  q?: string;
 }
 
-function parseSearch(raw: string): {
-  query: FeedQuery;
-  multiWord: boolean;
-} {
+function parseSearch(raw: string): FeedQuery {
   const trimmed = raw.trim();
-  if (!trimmed) return { query: {}, multiWord: false };
+  if (!trimmed) return {};
+  // `@handle` and `#tag` stay exact — they are how you say "this person" or
+  // "this tag" and mean it. Anything else is now free text, searched across
+  // titles, abstracts, tags and spectrum metadata. It used to be reduced to
+  // its first word and matched as a tag, which quietly discarded the rest of
+  // whatever you typed.
   if (trimmed.startsWith("@")) {
-    return { query: { author: trimmed.slice(1).trim() }, multiWord: false };
+    return { author: trimmed.slice(1).trim().toLowerCase() };
   }
-  const words = trimmed.replace(/^#/, "").split(/\s+/).filter(Boolean);
-  return {
-    query: { tag: (words[0] ?? "").toLowerCase() },
-    multiWord: words.length > 1,
-  };
+  if (trimmed.startsWith("#")) {
+    return { tag: trimmed.slice(1).trim().toLowerCase() };
+  }
+  return { q: trimmed };
 }
+
 
 function FeedSkeleton() {
   return (
@@ -83,10 +86,7 @@ export function FeedView({
   // The search term lives in the URL because the input that sets it is in the
   // header, not on this page. That also makes a filtered feed shareable.
   const rawSearch = searchParams.get("q") ?? "";
-  const { query, multiWord: multiWordNote } = useMemo(
-    () => parseSearch(rawSearch),
-    [rawSearch],
-  );
+  const query = useMemo(() => parseSearch(rawSearch), [rawSearch]);
 
   const session = useQuery({
     queryKey: ["session"],
@@ -96,14 +96,18 @@ export function FeedView({
   const signedIn = !!session.data && !session.data.is_guest;
 
   const feed = useQuery({
-    queryKey: ["feed", tab, query.tag ?? null, query.author ?? null],
-    queryFn: () =>
-      getFeed({
-        filter: tab === "following" ? "following" : "all",
-        tag: query.tag,
-        author: query.author,
-        limit: 30,
-      }),
+    queryKey: ["feed", tab, query.tag ?? null, query.author ?? null, query.q ?? null],
+    queryFn: ({ signal }) =>
+      getFeed(
+        {
+          filter: tab === "following" ? "following" : "all",
+          tag: query.tag,
+          author: query.author,
+          q: query.q,
+          limit: 30,
+        },
+        { signal },
+      ),
   });
 
   function clearSearch() {
@@ -117,7 +121,9 @@ export function FeedView({
     ? `author: ${query.author}`
     : query.tag
       ? `#${query.tag}`
-      : null;
+      : query.q
+        ? `“${query.q}”`
+        : null;
 
   return (
     <main className="mx-auto w-full max-w-2xl px-4 py-8">
@@ -134,12 +140,6 @@ export function FeedView({
         <div className="mb-5">
           <Composer session={session.data ?? null} variant="expanded" />
         </div>
-      )}
-
-      {multiWordNote && (
-        <p className="text-foreground/60 mb-2 text-xs">
-          Multiple words — searching the first tag only.
-        </p>
       )}
 
       {activeChip && (

@@ -4,6 +4,7 @@ import { usePathname } from "next/navigation";
 
 import { cn } from "@ramanhub/ui";
 
+import { CommandPalette } from "./search/command-palette";
 import { MobileNav } from "./mobile-nav";
 import { Nav } from "./nav";
 import { zoneForPath } from "./zone";
@@ -29,6 +30,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         {children}
       </div>
       <MobileNav />
+      {/* Global chrome rather than a nav item: ⌘K works from any route. */}
+      <CommandPalette />
     </>
   );
 }

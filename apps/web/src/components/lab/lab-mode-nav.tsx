@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import type { LucideIcon } from "lucide-react";
 import { Boxes, Brain, Network, ScanSearch, SlidersHorizontal } from "lucide-react";
 
@@ -12,19 +13,13 @@ import { cn } from "@ramanhub/ui";
  * over it. The office is for paperwork — activity, messages, project status —
  * so nothing here duplicates it.
  */
-export type LabMode =
-  | "database"
-  | "prep"
-  | "unsupervised"
-  | "supervised"
-  | "library";
+export type LabMode = "database" | "prep" | "unsupervised" | "supervised";
 
 export const LAB_MODES: LabMode[] = [
   "database",
   "prep",
   "unsupervised",
   "supervised",
-  "library",
 ];
 
 /** Narrow an untrusted `?mode=` value; anything unknown falls back to the home tab. */
@@ -65,23 +60,17 @@ const TABS: {
     icon: Brain,
     hint: "Classification and regression",
   },
-  {
-    // `ScanSearch` rather than a book glyph: the job here is identifying the
-    // selected spectrum, and `Boxes` already owns the container metaphor for
-    // Database.
-    mode: "library",
-    label: "Library",
-    icon: ScanSearch,
-    hint: "Match against reference spectra",
-  },
 ];
 
 export function LabModeNav({
   mode,
   onSelect,
+  spectrumId,
 }: {
   mode: LabMode;
   onSelect: (mode: LabMode) => void;
+  /** Carried into the Library so the current sample arrives pre-selected. */
+  spectrumId?: string | null;
 }) {
   return (
     <div
@@ -121,6 +110,23 @@ export function LabModeNav({
           </div>
         );
       })}
+
+      {/* Not a tab: identification lives on its own page, so the Lab links out
+          rather than keeping a second copy of it. Carrying `?s=` means the
+          sample you were just working on is already chosen when you land. */}
+      <span className="bg-border mx-1 h-6 w-px" aria-hidden />
+      <Link
+        href={spectrumId ? `/library?s=${encodeURIComponent(spectrumId)}` : "/library"}
+        title="Match against reference spectra"
+        className={cn(
+          "flex min-h-8 cursor-pointer items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors duration-150 outline-none",
+          "focus-visible:ring-ring/50 focus-visible:ring-[3px] motion-reduce:transition-none",
+          "text-muted-foreground hover:bg-muted hover:text-foreground",
+        )}
+      >
+        <ScanSearch className="size-3.5" aria-hidden />
+        Library
+      </Link>
     </div>
   );
 }

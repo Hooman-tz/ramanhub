@@ -17,7 +17,6 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
 from pydantic import BaseModel, Field
-from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app.auth.deps import (
@@ -44,6 +43,12 @@ from app.models.spectrum import Spectrum
 from app.models.spectrum_peaks import SpectrumPeaks
 from app.models.user import User
 from app.processing.state_machine import require_owner_or_public
+from app.ratelimit import (
+    rate_limit_library_match,
+    rate_limit_library_unmix,
+    rate_limit_search_browse,
+)
+from app.textsearch import apply_threshold, text_predicate, text_rank
 
 logger = logging.getLogger(__name__)
 
@@ -121,7 +126,11 @@ def _serialize(
 # --------------------------------------------------------------------------
 
 
-@router.get("/references", response_model=list[ReferenceEntryOut])
+@router.get(
+    "/references",
+    response_model=list[ReferenceEntryOut],
+    dependencies=[Depends(rate_limit_search_browse)],
+)
 def search_references(
     q: str | None = None,
     formula: str | None = None,
@@ -148,15 +157,10 @@ def search_references(
         .join(Spectrum, Spectrum.id == ReferenceEntry.spectrum_id)
         .filter(ReferenceEntry.curation_status != ReferenceCurationStatus.removed)
     )
+    q = q.strip() if q else None
     if q:
-        pattern = f"%{q}%"
-        query = query.filter(
-            or_(
-                ReferenceEntry.compound_name.ilike(pattern),
-                ReferenceEntry.mineral_name.ilike(pattern),
-                ReferenceEntry.chemical_formula.ilike(pattern),
-            )
-        )
+        apply_threshold(db)
+        query = query.filter(text_predicate(ReferenceEntry.search_text, q))
     if formula:
         query = query.filter(ReferenceEntry.chemical_formula.ilike(f"%{formula}%"))
     if cas_number:
@@ -166,10 +170,34 @@ def search_references(
     if trust_tier:
         query = query.filter(ReferenceEntry.trust_tier == ReferenceTrustTier(trust_tier))
 
-    # Curated first, then alphabetical. No social signal, matching the
-    # quarantine `search.py` documents.
+    # Two different questions, so two different orderings.
+    #
+    # Searching: relevance wins. Someone typing "calcite" wants Calcite, not
+    # whichever match happens to sort first — which is what they used to get.
+    # Curation still breaks ties, and no social signal enters either branch,
+    # matching the quarantine `search.py` documents.
+    #
+    # Browsing: curated first, then real names, then alphabetical. The middle
+    # term matters: a minority of entries carry a composition string rather
+    # than a name ("(Pb1.924 Ba0.018 ...)"), and left to plain alphabetical
+    # sorting those parenthesised strings occupy the whole first page — the
+    # worst possible first impression of a library that is 94% properly named.
+    # This branch is byte-identical to what it was before search ranking
+    # existed; changing it would undo that fix.
+    if q:
+        ordering = (
+            text_rank(ReferenceEntry.compound_name, ReferenceEntry.search_text, q).desc(),
+            ReferenceEntry.trust_tier.asc(),
+            ReferenceEntry.compound_name.asc(),
+        )
+    else:
+        ordering = (
+            ReferenceEntry.trust_tier.asc(),
+            ReferenceEntry.compound_name.op("~")("^[A-Za-z]").desc(),
+            ReferenceEntry.compound_name.asc(),
+        )
     rows = (
-        query.order_by(ReferenceEntry.trust_tier.asc(), ReferenceEntry.compound_name.asc())
+        query.order_by(*ordering)
         .offset(max(0, offset))
         .limit(limit)
         .all()
@@ -260,6 +288,7 @@ def match_spectrum(
     body: LibraryMatchRequest,
     db: Session = Depends(get_db),
     user: User | None = Depends(get_current_user_optional),
+    _: None = Depends(rate_limit_library_match),
 ) -> LibraryMatchResponse:
     """Stage 1: identify a spectrum against the reference corpus."""
     target = _readable_target(body.spectrum_id, db, user)
@@ -347,6 +376,7 @@ def unmix_spectrum(
     body: LibraryUnmixRequest,
     db: Session = Depends(get_db),
     user: User | None = Depends(get_current_user_optional),
+    _: None = Depends(rate_limit_library_unmix),
 ) -> LibraryUnmixResponse:
     """Stage 2: fit the spectrum as a non-negative mixture of chosen references."""
     target = _readable_target(body.spectrum_id, db, user)

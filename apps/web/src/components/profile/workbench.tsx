@@ -101,7 +101,6 @@ import {
 } from "~/components/lab/data-management";
 import { DatabaseOverview } from "~/components/lab/database-overview";
 import { LabModeNav, parseLabMode } from "~/components/lab/lab-mode-nav";
-import { LibraryPanel } from "~/components/lab/library-panel";
 import { SupervisedPanel } from "~/components/lab/supervised-panel";
 import { UnsupervisedPanel } from "~/components/lab/unsupervised-panel";
 import { VIEWER_HEIGHT } from "~/components/lab/viewer";
@@ -885,7 +884,7 @@ export function Workbench() {
 
       {/* -------- Main column: spectrum preview + processing toolbox -------- */}
       <div className="flex min-w-0 flex-col gap-4">
-        <LabModeNav mode={mode} onSelect={selectMode} />
+        <LabModeNav mode={mode} onSelect={selectMode} spectrumId={selectedId} />
 
         {mode === "database" && (
           <DatabaseOverview
@@ -904,15 +903,6 @@ export function Workbench() {
         )}
 
         {mode === "supervised" && <SupervisedPanel />}
-
-        {mode === "library" && (
-          <LibraryPanel
-            spectrumId={selectedId}
-            spectrum={spectrum.data}
-            buffer={buffer.data}
-            bufferLoading={buffer.isLoading}
-          />
-        )}
 
         {mode === "prep" && (
           <>

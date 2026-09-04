@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user, get_current_user_optional
+from app.community import public_profile_predicates
 from app.db.session import get_db
 from app.handles import InvalidHandleError, normalize_handle, validate_handle
 from app.models.graph import Follow, HandleHistory
@@ -75,12 +76,7 @@ def suggested_users(
     stmt = (
         select(User, func.coalesce(follower_count.c.n, 0).label("follower_count"))
         .outerjoin(follower_count, follower_count.c.followee_id == User.id)
-        .where(
-            User.is_active.is_(True),
-            User.is_guest.is_(False),
-            User.is_profile_public.is_(True),
-            User.profile_handle.is_not(None),
-        )
+        .where(*public_profile_predicates())
         .order_by(func.coalesce(follower_count.c.n, 0).desc(), User.created_at.desc())
     )
 

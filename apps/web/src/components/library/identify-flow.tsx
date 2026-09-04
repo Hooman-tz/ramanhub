@@ -2,7 +2,8 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { usePathname, useRouter } from "next/navigation";
+import { keepPreviousData, useMutation, useQuery } from "@tanstack/react-query";
 import { Library, Search } from "lucide-react";
 
 import { getSpectrum, matchAgainstLibrary, searchReferences, unmixAgainstLibrary } from "@ramanhub/api-client";
@@ -24,6 +25,7 @@ import {
 } from "~/components/library/pieces";
 import { Step } from "~/components/library/step";
 import { SpectrumPickerDialog } from "~/components/spectrum-picker";
+import { useDebounced } from "~/hooks/use-debounced";
 import { useSpectrumBuffer } from "~/lib/spectra-buffer";
 
 /**
@@ -34,9 +36,27 @@ import { useSpectrumBuffer } from "~/lib/spectra-buffer";
  * spectrum is step one — so the page works as an errand of its own rather than
  * as the tail of a lab session.
  */
-export function IdentifyFlow({ isFullUser }: { isFullUser: boolean }) {
-  const [task, setTask] = useState<"identify" | "browse">("identify");
-  const [spectrumId, setSpectrumId] = useState<string | null>(null);
+export function IdentifyFlow({
+  isFullUser,
+  initialSpectrumId = null,
+  initialQuery = null,
+}: {
+  isFullUser: boolean;
+  /** Pre-selected sample, e.g. carried over from the Data Lab's `?s=`. */
+  initialSpectrumId?: string | null;
+  /** Pre-filled browse search, e.g. a compound picked in the ⌘K palette. */
+  initialQuery?: string | null;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
+  // Arriving from the Lab means a sample is already in hand, so open on the
+  // flow that uses it. Arriving cold, the useful thing to see is the library
+  // itself — opening on an empty four-step form makes a stocked library look
+  // like a broken one.
+  const [task, setTask] = useState<"identify" | "browse">(
+    initialQuery ? "browse" : initialSpectrumId ? "identify" : "browse",
+  );
+  const [spectrumId, setSpectrumId] = useState<string | null>(initialSpectrumId);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
   const [overlaid, setOverlaid] = useState<string | null>(null);
@@ -119,6 +139,11 @@ export function IdentifyFlow({ isFullUser }: { isFullUser: boolean }) {
 
   function reset(id: string | null) {
     setSpectrumId(id);
+    // Keep `?s=` in step with the choice, so a refresh or a shared link lands
+    // on the sample actually on screen rather than the one you arrived with.
+    router.replace(id ? `${pathname}?s=${encodeURIComponent(id)}` : pathname, {
+      scroll: false,
+    });
     match.reset();
     unmix.reset();
     setPicked([]);
@@ -162,7 +187,7 @@ export function IdentifyFlow({ isFullUser }: { isFullUser: boolean }) {
       </header>
 
       {task === "browse" ? (
-        <BrowsePanel />
+        <BrowsePanel initialQuery={initialQuery} />
       ) : (
         <>
           <Step
@@ -371,11 +396,18 @@ export function IdentifyFlow({ isFullUser }: { isFullUser: boolean }) {
   }
 }
 
-function BrowsePanel() {
-  const [query, setQuery] = useState("");
+function BrowsePanel({ initialQuery }: { initialQuery?: string | null }) {
+  const [query, setQuery] = useState(initialQuery ?? "");
+  // Typing used to issue a request per keystroke against the whole reference
+  // corpus. 250 ms because this is a list people stop and read, not a palette
+  // they glance at mid-word.
+  const debouncedQuery = useDebounced(query.trim(), 250);
   const rows = useQuery({
-    queryKey: ["ref-search", query],
-    queryFn: () => searchReferences({ q: query || undefined, limit: 40 }),
+    queryKey: ["ref-search", debouncedQuery],
+    queryFn: ({ signal }) =>
+      searchReferences({ q: debouncedQuery || undefined, limit: 40 }, { signal }),
+    // Without this the list empties on every new query and the page jumps.
+    placeholderData: keepPreviousData,
   });
 
   return (
@@ -405,14 +437,21 @@ function BrowsePanel() {
         <EmptyCard
           icon={Library}
           message={
-            query
-              ? "No references match that search."
-              : "The reference library is empty. Seed it with `make seed-library`, or publish your own standards into it."
+            debouncedQuery
+              ? `Nothing in the library matches “${debouncedQuery}”.`
+              : "The reference library has no entries yet. Publishing your own identified spectra into it is what makes it useful."
           }
         />
       ) : (
         <Card className="gap-0 p-0">
-          <ul className="divide-y">
+          <ul
+            className={cn(
+              "divide-y transition-opacity duration-150 motion-reduce:transition-none",
+              // Debouncing means the list can lag the box by a moment; saying
+              // so is better than letting it look stale for no reason.
+              rows.isFetching && "opacity-60",
+            )}
+          >
             {rows.data.map((row) => (
               <ReferenceRow key={row.id} row={row} />
             ))}

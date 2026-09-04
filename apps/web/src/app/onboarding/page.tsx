@@ -17,14 +17,7 @@ import {
 import { Button } from "@ramanhub/ui/button";
 import { Skeleton } from "@ramanhub/ui/skeleton";
 
-function useDebounced<T>(value: T, ms: number): T {
-  const [debounced, setDebounced] = useState(value);
-  useEffect(() => {
-    const t = setTimeout(() => setDebounced(value), ms);
-    return () => clearTimeout(t);
-  }, [value, ms]);
-  return debounced;
-}
+import { useDebounced } from "~/hooks/use-debounced";
 
 export default function OnboardingPage() {
   const router = useRouter();

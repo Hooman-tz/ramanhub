@@ -18,7 +18,7 @@ from collections import defaultdict
 
 from fastapi import Depends, HTTPException, Request, status
 
-from app.auth.deps import get_current_user
+from app.auth.deps import get_current_user, get_current_user_optional
 from app.models.user import User
 
 
@@ -76,6 +76,16 @@ _llm_consult_limiter = RateLimiter(max_calls=15, window_seconds=3600)  # 15 LLM 
 # an unthrottled endpoint is a free "is this stolen key valid?" oracle that
 # also spends someone else's quota. A real user saves a key once or twice.
 _llm_key_write_limiter = RateLimiter(max_calls=10, window_seconds=3600)  # 10 key writes / hour
+# Reference-library identification. Matching is index-served and cheap once a
+# spectrum's peaks are cached, but a *cold* match pulls arrays out of object
+# storage to build that cache, so it still deserves a ceiling.
+_library_match_limiter = RateLimiter(max_calls=240, window_seconds=3600)
+# Deconvolution is the expensive one: it downloads and interpolates N+1 full
+# spectra per call and runs a dense constrained least-squares, so its cost is
+# dominated by object-storage round-trips rather than CPU. Unthrottled, it is
+# the cheapest way for a script to run up storage egress. Well clear of a human
+# trying a handful of component sets on a stubborn sample.
+_library_unmix_limiter = RateLimiter(max_calls=30, window_seconds=3600)
 
 
 def rate_limit_uploads(user: User = Depends(get_current_user)) -> None:
@@ -117,3 +127,50 @@ def rate_limit_llm_key_write(user: User = Depends(get_current_user)) -> None:
 def rate_limit_login(request: Request) -> None:
     client_host = request.client.host if request.client else "unknown"
     _login_limiter.check(client_host)
+
+
+def _caller_key(request: Request, user: User | None) -> str:
+    """Identify the caller for endpoints that allow anonymous access.
+
+    The library's read paths use `get_current_user_optional`, so there may be
+    no user id to key on. Falling back to client IP mirrors `rate_limit_login`,
+    which has the same pre-auth problem.
+    """
+    if user is not None:
+        return f"user:{user.id}"
+    return f"ip:{request.client.host if request.client else 'unknown'}"
+
+
+# Typeahead fires once per debounced keystroke and is anonymous-capable, so
+# the ceiling is about stopping a scraper walking the corpus letter by letter
+# rather than about the cost of any one call — each is a handful of LIMIT-6
+# index scans. A heavy human session lands near 100/hr once the client
+# debounce and its response cache are doing their jobs.
+_search_suggest_limiter = RateLimiter(max_calls=600, window_seconds=3600)
+
+# The reference browse is the same shape of traffic and had no limit at all.
+_search_browse_limiter = RateLimiter(max_calls=600, window_seconds=3600)
+
+
+def rate_limit_search_suggest(
+    request: Request, user: User | None = Depends(get_current_user_optional)
+) -> None:
+    _search_suggest_limiter.check(_caller_key(request, user))
+
+
+def rate_limit_search_browse(
+    request: Request, user: User | None = Depends(get_current_user_optional)
+) -> None:
+    _search_browse_limiter.check(_caller_key(request, user))
+
+
+def rate_limit_library_match(
+    request: Request, user: User | None = Depends(get_current_user_optional)
+) -> None:
+    _library_match_limiter.check(_caller_key(request, user))
+
+
+def rate_limit_library_unmix(
+    request: Request, user: User | None = Depends(get_current_user_optional)
+) -> None:
+    _library_unmix_limiter.check(_caller_key(request, user))

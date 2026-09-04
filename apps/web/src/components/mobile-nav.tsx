@@ -3,8 +3,11 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
+import { Search } from "lucide-react";
+
 import { cn } from "@ramanhub/ui";
 
+import { openCommandPalette } from "./search/command-palette";
 import { NAV_LINKS, zoneForPath } from "./zone";
 
 /**
@@ -37,6 +40,16 @@ export function MobileNav() {
             </Link>
           );
         })}
+
+        {/* There is no keyboard here, so search needs somewhere to be tapped. */}
+        <button
+          type="button"
+          onClick={openCommandPalette}
+          className="text-muted-foreground flex h-14 flex-1 flex-col items-center justify-center gap-1 transition-colors active:scale-95 motion-reduce:transition-none motion-reduce:active:scale-100"
+        >
+          <Search className="size-5" aria-hidden />
+          <span className="text-[10px] font-semibold tracking-tight">Search</span>
+        </button>
       </div>
     </nav>
   );
