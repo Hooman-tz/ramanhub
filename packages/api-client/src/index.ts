@@ -62,6 +62,12 @@ export interface ApiClientOptions {
   baseUrl?: string;
   /** Bearer token for React Native (web uses the cookie instead). */
   token?: string;
+  /**
+   * Abort the request. Typeahead callers pass react-query's signal so a
+   * superseded keystroke stops in flight instead of racing its replacement
+   * to the cache.
+   */
+  signal?: AbortSignal;
 }
 
 export interface RequestOptions extends ApiClientOptions {
@@ -74,7 +80,7 @@ export interface RequestOptions extends ApiClientOptions {
   /** Extra query params. */
   query?: Record<string, string | number | boolean | undefined>;
   headers?: Record<string, string>;
-  signal?: AbortSignal;
+  // `signal` is inherited from ApiClientOptions.
 }
 
 /**
@@ -273,6 +279,8 @@ export interface FeedParams {
   tag?: string;
   author?: string;
   trust_tier?: "doi_verified" | "community";
+  /** Free text over titles, abstracts, tags and spectrum metadata. */
+  q?: string;
   limit?: number;
   offset?: number;
 }
@@ -1003,6 +1011,60 @@ export interface ReferenceSearchParams {
   trust_tier?: "curated" | "community";
   limit?: number;
   offset?: number;
+}
+
+/* --- global search ----------------------------------------------------------- */
+
+export type SuggestKind = "compound" | "spectrum" | "finding" | "person";
+
+export interface SuggestItem {
+  kind: SuggestKind;
+  id: string;
+  title: string;
+  subtitle: string | null;
+  badge: string | null;
+  /** People only. */
+  handle: string | null;
+  /** Spectra and findings only. */
+  accession: string | null;
+  /** People only. */
+  avatar_url: string | null;
+  score: number;
+}
+
+export interface SuggestGroup {
+  kind: SuggestKind;
+  label: string;
+  items: SuggestItem[];
+  /** More matches exist beyond the per-group cap. */
+  truncated: boolean;
+}
+
+export interface SuggestResponse {
+  query: string;
+  /**
+   * An ordered array, not a keyed object: the server owns the group order
+   * and it must survive the round trip. There is deliberately no `href` —
+   * web and mobile route differently, so mapping a kind to a screen is the
+   * caller's job.
+   */
+  groups: SuggestGroup[];
+}
+
+/**
+ * `GET /v1/search/suggest` — grouped typeahead across compounds, spectra,
+ * findings and people. A query under two characters comes back as empty
+ * groups rather than an error, so callers need not special-case the first
+ * keystroke. `limit` caps each group, not the total.
+ */
+export function suggest(
+  params: { q: string; limit?: number },
+  opts?: ApiClientOptions,
+): Promise<SuggestResponse> {
+  return apiRequest<SuggestResponse>("/v1/search/suggest", {
+    ...opts,
+    query: { ...params },
+  });
 }
 
 /** `GET /v1/library/references` — browse the reference corpus by identity. */
