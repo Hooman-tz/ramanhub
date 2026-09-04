@@ -79,7 +79,7 @@ export function LlmKeyCard() {
       }),
     onSuccess: async () => {
       setErr(null);
-      setMsg("Key saved and verified.");
+      setMsg("Key checked and stored. Model calls now go to your account.");
       setEditing(false);
       resetForm();
       await qc.invalidateQueries({ queryKey: ["llm-key"] });
@@ -87,7 +87,7 @@ export function LlmKeyCard() {
     onError: (e) => {
       setMsg(null);
       setErr(
-        isApiError(e) ? e.message : "Could not save that key — try again.",
+        isApiError(e) ? e.message : "Could not store that key. Try again.",
       );
     },
   });
@@ -96,12 +96,12 @@ export function LlmKeyCard() {
     mutationFn: () => deleteLlmKey(),
     onSuccess: async () => {
       setErr(null);
-      setMsg("Key removed. Back to the shared free models.");
+      setMsg("Key forgotten. Model calls are back on the shared free pool.");
       await qc.invalidateQueries({ queryKey: ["llm-key"] });
     },
     onError: (e) => {
       setMsg(null);
-      setErr(isApiError(e) ? e.message : "Could not remove that key.");
+      setErr(isApiError(e) ? e.message : "Could not forget that key.");
     },
   });
 
@@ -114,30 +114,44 @@ export function LlmKeyCard() {
     provider_label,
     model: storedModel,
     key_last4,
+    platform_model,
+    platform_model_varies,
   } = status.data;
   const canSave = apiKey.trim().length >= 8 && !!selected && !save.isPending;
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>AI provider</CardTitle>
+        <CardTitle>Model routing</CardTitle>
         <CardDescription>
-          Use your own provider key so your spectra and questions go to your
-          account instead of ours — and so you are not sharing our free-tier
-          rate limits.
+          Header parsing, structure detection, abstract summaries, filename
+          suggestions and the lab consultant all call a language model. Point
+          them at your own key and your data never touches our account — and you
+          stop queueing behind everyone else&rsquo;s free-tier quota.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 text-sm">
         {configured ? (
           <p>
-            {provider_label} · ••••{key_last4}
+            <span className="font-medium">{provider_label}</span>
+            <span className="text-muted-foreground"> · ••••{key_last4}</span>
             {storedModel ? (
               <span className="text-muted-foreground"> · {storedModel}</span>
             ) : null}
           </p>
         ) : (
           <p className="text-muted-foreground">
-            Your data is processed using RamanHub&rsquo;s shared free models.
+            Running on the shared free-model pool
+            {platform_model ? (
+              <>
+                {" ("}
+                <code className="text-xs">{platform_model}</code>
+                {platform_model_varies
+                  ? ", a different model each call)"
+                  : ")"}
+              </>
+            ) : null}
+            {". Your file headers and questions pass through our account."}
           </p>
         )}
 
@@ -171,7 +185,7 @@ export function LlmKeyCard() {
                 id="llm-key"
                 type="password"
                 autoComplete="off"
-                placeholder="Paste your key"
+                placeholder="Paste it here — you won't see it again"
                 value={apiKey}
                 onChange={(e) => setApiKey(e.target.value)}
               />
@@ -183,18 +197,22 @@ export function LlmKeyCard() {
             </div>
 
             <div className="space-y-1.5">
-              <Label htmlFor="llm-model">Model (optional)</Label>
+              <Label htmlFor="llm-model">Model</Label>
               <Input
                 id="llm-model"
                 placeholder={selected?.default_model ?? ""}
                 value={model}
                 onChange={(e) => setModel(e.target.value)}
               />
+              <p className="text-muted-foreground text-xs">
+                Blank means {selected?.default_model ?? "the provider default"}.
+                Whatever you name has to be able to return JSON on request.
+              </p>
             </div>
 
             <div className="flex gap-2">
               <Button type="submit" size="sm" disabled={!canSave}>
-                {save.isPending ? "Verifying…" : "Save key"}
+                {save.isPending ? "Checking the key…" : "Save key"}
               </Button>
               <Button
                 type="button"
@@ -210,8 +228,8 @@ export function LlmKeyCard() {
               </Button>
             </div>
             <p className="text-muted-foreground text-xs">
-              We check the key against the provider before saving it, so an
-              error here means the key itself was rejected.
+              The key is spent on one throwaway call before it&rsquo;s stored,
+              so anything that fails here failed at the provider, not here.
             </p>
           </form>
         ) : (
@@ -225,23 +243,23 @@ export function LlmKeyCard() {
                 setErr(null);
               }}
             >
-              {configured ? "Replace key" : "Use my own key"}
+              {configured ? "Swap key" : "Use my own key"}
             </Button>
 
             {configured ? (
               <Dialog>
                 <DialogTrigger asChild>
                   <Button variant="destructive" size="sm">
-                    Remove key
+                    Forget key
                   </Button>
                 </DialogTrigger>
                 <DialogContent>
                   <DialogHeader>
-                    <DialogTitle>Remove your API key?</DialogTitle>
+                    <DialogTitle>Drop your key?</DialogTitle>
                     <DialogDescription>
-                      AI features will go back to RamanHub&rsquo;s shared free
-                      models, which means your data is processed on our account
-                      again.
+                      Model calls fall back to the shared free pool, which means
+                      your headers and questions route through our account
+                      again. Nothing already parsed changes.
                     </DialogDescription>
                   </DialogHeader>
                   <DialogFooter>
@@ -257,7 +275,7 @@ export function LlmKeyCard() {
                         disabled={remove.isPending}
                         onClick={() => remove.mutate()}
                       >
-                        Remove key
+                        Forget key
                       </Button>
                     </DialogClose>
                   </DialogFooter>

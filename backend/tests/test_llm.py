@@ -440,3 +440,63 @@ def test_the_served_model_is_reported_not_the_router_slug(monkeypatch, caplog):
                 system="sys", user="usr", schema=_SCHEMA, credential=_openrouter_credential()
             )
         )
+
+
+# ---------------------------------------------------------------------------
+# reporting which model actually answered
+# ---------------------------------------------------------------------------
+
+
+def test_meta_reports_the_model_that_actually_answered():
+    """Under `openrouter/free` the requested slug is a router, so the served
+    model is the only thing worth showing a user."""
+    resp = _resp('{"summary": "ok"}')
+    resp.model = "z-ai/glm-5.2:free"
+    meta: dict = {}
+    with _fake_openai(AsyncMock(return_value=resp)):
+        _run(
+            complete_json(
+                system="sys",
+                user="usr",
+                schema=_SCHEMA,
+                credential=_openrouter_credential(model="openrouter/free"),
+                meta=meta,
+            )
+        )
+    assert meta["served_model"] == "z-ai/glm-5.2:free"
+    assert meta["requested_model"] == "openrouter/free"
+    assert meta["provider"] == "openrouter"
+
+
+def test_meta_falls_back_to_the_requested_model_when_none_is_reported():
+    """A provider that omits `model` on the response must not leave the field
+    empty — the requested slug is then the honest answer."""
+    meta: dict = {}
+    with _fake_openai(AsyncMock(return_value=_resp('{"summary": "ok"}'))):
+        _run(
+            complete_json(
+                system="sys",
+                user="usr",
+                schema=_SCHEMA,
+                credential=_user_credential(model="gpt-4o-mini"),
+                meta=meta,
+            )
+        )
+    assert meta["served_model"] == "gpt-4o-mini"
+    assert meta["provider"] == "openai"
+
+
+def test_meta_is_populated_even_when_the_call_fails():
+    meta: dict = {}
+    create = AsyncMock(side_effect=openai.APIConnectionError(request=MagicMock()))
+    with _fake_openai(create), pytest.raises(LLMError):
+        _run(
+            complete_json(
+                system="sys",
+                user="usr",
+                schema=_SCHEMA,
+                credential=_openrouter_credential(model="openrouter/free"),
+                meta=meta,
+            )
+        )
+    assert meta["served_model"] == "openrouter/free"

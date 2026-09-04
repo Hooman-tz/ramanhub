@@ -189,6 +189,7 @@ async def complete_json(
     max_tokens: int = 1024,
     temperature: float = 0.0,
     credential: LLMCredential | None = None,
+    meta: dict | None = None,
 ) -> dict:
     """Ask the model for a single JSON object matching `schema` and return it
     parsed. Raises `LLMError` on API failure, on a reply still truncated after
@@ -203,6 +204,13 @@ async def complete_json(
     `model` is a per-call-site preference and applies to the platform
     credential only: a user who supplied a key also chose (or defaulted) a
     model, and an OpenRouter slug is meaningless on another provider.
+
+    Pass a dict as `meta` to find out what actually happened: it is filled in
+    with `served_model` (the model that really answered, which under
+    `openrouter/free` is not the slug that was requested), `requested_model`,
+    and `provider`. An out-parameter rather than a richer return type so the
+    call sites that do not care stay untouched. It is populated even when the
+    call ultimately raises, so an error path can still name the model.
     """
     credential = credential or platform_credential()
     if credential is None:
@@ -213,6 +221,13 @@ async def complete_json(
         else (model or settings.OPENROUTER_MODEL)
     )
     client = _client(credential)
+
+    if meta is not None:
+        meta["requested_model"] = resolved_model
+        meta["provider"] = credential.provider
+        # Overwritten with the real answer below; set now so a caller
+        # inspecting `meta` after an exception still gets something useful.
+        meta["served_model"] = resolved_model
 
     system_content = (
         system
@@ -247,6 +262,8 @@ async def complete_json(
         # what actually answered varies per call, and is the only useful thing
         # to name in a log line or a truncation error.
         served = getattr(resp, "model", None) or resolved_model
+        if meta is not None:
+            meta["served_model"] = served
         return (
             choice.message.content or "",
             getattr(choice, "finish_reason", None),

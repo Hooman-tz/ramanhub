@@ -41,18 +41,18 @@ export function isApiError(e: unknown): e is ApiError {
  * on `ApiError.body` and is logged by `apiRequest`.
  */
 function userFacingMessage(status: number, body: unknown): string {
-  if (status >= 500)
-    return "Something went wrong on our end. Please try again.";
+  if (status >= 500) return "That broke on our side. Try again.";
+  // The likeliest 429 is now the shared free-model tier, which is capped
+  // per minute and per day — worth naming so it doesn't read as a scolding.
   if (status === 429)
-    return "You're doing that too fast — wait a moment and try again.";
+    return "Rate limited — the free model pool is capped. Give it a minute.";
   const detail = (body as { detail?: unknown; message?: unknown } | null)
     ?.detail;
   if (typeof detail === "string" && detail.trim()) return detail;
-  if (Array.isArray(detail))
-    return "Please check the information you entered and try again.";
+  if (Array.isArray(detail)) return "Some of those values didn't validate.";
   const msg = (body as { message?: unknown } | null)?.message;
   if (typeof msg === "string" && msg.trim()) return msg;
-  if (status === 404) return "Not found.";
+  if (status === 404) return "No such thing — or not yours to see.";
   if (status === 401 || status === 403) return "You don't have access to that.";
   return `Request failed (${status}).`;
 }
@@ -310,6 +310,10 @@ export interface MemberSpectrum {
 export interface AiSummary {
   summary: string;
   keywords: string[];
+  /** The model that actually wrote this summary. Under the free router the
+   *  model varies per call, so this is only known after the fact — null for
+   *  summaries generated before it was recorded. */
+  model?: string | null;
 }
 
 /**
@@ -1208,6 +1212,11 @@ export interface LlmKeyStatus {
   model: string | null;
   /** Last 4 characters only. The key itself is never returned. */
   key_last4: string | null;
+  /** What you're routed to without your own key — usually `openrouter/free`. */
+  platform_model: string | null;
+  /** True when `platform_model` is a router that picks per call, not a
+   *  single fixed model. */
+  platform_model_varies: boolean;
   providers: LlmProvider[];
 }
 
@@ -1624,6 +1633,8 @@ export interface LabConsultResult {
   suggested_preprocessing: SuggestedPreprocessing[];
   suggested_analyses: SuggestedAnalysis[];
   caveats: string[];
+  /** The model that produced this advice, so it can be shown alongside it. */
+  model?: string | null;
 }
 
 /**

@@ -55,8 +55,9 @@ MAX_HEADER_CHARS = 65536
 # for both while still bounding a misbehaving model.
 MAX_OUTPUT_TOKENS = 4096
 
-# Recorded on the cache row's `parser_version`; the concrete model slug is
-# an operator env choice (OPENROUTER_INGESTION_MODEL / OPENROUTER_MODEL).
+# Fallback for `parser_version` when the provider does not tell us which
+# model answered. Normally the real slug is recorded instead — under the free
+# router the configured value is a router, not the model that read the file.
 MODEL_ID = "openrouter-llm"
 
 _TOOL_NAME = "extract_raman_metadata"
@@ -153,6 +154,7 @@ async def extract_metadata_via_llm(
     *,
     filename: str | None = None,
     credential: LLMCredential | None = None,
+    meta: dict | None = None,
 ) -> tuple[ExtractedMetadata, str]:
     """Extract metadata from `header_text` via the shared LLM client, with a
     `VendorParseCache` lookup/write keyed by the FORMAT-ONLY header template
@@ -171,6 +173,12 @@ async def extract_metadata_via_llm(
     `app.llm_credentials.resolve_for_user`); None falls back to the platform
     key. A result produced with the *user's own* key is deliberately not
     written to `VendorParseCache` — see below.
+
+    Pass a dict as `meta` to learn which model produced the answer: it gets a
+    `model` key naming the model that actually read the header (on a cache
+    hit, the model that read it the first time). Under `openrouter/free` that
+    is never the slug that was requested, and it belongs in the provenance a
+    user sees.
     """
     # Belt-and-braces: never hand the model more than the header sniff window,
     # regardless of what a caller passes.
@@ -189,6 +197,10 @@ async def extract_metadata_via_llm(
         cached.hit_count = (cached.hit_count or 0) + 1
         db.add(cached)
         db.commit()
+        if meta is not None:
+            # Whoever's model wrote this template originally is the honest
+            # provenance claim, not whatever model is configured today.
+            meta["model"] = cached.parser_version
         return filename_overlay.apply(metadata, name_hint), "cache"
 
     credential = credential or platform_credential()
@@ -205,6 +217,7 @@ async def extract_metadata_via_llm(
         if name_hint
         else f"Raw header text:\n\n{header_text}"
     )
+    call_meta: dict = {}
     try:
         tool_input = await complete_json(
             system=_SYSTEM_PROMPT,
@@ -214,9 +227,14 @@ async def extract_metadata_via_llm(
             max_tokens=MAX_OUTPUT_TOKENS,
             temperature=0.0,
             credential=credential,
+            meta=call_meta,
         )
     except LLMError as exc:
         raise LLMExtractionError(f"LLM API call failed: {exc}") from exc
+
+    # `MODEL_ID` remains the fallback for a provider that does not name the
+    # model it used, so this column is never empty.
+    served_model = call_meta.get("served_model") or MODEL_ID
 
     try:
         metadata = ExtractedMetadata.model_validate(tool_input)
@@ -244,13 +262,15 @@ async def extract_metadata_via_llm(
         # provider; the derived template staying private follows from that.
         # The cache simply refills the next time a platform-key upload of the
         # same format comes through.
+        if meta is not None:
+            meta["model"] = served_model
         return filename_overlay.apply(format_metadata, name_hint), "llm"
 
     cache_row = VendorParseCache(
         header_hash=header_hash,
         modality=cache_modality,
         vendor_format=None,
-        parser_version=MODEL_ID,
+        parser_version=served_model,
         source=ParseSource.llm,
         parsed_template=format_metadata.model_dump(mode="json"),
         hit_count=0,
@@ -258,4 +278,6 @@ async def extract_metadata_via_llm(
     db.add(cache_row)
     db.commit()
 
+    if meta is not None:
+        meta["model"] = served_model
     return filename_overlay.apply(format_metadata, name_hint), "llm"

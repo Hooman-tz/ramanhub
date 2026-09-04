@@ -40,7 +40,11 @@ function SummaryBlock({
           </p>
         </details>
       )}
-      <p className="text-foreground/60 mt-2 text-xs">AI-generated summary.</p>
+      <p className="text-foreground/60 mt-2 text-xs">
+        {summary.model
+          ? `Written by ${summary.model}, not by a person. Read the abstract for anything load-bearing.`
+          : "Written by a model, not by a person. Read the abstract for anything load-bearing."}
+      </p>
     </div>
   );
 }
@@ -68,12 +72,14 @@ export function AbstractSummary({
       } else if (res.reason === "llm_not_configured") {
         setNote("AI summariser not configured.");
       } else {
-        setNote("Could not generate a summary right now.");
+        setNote("The model did not return a usable summary. Try again.");
       }
     },
     onError: (e) =>
       setNote(
-        isApiError(e) ? e.message : "Could not generate a summary right now.",
+        isApiError(e)
+          ? e.message
+          : "The model did not return a usable summary. Try again.",
       ),
   });
 
@@ -87,7 +93,7 @@ export function AbstractSummary({
       <div className="mt-6">
         <h2 className="text-base font-semibold tracking-tight">Summary</h2>
         <p className="text-muted-foreground mt-2 text-sm">
-          The linked paper has an abstract but no summary yet.
+          The linked paper has an abstract. Nothing has read it yet.
         </p>
         <Button
           size="sm"
@@ -96,7 +102,7 @@ export function AbstractSummary({
           disabled={mutation.isPending}
           onClick={() => mutation.mutate()}
         >
-          {mutation.isPending ? "Summarizing…" : "Summarize with AI"}
+          {mutation.isPending ? "Reading it…" : "Condense the abstract"}
         </Button>
         {note && <p className="text-muted-foreground mt-2 text-xs">{note}</p>}
       </div>

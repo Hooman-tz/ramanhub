@@ -169,7 +169,8 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Profile</CardTitle>
           <CardDescription>
-            How your work is credited across the platform.
+            The name that goes on every finding and spectrum you publish, and
+            on your public profile. Change it here and it changes everywhere.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -301,7 +302,9 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Identity</CardTitle>
           <CardDescription>
-            Link your ORCID iD to show a verified badge on your profile.
+            An ORCID iD is the identifier that stays yours through every
+            change of institution, surname and email. Link it and your
+            published records carry it.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3 text-sm">
@@ -338,7 +341,9 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle>Data</CardTitle>
           <CardDescription>
-            Export or permanently close your account.
+            Take a copy of everything, or close the account. Published records
+            stay put either way — they are citable, and provenance that can
+            vanish is not provenance.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">

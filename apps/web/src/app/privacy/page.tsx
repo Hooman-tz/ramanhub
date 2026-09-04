@@ -35,19 +35,28 @@ export default function PrivacyPage() {
         <p>
           Account metadata lives in our PostgreSQL database; uploaded spectral
           files live in S3-compatible object storage (Cloudflare R2 in
-          production). Error diagnostics may be processed by Sentry. Uploaded file
-          headers that no built-in parser recognizes are sent to our LLM
-          provider (OpenRouter) for metadata extraction — header content only,
-          not tied to your identity.
+          production). Error diagnostics may be processed by Sentry. When no
+          built-in parser recognizes a file, its header is sent to our language
+          model provider (OpenRouter) to extract metadata — the header text
+          only, never the data body, and not tied to your identity.
         </p>
         <p>
-          You can change that: add your own provider API key under Settings and
-          every AI-assisted feature — header parsing, file-structure detection,
-          abstract summaries, filename suggestions, and the lab consultant — goes
-          to your account with your chosen provider instead of ours. Your key is
-          encrypted at rest and is never shown again after you save it. While your
-          own key is in use, results derived from your files are also kept out of
-          the shared format caches other accounts read.
+          By default those calls route through OpenRouter&rsquo;s free-model
+          router, which selects a different model for each request. We record
+          which model answered and show it next to the result, so the
+          provenance of machine-written metadata stays inspectable. The model
+          providers&rsquo; own retention terms apply to whatever we send them;
+          we do not control those.
+        </p>
+        <p>
+          You can take us out of that path entirely. Add your own provider API
+          key under Settings and every model-backed feature — header parsing,
+          structure detection, abstract summaries, filename suggestions and the
+          lab consultant — calls your provider on your account instead of ours.
+          Your key is encrypted at rest, is never returned by the API, and is
+          deleted when you close your account. While your key is in use, the
+          metadata templates derived from your files are also kept out of the
+          shared format caches that other accounts read.
         </p>
       </section>
 

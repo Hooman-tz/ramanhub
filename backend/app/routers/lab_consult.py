@@ -146,6 +146,9 @@ class LabConsultResponse(BaseModel):
     suggested_preprocessing: list[SuggestedPreprocessing]
     suggested_analyses: list[SuggestedAnalysis]
     caveats: list[str]
+    # The model that actually answered. Advice from a model is worth less
+    # than a measurement, and naming the model is how a reader judges it.
+    model: str | None = None
 
 
 # --- helpers -------------------------------------------------------------
@@ -433,6 +436,7 @@ async def lab_consult(
     if body.question:
         user_message += f"\n\nUser question (advise only if it is about processing these spectra):\n{body.question}"
 
+    meta: dict = {}
     try:
         raw = await complete_json(
             system=_SYSTEM_PROMPT,
@@ -441,6 +445,7 @@ async def lab_consult(
             max_tokens=_MAX_TOKENS,
             temperature=0.0,
             credential=resolve_for_user(db, user.id),
+            meta=meta,
         )
     except LLMError as exc:
         raise HTTPException(
@@ -448,4 +453,6 @@ async def lab_consult(
             detail=f"Lab consultant call failed: {exc}",
         ) from exc
 
-    return _filter_output(raw)
+    out = _filter_output(raw)
+    out.model = meta.get("served_model")
+    return out

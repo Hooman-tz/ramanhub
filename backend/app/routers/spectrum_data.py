@@ -23,6 +23,7 @@ from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.processing.cache import get_or_compute
 from app.processing.state_machine import require_owner_or_public
+from app.raman_contract import RamanDataError
 from app.schemas.ledger import Ledger, LedgerStep
 from app.spectra_io import load_raw_spectrum, lttb_downsample
 

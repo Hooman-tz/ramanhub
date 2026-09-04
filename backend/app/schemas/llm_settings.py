@@ -40,6 +40,13 @@ class LLMKeyStatus(BaseModel):
     provider_label: str | None = None
     model: str | None = None
     key_last4: str | None = None
+    # What a user without their own key is currently routed to. Usually
+    # `openrouter/free`, which is a router rather than a single model — see
+    # `platform_model_varies`.
+    platform_model: str | None = None
+    # True when `platform_model` picks a different model per call, so the UI
+    # can say so instead of implying a fixed choice.
+    platform_model_varies: bool = False
     providers: list[LLMProviderOut] = Field(default_factory=list)
 
 

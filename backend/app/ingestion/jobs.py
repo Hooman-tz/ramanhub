@@ -291,7 +291,7 @@ def _retry_or_fail(
     db.commit()
 
 
-def _fallback_provenance(source: str) -> tuple[str, str, float]:
+def _fallback_provenance(source: str, model: str | None = None) -> tuple[str, str, float]:
     """Map an `extract_metadata_via_llm` source to `(parser_used, version,
     confidence)`.
 
@@ -301,10 +301,15 @@ def _fallback_provenance(source: str) -> tuple[str, str, float]:
     when none did: `"filename-only"` is the no-key path, where nothing but the
     upload's filename informed those fields, and it is scored well below a
     real header parse to say so.
+
+    `model`, when known, is the model that actually read the header and
+    becomes the recorded version — under the free router the configured slug
+    is a router, so "which model produced this metadata" is only answerable
+    after the call. Falls back to `source` so provenance is never blank.
     """
     if source == "filename-only":
         return "filename-only", source, 0.2
-    return f"llm:{source}", source, 0.7 if source == "cache" else 0.55
+    return f"llm:{source}", model or source, 0.7 if source == "cache" else 0.55
 
 
 def run_ingestion_job(
@@ -377,6 +382,7 @@ def run_ingestion_job(
                 # This runs in a background worker, so there is no request
                 # user — the file's owner is who the LLM work is being done
                 # for, and whose own provider key (if set) it must use.
+                llm_meta: dict = {}
                 metadata, source = asyncio.run(
                     await_with_lease_heartbeats(
                         extract_metadata_via_llm(
@@ -384,11 +390,14 @@ def run_ingestion_job(
                             db,
                             filename=raw_file.original_filename,
                             credential=resolve_for_user(db, raw_file.owner_id),
+                            meta=llm_meta,
                         ),
                         on_heartbeat=lambda: _renew_lease(db, job.id, active_lease_token),
                     )
                 )
-                parser_used, parser_version, parser_confidence = _fallback_provenance(source)
+                parser_used, parser_version, parser_confidence = _fallback_provenance(
+                    source, llm_meta.get("model")
+                )
 
             flags = run_sanity_check(metadata, metadata.modality, db)
             flags.update(_quality_flags_for_arrays(raw_bytes))

@@ -25,6 +25,7 @@ from fastapi import APIRouter, Depends, HTTPException, Response, status
 from sqlalchemy.orm import Session
 
 from app.auth.deps import get_current_full_user
+from app.config import settings
 from app.db.session import get_db
 from app.llm import LLMError, complete_json
 from app.llm_credentials import PROVIDERS, LLMCredential
@@ -67,10 +68,25 @@ def _provider_list() -> list[LLMProviderOut]:
     ]
 
 
+# OpenRouter's routers pick a different model per request, so naming one
+# would be a lie. Anything else is a concrete model.
+_ROUTER_SLUGS = {"openrouter/free", "openrouter/auto"}
+
+
+def _platform_model() -> tuple[str | None, bool]:
+    slug = settings.OPENROUTER_MODEL if settings.OPENROUTER_API_KEY else None
+    return slug, slug in _ROUTER_SLUGS
+
+
 def _status(row: UserLLMCredential | None) -> LLMKeyStatus:
+    platform_slug, varies = _platform_model()
     if row is None:
         return LLMKeyStatus(
-            enabled=byo_llm_enabled(), configured=False, providers=_provider_list()
+            enabled=byo_llm_enabled(),
+            configured=False,
+            platform_model=platform_slug,
+            platform_model_varies=varies,
+            providers=_provider_list(),
         )
     spec = PROVIDERS.get(row.provider)
     return LLMKeyStatus(
@@ -80,6 +96,8 @@ def _status(row: UserLLMCredential | None) -> LLMKeyStatus:
         provider_label=spec.label if spec else row.provider,
         model=row.model or (spec.default_model if spec else None),
         key_last4=row.key_last4,
+        platform_model=platform_slug,
+        platform_model_varies=varies,
         providers=_provider_list(),
     )
 

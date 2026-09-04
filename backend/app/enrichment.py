@@ -46,6 +46,10 @@ _SYSTEM_PROMPT = (
 class AbstractSummary(BaseModel):
     summary: str = Field(max_length=600)
     keywords: list[str] = Field(default_factory=list, max_length=8)
+    # Which model actually wrote this. Set by us after validation, never by
+    # the model itself — under the free router the slug we asked for is not
+    # the one that answered, and a reader deserves to know which it was.
+    model: str | None = None
 
 
 class EnrichmentError(Exception):
@@ -62,6 +66,7 @@ async def summarize_abstract(
     if credential is None:
         raise EnrichmentError("OPENROUTER_API_KEY is not configured")
 
+    meta: dict = {}
     try:
         result = await complete_json(
             system=_SYSTEM_PROMPT,
@@ -70,6 +75,7 @@ async def summarize_abstract(
             model=settings.OPENROUTER_ENRICHMENT_MODEL or None,
             max_tokens=1024,
             credential=credential,
+            meta=meta,
         )
     except LLMError as exc:
         raise EnrichmentError(f"LLM call failed: {exc}") from exc
@@ -80,4 +86,5 @@ async def summarize_abstract(
         raise EnrichmentError(f"LLM output failed schema validation: {exc}") from exc
 
     summary.keywords = [k.strip().lower() for k in summary.keywords if k and k.strip()][:8]
+    summary.model = meta.get("served_model")
     return summary

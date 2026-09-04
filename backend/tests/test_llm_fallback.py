@@ -464,3 +464,58 @@ def test_a_byo_user_still_reads_the_shared_cache():
     assert source == "cache"
     assert metadata.instrument_vendor == "Cached Vendor"
     mock_cj.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# (k) provenance names the model that actually read the header
+# ---------------------------------------------------------------------------
+
+
+def test_meta_reports_the_model_that_read_the_header():
+    """`openrouter/free` is a router, so "which model produced this metadata"
+    is only answerable after the call — and it is what gets shown to the user
+    as provenance."""
+    db = _FakeDB(cached_row=None)
+
+    async def _fake(**kwargs):
+        kwargs["meta"]["served_model"] = "z-ai/glm-5.2:free"
+        return {"modality": "raman", "instrument_vendor": "Acme"}
+
+    meta: dict = {}
+    with patch("app.ingestion.llm_fallback.complete_json", new=_fake):
+        _, source = _run(extract_metadata_via_llm(HEADER_TEXT, db, meta=meta))
+
+    assert source == "llm"
+    assert meta["model"] == "z-ai/glm-5.2:free"
+    # ...and it is recorded on the cache row, not the old constant.
+    assert db.added[0].parser_version == "z-ai/glm-5.2:free"
+
+
+def test_cache_hit_reports_the_model_that_wrote_the_template():
+    """Not whatever model is configured today — the claim is about how this
+    metadata came to exist."""
+    cached = VendorParseCache(
+        header_hash=compute_header_hash(HEADER_TEXT),
+        modality=Modality.raman,
+        vendor_format=None,
+        parser_version="nvidia/nemotron-3-super-120b-a12b:free",
+        source=ParseSource.llm,
+        parsed_template={"modality": "raman", "instrument_vendor": "Cached"},
+        hit_count=0,
+    )
+    db = _FakeDB(cached_row=cached)
+    meta: dict = {}
+    with _patch_complete_json():
+        _, source = _run(extract_metadata_via_llm(HEADER_TEXT, db, meta=meta))
+
+    assert source == "cache"
+    assert meta["model"] == "nvidia/nemotron-3-super-120b-a12b:free"
+
+
+def test_provenance_falls_back_when_the_provider_names_no_model():
+    db = _FakeDB(cached_row=None)
+    meta: dict = {}
+    with _patch_complete_json(return_value={"modality": "raman"}):
+        _run(extract_metadata_via_llm(HEADER_TEXT, db, meta=meta))
+    assert meta["model"] == "openrouter-llm"
+    assert db.added[0].parser_version == "openrouter-llm"
