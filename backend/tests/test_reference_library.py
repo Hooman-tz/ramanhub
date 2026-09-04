@@ -608,3 +608,24 @@ def test_deconvolution_is_rate_limited(client, db_session, make_user, make_raw_f
     assert client.post("/v1/library/unmix", json=body).status_code == 200
     assert client.post("/v1/library/unmix", json=body).status_code == 200
     assert client.post("/v1/library/unmix", json=body).status_code == 429
+
+
+def test_browse_lists_real_names_before_composition_strings(
+    client, db_session, make_user, make_raw_file
+):
+    """A minority of imported entries carry a composition string instead of a
+    name. Plain alphabetical sorting puts every one of those on the first page,
+    which is the worst possible first impression of the library."""
+    owner = make_user()
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="(Pb1.924 Ba0.018 Ca0.007) O", peaks=[(500.0, 100.0)], source_id="U1",
+    )
+    seed_reference(
+        client, db_session, owner, make_raw_file,
+        name="Calcite", peaks=[(1085.0, 100.0)], source_id="U2",
+    )
+
+    names = [r["compound_name"] for r in client.get("/v1/library/references").json()]
+    assert names[0] == "Calcite"
+    assert names[-1].startswith("(")

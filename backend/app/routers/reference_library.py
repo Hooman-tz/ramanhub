@@ -165,10 +165,18 @@ def search_references(
     if trust_tier:
         query = query.filter(ReferenceEntry.trust_tier == ReferenceTrustTier(trust_tier))
 
-    # Curated first, then alphabetical. No social signal, matching the
-    # quarantine `search.py` documents.
+    # Curated first, then real names, then alphabetical. The middle term
+    # matters: a minority of entries carry a composition string rather than a
+    # name ("(Pb1.924 Ba0.018 ...)"), and left to plain alphabetical sorting
+    # those parenthesised strings occupy the whole first page — the worst
+    # possible first impression of a library that is 94% properly named.
+    # No social signal anywhere, matching the quarantine `search.py` documents.
     rows = (
-        query.order_by(ReferenceEntry.trust_tier.asc(), ReferenceEntry.compound_name.asc())
+        query.order_by(
+            ReferenceEntry.trust_tier.asc(),
+            ReferenceEntry.compound_name.op("~")("^[A-Za-z]").desc(),
+            ReferenceEntry.compound_name.asc(),
+        )
         .offset(max(0, offset))
         .limit(limit)
         .all()
