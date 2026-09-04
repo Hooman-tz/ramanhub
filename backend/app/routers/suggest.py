@@ -38,6 +38,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.community import public_profile_predicates
@@ -95,17 +96,39 @@ class SuggestResponse(BaseModel):
 
 
 def _compounds(db: Session, q: str, limit: int) -> list[SuggestItem]:
+    """One row per compound, not one per measurement.
+
+    The imported corpus holds many spectra of the same mineral — 22 entries
+    named "Andradite" in the current import. Listed plainly, a five-slot
+    palette group answers "andradite" with the same word five times, which
+    tells the user nothing. DISTINCT ON keeps the best-ranked entry per name;
+    the browse list still shows every individual entry, because there each row
+    is a spectrum you might actually want to open.
+    """
     rank = text_rank(ReferenceEntry.compound_name, ReferenceEntry.search_text, q)
-    rows = (
-        db.query(ReferenceEntry, rank.label("score"))
-        .filter(
+    name = func.lower(ReferenceEntry.compound_name)
+    best_per_name = (
+        select(ReferenceEntry.id.label("id"), rank.label("score"))
+        .where(
             ReferenceEntry.curation_status != ReferenceCurationStatus.removed,
             text_predicate(ReferenceEntry.search_text, q),
         )
-        .order_by(rank.desc(), ReferenceEntry.trust_tier.asc(), ReferenceEntry.compound_name.asc())
-        .limit(limit)
-        .all()
+        # Postgres requires DISTINCT ON's expression to lead the ORDER BY;
+        # the rest of the key decides which duplicate survives.
+        .distinct(name)
+        .order_by(name, rank.desc(), ReferenceEntry.trust_tier.asc())
+        .subquery()
     )
+    rows = db.execute(
+        select(ReferenceEntry, best_per_name.c.score)
+        .join(best_per_name, best_per_name.c.id == ReferenceEntry.id)
+        .order_by(
+            best_per_name.c.score.desc(),
+            ReferenceEntry.trust_tier.asc(),
+            ReferenceEntry.compound_name.asc(),
+        )
+        .limit(limit)
+    ).all()
     return [
         SuggestItem(
             kind="compound",

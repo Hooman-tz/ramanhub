@@ -538,3 +538,35 @@ def test_suggest_is_rate_limited(client, monkeypatch):
     assert client.get("/v1/search/suggest", params={"q": "calcite"}).status_code == 200
     assert client.get("/v1/search/suggest", params={"q": "calcite"}).status_code == 200
     assert client.get("/v1/search/suggest", params={"q": "calcite"}).status_code == 429
+
+
+def test_suggest_shows_each_compound_once(client, db_session, make_user, make_raw_file):
+    """The imported corpus holds many spectra of one mineral — 22 rows named
+    "Andradite" in the current import. Without deduplication a five-slot group
+    answers the query with the same word five times."""
+    from app.models.reference import (
+        ReferenceCurationStatus,
+        ReferenceEntry,
+        ReferenceTrustTier,
+    )
+
+    owner = make_user()
+    for i in range(4):
+        published = _create_and_publish(
+            client, owner, make_raw_file, material_type=f"Andradite sample {i}"
+        )
+        db_session.add(
+            ReferenceEntry(
+                spectrum_id=uuid.UUID(published["id"]),
+                compound_name="Andradite",
+                source="rod",
+                source_id=f"AND{i}",
+                trust_tier=ReferenceTrustTier.curated,
+                curation_status=ReferenceCurationStatus.approved,
+            )
+        )
+    db_session.commit()
+    client.set_current_user(None)
+
+    body = _groups(client.get("/v1/search/suggest", params={"q": "andradite"}).json())
+    assert [i["title"] for i in body["compound"]["items"]] == ["Andradite"]
