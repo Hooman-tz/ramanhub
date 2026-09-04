@@ -1,9 +1,7 @@
 "use client";
 
-import {
-  SpectrumExplorer,
-  type ExplorerSpectrum,
-} from "~/components/charts/spectrum-explorer";
+import type { ExplorerSpectrum } from "~/components/charts/spectrum-explorer";
+import { SpectrumExplorer } from "~/components/charts/spectrum-explorer";
 
 /**
  * Thin client wrapper so the server-rendered dataset page can drop in the

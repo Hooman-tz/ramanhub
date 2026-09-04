@@ -27,11 +27,12 @@ from __future__ import annotations
 import argparse
 import re
 import sys
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from hashlib import sha256
 from pathlib import Path
-from typing import Iterator, Protocol
+from typing import Protocol
 from uuid import uuid4
 
 from sqlalchemy.orm import Session
@@ -100,8 +101,10 @@ class ImportStats:
 
     def describe(self) -> str:
         lines = [
-            f"seen={self.seen} created={self.created} "
-            f"skipped={self.skipped_existing} rejected={self.rejected}"
+            (
+                f"seen={self.seen} created={self.created} "
+                f"skipped={self.skipped_existing} rejected={self.rejected}"
+            )
         ]
         for reason, count in sorted(self.reject_reasons.items(), key=lambda kv: -kv[1]):
             lines.append(f"  rejected [{count}]: {reason}")

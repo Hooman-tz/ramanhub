@@ -273,11 +273,18 @@ export function SpectrumChart(props: SpectrumChartProps) {
   // `notMerge` redraw on every frame; instead the sync effect below nudges the
   // existing chart with `dispatchAction`, which is cheap.
   const zoomRangeRef = useRef<ZoomRange>(zoomRange ?? FULL_ZOOM);
-  zoomRangeRef.current = zoomRange ?? FULL_ZOOM;
   // Same reason: keep the callback out of the draw effect's dependency list so
   // an inline arrow from the parent can't force a redraw every render.
   const onZoomChangeRef = useRef(onZoomChange);
-  onZoomChangeRef.current = onZoomChange;
+
+  // Writing a ref during render is not allowed, so both writes happen here.
+  // Declared above the draw and zoom effects: effects run in declaration
+  // order within a commit, so those always read the current values. The
+  // initial render is covered by the `useRef` seeds above.
+  useEffect(() => {
+    zoomRangeRef.current = zoomRange ?? FULL_ZOOM;
+    onZoomChangeRef.current = onZoomChange;
+  });
 
   // Narrowed, referentially-stable data handles (the arrays come straight
   // from React Query cache) so the draw effect only re-runs on real change.
@@ -635,8 +642,8 @@ export function SpectrumChart(props: SpectrumChartProps) {
         lineWidth: dLineWidth ?? 2,
       };
 
-      const rawList: TraceSeries[] = multiSeries
-        ? seriesProp!.slice()
+      const rawList: TraceSeries[] = seriesProp?.length
+        ? seriesProp.slice()
         : [
             {
               name: overlay ? "Processed" : "Intensity",
@@ -677,7 +684,7 @@ export function SpectrumChart(props: SpectrumChartProps) {
       const splitLine = { ...axisStyle.splitLine, show: opts.showGrid };
 
       const markLineOption =
-        markers && markers.length
+        markers?.length
           ? {
               symbol: "none" as const,
               silent: true,

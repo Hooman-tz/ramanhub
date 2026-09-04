@@ -88,9 +88,14 @@ export function PostGallery({
   const [items, setItems] = useState<FindingImage[]>(() =>
     [...images].sort((a, b) => a.position - b.position),
   );
-  useEffect(() => {
+  // Re-sync when the parent hands down a new list. Adjusting state during
+  // render is React's documented pattern for this and avoids the cascading
+  // second render an effect would cause; `items` is never briefly stale.
+  const [syncedImages, setSyncedImages] = useState(images);
+  if (syncedImages !== images) {
+    setSyncedImages(images);
     setItems([...images].sort((a, b) => a.position - b.position));
-  }, [images]);
+  }
 
   const figures = items.filter((i) => i.kind === "figure");
   const abstracts = items.filter((i) => i.kind === "graphical_abstract");

@@ -25,10 +25,10 @@ from app.db.base import SessionLocal
 from app.ingestion import filename_overlay
 from app.ingestion.header_hash import compute_header_hash
 from app.ingestion.llm_fallback import extract_metadata_via_llm
-from app.llm_credentials import resolve_for_user
 from app.ingestion.parsers.registry import find_parser
 from app.ingestion.sanity_check import check as run_sanity_check
 from app.ingestion.structure import build_preview, extract_trace, resolve_layout
+from app.llm_credentials import resolve_for_user
 from app.logging_config import log_event
 from app.models.enums import IngestionStatus, UploadStatus
 from app.models.ingestion_job import IngestionJob

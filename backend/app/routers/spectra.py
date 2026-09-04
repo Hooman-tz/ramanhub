@@ -455,7 +455,8 @@ def delete_spectrum(
     for bucket, key in storage_targets:
         try:
             delete_object(bucket, key)
-        except Exception:  # noqa: BLE001 - a storage hiccup must not fail the delete
+        except Exception:
+            # A storage hiccup must not fail the delete.
             logger.warning(
                 "delete_spectrum: could not remove object %s/%s", bucket, key, exc_info=True
             )

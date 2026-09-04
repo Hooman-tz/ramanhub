@@ -10,7 +10,8 @@ serialization only.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+import logging
+from datetime import UTC, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -26,7 +27,6 @@ from app.auth.deps import (
 )
 from app.db.session import get_db
 from app.discovery.library_match import (
-    MATCH_CONTRACT_VERSION,
     UNMIX_MAX_COMPONENTS,
     match_against_library,
     unmix,
@@ -44,6 +44,8 @@ from app.models.spectrum import Spectrum
 from app.models.spectrum_peaks import SpectrumPeaks
 from app.models.user import User
 from app.processing.state_machine import require_owner_or_public
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/v1/library", tags=["reference-library"])
 
@@ -488,8 +490,14 @@ def contribute_reference(
     try:
         get_or_build_feature(spectrum, db)
         get_or_build_peak_index(spectrum, db)
-    except Exception:  # noqa: BLE001 - an unindexable spectrum is still a valid entry
-        pass
+    except Exception:
+        # An unindexable spectrum is still a valid entry — the background
+        # warmer will retry it — but a silent failure here hides real bugs.
+        logger.warning(
+            "reference_library: could not warm indexes for spectrum %s",
+            spectrum.id,
+            exc_info=True,
+        )
 
     db.commit()
     db.refresh(entry)
@@ -546,7 +554,7 @@ def moderate_reference(
     if body.curation_status != "approved":
         entry.flagged_for_review = False
     entry.curated_by = moderator.id
-    entry.curated_at = datetime.now(timezone.utc)
+    entry.curated_at = datetime.now(UTC)
     db.add(entry)
     db.commit()
     db.refresh(entry)

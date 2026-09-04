@@ -26,6 +26,13 @@ from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from app.analysis.engine import _shared_grid, load_spectrum_arrays
+from app.discovery.peak_index import get_or_build_peak_index
+from app.discovery.raman_similarity import (
+    FEATURE_VERSION,
+    compatible,
+    cosine_feature_similarity,
+    get_or_build_feature,
+)
 from app.models.enums import (
     Modality,
     ReferenceCurationStatus,
@@ -41,13 +48,6 @@ from app.processing.peaks import (
     DEFAULT_BIN_TOLERANCE_CM1,
     PEAK_INDEX_VERSION,
     neighbor_bins,
-)
-from app.discovery.peak_index import get_or_build_peak_index
-from app.discovery.raman_similarity import (
-    FEATURE_VERSION,
-    compatible,
-    cosine_feature_similarity,
-    get_or_build_feature,
 )
 
 MATCH_CONTRACT_VERSION = "library-match-1"

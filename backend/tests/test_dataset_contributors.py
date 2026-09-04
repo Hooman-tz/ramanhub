@@ -168,7 +168,7 @@ def test_a_finding_credits_its_author_and_co_authors(
     lab_client, db_session, make_user, make_raw_file
 ):
     owner = _handled(db_session, make_user, "ada", "Ada")
-    coauthor = _handled(db_session, make_user, "lin", "Lin")
+    _handled(db_session, make_user, "lin", "Lin")
     lab_client.set_current_user(owner)
     member = _published_spectrum(lab_client, make_raw_file(owner))
     dataset = _dataset(lab_client, "Write-up", [member["id"]])

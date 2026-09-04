@@ -15,7 +15,6 @@ from app.models.enums import ReferenceCurationStatus, ReferenceTrustTier
 from app.models.reference import ReferenceEntry
 from app.models.spectrum import Spectrum
 
-
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------

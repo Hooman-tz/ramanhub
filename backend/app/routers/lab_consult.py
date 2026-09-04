@@ -45,8 +45,8 @@ from app.models.raw_file import RawFile
 from app.models.spectrum import Spectrum
 from app.models.user import User
 from app.processing.algorithms.registry import ALGORITHM_REGISTRY
-from app.ratelimit import rate_limit_llm_consult
 from app.raman_contract import RamanDataError
+from app.ratelimit import rate_limit_llm_consult
 from app.spectra_io import load_spectrum_trace
 
 router = APIRouter(prefix="/v1/lab", tags=["lab-consult"])

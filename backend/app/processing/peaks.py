@@ -16,8 +16,8 @@ row rather than leaving a corpus indexed by two different algorithms.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from typing import Sequence
+from collections.abc import Sequence
+from dataclasses import asdict, dataclass
 
 import numpy as np
 from scipy.signal import find_peaks, peak_widths
@@ -168,7 +168,7 @@ def detect_peaks(
     # median step — spectra are not guaranteed to be evenly sampled.
     steps = np.diff(x)
     median_step = float(np.median(np.abs(steps))) if steps.size else 0.0
-    distance = max(1, int(round(min_distance_cm1 / median_step))) if median_step > 0 else 1
+    distance = max(1, round(min_distance_cm1 / median_step)) if median_step > 0 else 1
 
     threshold = min_prominence_sigma * sigma
     indices, props = find_peaks(corrected, prominence=threshold, distance=distance)
