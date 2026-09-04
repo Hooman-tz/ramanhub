@@ -4,6 +4,7 @@ import { Suspense } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Search } from "lucide-react";
 
 import { getSession, logout } from "@ramanhub/api-client";
 import { cn } from "@ramanhub/ui";
@@ -17,6 +18,7 @@ import {
 } from "@ramanhub/ui/dropdown-menu";
 
 import { NavAction } from "./nav-action";
+import { openCommandPalette } from "./search/command-palette";
 import { NAV_LINKS, zoneForPath } from "./zone";
 
 function initials(name: string | null, email: string | null): string {
@@ -117,6 +119,17 @@ export function Nav() {
           <Suspense fallback={null}>
             <NavAction isFullUser={isFullUser} />
           </Suspense>
+
+          {/* ⌘K is invisible to anyone who hasn't been told about it. */}
+          <button
+            type="button"
+            onClick={openCommandPalette}
+            aria-label="Search"
+            className="border-border/70 bg-card/60 text-muted-foreground hover:text-foreground focus-visible:ring-ring/50 flex shrink-0 items-center gap-1.5 rounded-xl border px-2 py-1.5 transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
+          >
+            <Search className="size-4" aria-hidden />
+            <kbd className="hidden font-sans text-[11px] md:inline">⌘K</kbd>
+          </button>
 
           {isFullUser ? (
             <>

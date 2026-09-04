@@ -20,7 +20,8 @@ import { IdentifyFlow } from "~/components/library/identify-flow";
  *
  * `?s=<spectrumId>` pre-selects a sample. The Data Lab links here with it set,
  * so leaving the Lab to identify something does not mean picking your sample a
- * second time.
+ * second time. `?q=` pre-fills the browse search, which is how a compound
+ * picked in the ⌘K palette arrives — compounds have no detail route yet.
  */
 function LibraryView() {
   const params = useSearchParams();
@@ -36,6 +37,7 @@ function LibraryView() {
     <IdentifyFlow
       isFullUser={!!user && !user.is_guest}
       initialSpectrumId={params.get("s")}
+      initialQuery={params.get("q")}
     />
   );
 }

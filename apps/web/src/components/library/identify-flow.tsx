@@ -39,10 +39,13 @@ import { useSpectrumBuffer } from "~/lib/spectra-buffer";
 export function IdentifyFlow({
   isFullUser,
   initialSpectrumId = null,
+  initialQuery = null,
 }: {
   isFullUser: boolean;
   /** Pre-selected sample, e.g. carried over from the Data Lab's `?s=`. */
   initialSpectrumId?: string | null;
+  /** Pre-filled browse search, e.g. a compound picked in the ⌘K palette. */
+  initialQuery?: string | null;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -51,7 +54,7 @@ export function IdentifyFlow({
   // itself — opening on an empty four-step form makes a stocked library look
   // like a broken one.
   const [task, setTask] = useState<"identify" | "browse">(
-    initialSpectrumId ? "identify" : "browse",
+    initialQuery ? "browse" : initialSpectrumId ? "identify" : "browse",
   );
   const [spectrumId, setSpectrumId] = useState<string | null>(initialSpectrumId);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -184,7 +187,7 @@ export function IdentifyFlow({
       </header>
 
       {task === "browse" ? (
-        <BrowsePanel />
+        <BrowsePanel initialQuery={initialQuery} />
       ) : (
         <>
           <Step
@@ -393,8 +396,8 @@ export function IdentifyFlow({
   }
 }
 
-function BrowsePanel() {
-  const [query, setQuery] = useState("");
+function BrowsePanel({ initialQuery }: { initialQuery?: string | null }) {
+  const [query, setQuery] = useState(initialQuery ?? "");
   // Typing used to issue a request per keystroke against the whole reference
   // corpus. 250 ms because this is a list people stop and read, not a palette
   // they glance at mid-word.
