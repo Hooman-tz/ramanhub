@@ -78,8 +78,8 @@ importers:
   apps/mobile:
     dependencies:
       '@legendapp/list':
-        specifier: ^2.0.14
-        version: 2.0.14(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))(react@19.1.4)
+        specifier: ^3.3.9
+        version: 3.3.9(react-dom@19.1.4(react@19.1.4))(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))(react@19.1.4)
       '@ramanhub/api-client':
         specifier: workspace:*
         version: link:../../packages/api-client
@@ -1502,11 +1502,17 @@ packages:
   '@jridgewell/trace-mapping@0.3.9':
     resolution: {integrity: sha512-3Belt6tdc8bPgAtbcmdtNJlirVoTmEb5e2gC94PnkwEW9jI6CAHUeoG85tjWP5WquqfavoMtMwiG4P926ZKKuQ==}
 
-  '@legendapp/list@2.0.14':
-    resolution: {integrity: sha512-16r4zNrjm9GrydHwdCJxZWnvc20BLo/9SOwPI3ACTFnuzuek9Xe9jUd3wvrIB193sjzuoZOyIZOSsGuZSxqTtQ==}
+  '@legendapp/list@3.3.9':
+    resolution: {integrity: sha512-ETxJPA5m59+AF65r9Ko25WMtV1KAWEebYeG0sIOTBtuZxfNpX8rBsLhFDQ8qY1tbPhJsr+U025u0u6irE9z8zw==}
     peerDependencies:
       react: '*'
+      react-dom: '*'
       react-native: '*'
+    peerDependenciesMeta:
+      react-dom:
+        optional: true
+      react-native:
+        optional: true
 
   '@napi-rs/wasm-runtime@0.2.12':
     resolution: {integrity: sha512-ZVWUcfwY4E/yPitQJl481FjFo3K22D6qF0DuFH6Y/nbnE11GY5uguDxZMGXPQ8WQ0128MXQD7TnfHyK4oWoIJQ==}
@@ -7941,11 +7947,13 @@ snapshots:
       '@jridgewell/resolve-uri': 3.1.2
       '@jridgewell/sourcemap-codec': 1.5.5
 
-  '@legendapp/list@2.0.14(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))(react@19.1.4)':
+  '@legendapp/list@3.3.9(react-dom@19.1.4(react@19.1.4))(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))(react@19.1.4)':
     dependencies:
       react: 19.1.4
-      react-native: 0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1)
       use-sync-external-store: 1.6.0(react@19.1.4)
+    optionalDependencies:
+      react-dom: 19.1.4(react@19.1.4)
+      react-native: 0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1)
 
   '@napi-rs/wasm-runtime@0.2.12':
     dependencies:
