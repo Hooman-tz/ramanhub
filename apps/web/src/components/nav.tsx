@@ -2,13 +2,14 @@
 
 import { Suspense } from "react";
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { usePathname } from "next/navigation";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Search } from "lucide-react";
 
-import { getSession, logout } from "@ramanhub/api-client";
+import { logout } from "@ramanhub/api-client";
 import { cn } from "@ramanhub/ui";
 import { Avatar, AvatarFallback, AvatarImage } from "@ramanhub/ui/avatar";
+import { Button } from "@ramanhub/ui/button";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -17,7 +18,9 @@ import {
   DropdownMenuTrigger,
 } from "@ramanhub/ui/dropdown-menu";
 
+import { useSession } from "~/hooks/use-session";
 import { NavAction } from "./nav-action";
+import { WaveMark } from "./wave-mark";
 import { openCommandPalette } from "./search/command-palette";
 import { NAV_LINKS, zoneForPath } from "./zone";
 
@@ -29,43 +32,25 @@ function initials(name: string | null, email: string | null): string {
   return letters.slice(0, 2).toUpperCase();
 }
 
-/** The spectrum waveform mark used in the logo lockup. */
-function WaveMark({ className }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 14 14" fill="none" className={className} aria-hidden>
-      <polyline
-        points="0,10 2,10 3,7 4,9 5,5 6,8 7,4 8,6 9,8 10,4 11,7 12,6 14,10"
-        stroke="currentColor"
-        strokeWidth="1.6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
-    </svg>
-  );
-}
-
 export function Nav() {
-  const router = useRouter();
   const pathname = usePathname();
   const qc = useQueryClient();
 
   const zone = zoneForPath(pathname);
 
-  const session = useQuery({
-    queryKey: ["session"],
-    queryFn: () => getSession(),
-  });
+  const { user, isFullUser, isKnownSignedOut } = useSession();
 
   const signOut = useMutation({
     mutationFn: () => logout(),
     onSettled: () => {
       void qc.invalidateQueries({ queryKey: ["session"] });
-      router.push("/");
+      // Hard navigation for the same reason as the guest path in `login/page.tsx`:
+      // the cached `/` payload is the *feed*, so `router.push` would leave a
+      // just-signed-out user looking at it.
+      window.location.assign("/");
     },
   });
 
-  const user = session.data;
-  const isFullUser = !!user && !user.is_guest;
 
   return (
     <header className="glass-nav sticky top-0 z-40 w-full">
@@ -90,7 +75,9 @@ export function Nav() {
 
         {/* Desktop pill nav */}
         <nav className="border-border/70 bg-card/60 ml-2 hidden items-center gap-1 rounded-2xl border p-1 shadow-sm backdrop-blur md:flex">
-          {NAV_LINKS.map(({ href, label, icon: Icon, isActive }) => {
+          {NAV_LINKS.filter(
+            ({ gated }) => !gated || !isKnownSignedOut,
+          ).map(({ href, label, icon: Icon, isActive }) => {
             const active = isActive(pathname);
             return (
               <Link
@@ -131,7 +118,9 @@ export function Nav() {
             <kbd className="hidden font-sans text-[11px] md:inline">⌘K</kbd>
           </button>
 
-          {isFullUser ? (
+          {/* `&& user` is what narrows `user` for the avatar block below —
+              `isFullUser` is a plain boolean and carries no type information. */}
+          {isFullUser && user ? (
             <>
               <DropdownMenu>
                 <DropdownMenuTrigger
@@ -177,12 +166,17 @@ export function Nav() {
               </DropdownMenu>
             </>
           ) : (
-            <Link
-              href="/login"
-              className="text-foreground/80 hover:text-foreground hover:bg-muted focus-visible:ring-ring/50 inline-flex min-h-9 items-center rounded-md px-3 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none"
-            >
-              Sign in
-            </Link>
+            <>
+              <Link
+                href="/login"
+                className="text-foreground/80 hover:text-foreground hover:bg-muted focus-visible:ring-ring/50 hidden min-h-9 items-center rounded-md px-3 text-sm font-medium transition-colors focus-visible:ring-[3px] focus-visible:outline-none motion-reduce:transition-none sm:inline-flex"
+              >
+                Sign in
+              </Link>
+              <Button asChild size="sm">
+                <Link href="/login">Get started</Link>
+              </Button>
+            </>
           )}
         </div>
       </div>

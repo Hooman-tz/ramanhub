@@ -63,6 +63,12 @@ export interface NavLink {
   label: string;
   icon: LucideIcon;
   isActive: (pathname: string) => boolean;
+  /**
+   * Bounces to `/login?next=…` without a full account, so it is dead weight for
+   * a signed-out visitor. `/library` and the feed are deliberately not gated —
+   * both read fine anonymously.
+   */
+  gated?: boolean;
 }
 
 export const NAV_LINKS: NavLink[] = [
@@ -71,6 +77,7 @@ export const NAV_LINKS: NavLink[] = [
     label: "Office",
     icon: Home,
     isActive: (p) => p.startsWith("/office"),
+    gated: true,
   },
   {
     href: "/",
@@ -87,6 +94,7 @@ export const NAV_LINKS: NavLink[] = [
     label: "Lab",
     icon: FlaskConical,
     isActive: (p) => p.startsWith("/lab") || p.startsWith("/upload"),
+    gated: true,
   },
   {
     href: "/library",

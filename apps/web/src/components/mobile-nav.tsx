@@ -8,6 +8,7 @@ import { Search } from "lucide-react";
 import { cn } from "@ramanhub/ui";
 
 import { openCommandPalette } from "./search/command-palette";
+import { useSession } from "~/hooks/use-session";
 import { NAV_LINKS, zoneForPath } from "./zone";
 
 /**
@@ -16,12 +17,16 @@ import { NAV_LINKS, zoneForPath } from "./zone";
  */
 export function MobileNav() {
   const pathname = usePathname();
+  // Same `["session"]` cache entry the header reads — no extra request.
+  const { isKnownSignedOut } = useSession();
   const zone = zoneForPath(pathname);
 
   return (
     <nav className="glass-bottom-nav fixed inset-x-0 bottom-0 z-40 md:hidden">
       <div className="flex items-stretch justify-around">
-        {NAV_LINKS.map(({ href, label, icon: Icon, isActive }) => {
+        {NAV_LINKS.filter(
+          ({ gated }) => !gated || !isKnownSignedOut,
+        ).map(({ href, label, icon: Icon, isActive }) => {
           const active = isActive(pathname);
           return (
             <Link
