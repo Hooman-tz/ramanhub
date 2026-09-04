@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Library, Search } from "lucide-react";
 
@@ -34,9 +35,18 @@ import { useSpectrumBuffer } from "~/lib/spectra-buffer";
  * spectrum is step one — so the page works as an errand of its own rather than
  * as the tail of a lab session.
  */
-export function IdentifyFlow({ isFullUser }: { isFullUser: boolean }) {
+export function IdentifyFlow({
+  isFullUser,
+  initialSpectrumId = null,
+}: {
+  isFullUser: boolean;
+  /** Pre-selected sample, e.g. carried over from the Data Lab's `?s=`. */
+  initialSpectrumId?: string | null;
+}) {
+  const router = useRouter();
+  const pathname = usePathname();
   const [task, setTask] = useState<"identify" | "browse">("identify");
-  const [spectrumId, setSpectrumId] = useState<string | null>(null);
+  const [spectrumId, setSpectrumId] = useState<string | null>(initialSpectrumId);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [picked, setPicked] = useState<string[]>([]);
   const [overlaid, setOverlaid] = useState<string | null>(null);
@@ -119,6 +129,11 @@ export function IdentifyFlow({ isFullUser }: { isFullUser: boolean }) {
 
   function reset(id: string | null) {
     setSpectrumId(id);
+    // Keep `?s=` in step with the choice, so a refresh or a shared link lands
+    // on the sample actually on screen rather than the one you arrived with.
+    router.replace(id ? `${pathname}?s=${encodeURIComponent(id)}` : pathname, {
+      scroll: false,
+    });
     match.reset();
     unmix.reset();
     setPicked([]);

@@ -44,6 +44,7 @@ from app.models.spectrum import Spectrum
 from app.models.spectrum_peaks import SpectrumPeaks
 from app.models.user import User
 from app.processing.state_machine import require_owner_or_public
+from app.ratelimit import rate_limit_library_match, rate_limit_library_unmix
 
 router = APIRouter(prefix="/v1/library", tags=["reference-library"])
 
@@ -258,6 +259,7 @@ def match_spectrum(
     body: LibraryMatchRequest,
     db: Session = Depends(get_db),
     user: User | None = Depends(get_current_user_optional),
+    _: None = Depends(rate_limit_library_match),
 ) -> LibraryMatchResponse:
     """Stage 1: identify a spectrum against the reference corpus."""
     target = _readable_target(body.spectrum_id, db, user)
@@ -345,6 +347,7 @@ def unmix_spectrum(
     body: LibraryUnmixRequest,
     db: Session = Depends(get_db),
     user: User | None = Depends(get_current_user_optional),
+    _: None = Depends(rate_limit_library_unmix),
 ) -> LibraryUnmixResponse:
     """Stage 2: fit the spectrum as a non-negative mixture of chosen references."""
     target = _readable_target(body.spectrum_id, db, user)

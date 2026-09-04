@@ -577,3 +577,34 @@ def test_reference_spectra_are_excluded_from_similar_search(
     assert resp.status_code == 200
     ids = [row["spectrum"]["id"] for row in resp.json()]
     assert ref_spectrum["id"] not in ids
+
+
+def test_deconvolution_is_rate_limited(client, db_session, make_user, make_raw_file, monkeypatch):
+    """Unmixing downloads N+1 full spectra per call and solves a dense system,
+    so its cost is object-storage egress. Unthrottled it is the cheapest way
+    for a script to run up someone else's storage bill."""
+    from app import ratelimit
+
+    owner = make_user()
+    _sa, a = seed_reference(
+        client, db_session, owner, make_raw_file, name="A",
+        peaks=[(500.0, 100.0)], source_id="A1",
+    )
+    _sb, b = seed_reference(
+        client, db_session, owner, make_raw_file, name="B",
+        peaks=[(1300.0, 100.0)], source_id="B1",
+    )
+    blend = publish_spectrum(
+        client, owner, make_raw_file, spectrum_bytes([(500.0, 70.0), (1300.0, 30.0)])
+    )
+    client.set_current_user(owner)
+
+    # A fresh limiter, so this test neither inherits nor leaks call counts.
+    monkeypatch.setattr(
+        ratelimit, "_library_unmix_limiter", ratelimit.RateLimiter(2, 3600)
+    )
+
+    body = {"spectrum_id": blend["id"], "reference_ids": [str(a.id), str(b.id)]}
+    assert client.post("/v1/library/unmix", json=body).status_code == 200
+    assert client.post("/v1/library/unmix", json=body).status_code == 200
+    assert client.post("/v1/library/unmix", json=body).status_code == 429

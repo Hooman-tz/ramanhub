@@ -46,9 +46,11 @@ activity cannot affect feature eligibility, ranking, or similarity scores.
 
 ## Reference library and mixture deconvolution
 
-The Data Lab's **Library** tab identifies a spectrum against a public corpus of
+The **Library** page (`/library`) identifies a spectrum against a public corpus of
 named compounds — bundled open reference data (RRUFF unoriented high-resolution,
-CC-BY) plus user contributions. A reference is not a separate kind of spectrum:
+CC-BY) plus user contributions. It is a destination rather than a Lab tab: the
+Lab links out to it carrying `?s=<spectrumId>`, so identification lives in one
+place instead of two surfaces that would drift. A reference is not a separate kind of spectrum:
 it is an ordinary published `Spectrum` plus a `reference_entries` row carrying
 the identity claim, so imports and contributions share one ingestion, storage
 and indexing path.
