@@ -1,7 +1,7 @@
 "use client";
 
 import { Suspense, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 
 import { startGuestSession } from "@ramanhub/api-client";
@@ -14,7 +14,6 @@ const PROVIDERS = [
 ];
 
 function LoginCard() {
-  const router = useRouter();
   const params = useSearchParams();
   const qc = useQueryClient();
   const rawNext = params.get("next");
@@ -28,7 +27,15 @@ function LoginCard() {
     try {
       await startGuestSession();
       await qc.invalidateQueries({ queryKey: ["session"] });
-      router.push(next);
+      /**
+       * A hard navigation, not `router.push`. `/` is prerendered and the App
+       * Router caches its payload for ~5 minutes, so a visitor who arrived from
+       * the landing page still holds the *landing* payload for `/` and would be
+       * dropped straight back onto marketing despite now having a session.
+       * `invalidateQueries` clears TanStack's cache, not the router's. Auth
+       * state changed underneath the router; a document load is the honest fix.
+       */
+      window.location.assign(next);
     } catch {
       setError("Could not start a guest session — try again.");
       setBusy(false);

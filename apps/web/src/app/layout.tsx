@@ -2,12 +2,10 @@ import type { Metadata, Viewport } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 
 import { cn } from "@ramanhub/ui";
-import { ThemeProvider, ThemeToggle } from "@ramanhub/ui/theme";
+import { ThemeProvider } from "@ramanhub/ui/theme";
 import { Toaster } from "@ramanhub/ui/toast";
 
-import { Providers } from "~/app/providers";
-import { AppShell } from "~/components/app-shell";
-import { env } from "~/env";
+import { SITE_URL } from "~/lib/site-url";
 
 import "~/app/styles.css";
 
@@ -15,20 +13,17 @@ const SITE_DESCRIPTION =
   "The reproducible workspace and trusted commons for spectral data — Raman first.";
 
 /**
- * The Raman application's own origin (ADR-014: `spectra-in.site` is the product
- * site, `raman.spectra-in.site` is this app). `metadataBase` is what lets
- * per-route `generateMetadata` return relative canonical/OG URLs and have Next
- * resolve them absolutely; without it Next warns and emits relative OG URLs,
- * which most crawlers drop.
+ * `metadataBase` is what lets per-route `generateMetadata` return relative
+ * canonical/OG URLs and have Next resolve them absolutely; without it Next warns
+ * and emits relative OG URLs, which most crawlers drop.
  *
- * `env.SITE_URL` is `undefined` when env validation is skipped (CI builds), so
- * fall back to the canonical origin — `new URL(undefined)` would crash the build.
+ * Note there is deliberately no global `alternates.canonical` or
+ * `openGraph.url`. Setting them here made every route declare the homepage as
+ * its canonical — `/privacy` was emitting
+ * `<link rel="canonical" href="https://raman.spectra-in.site"/>`, telling Google
+ * it was a duplicate of `/`. With nothing set, each route self-canonicalizes,
+ * which is correct everywhere except the marketing route, which sets its own.
  */
-// `env.SITE_URL` is typed as a required string, but env validation is skipped
-// on CI builds so it is `undefined` there in practice — hence the cast + fallback.
-const SITE_URL =
-  (env.SITE_URL as string | undefined) ?? "https://raman.spectra-in.site";
-
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
@@ -36,12 +31,10 @@ export const metadata: Metadata = {
     template: "%s · Spectra Insight",
   },
   description: SITE_DESCRIPTION,
-  alternates: { canonical: "/" },
   openGraph: {
     type: "website",
     title: "Spectra Insight",
     description: SITE_DESCRIPTION,
-    url: SITE_URL,
     siteName: "Spectra Insight",
   },
   twitter: {
@@ -67,6 +60,11 @@ const fontMono = JetBrains_Mono({
   variable: "--font-mono-src",
 });
 
+/**
+ * The root layout carries only what genuinely belongs to every document: the
+ * fonts, the theme class on `<html>`, and the toaster. The application chrome
+ * lives in `(app)/layout.tsx` so marketing routes can opt out of it.
+ */
 export default function RootLayout(props: { children: React.ReactNode }) {
   return (
     <html lang="en" suppressHydrationWarning>
@@ -78,12 +76,9 @@ export default function RootLayout(props: { children: React.ReactNode }) {
         )}
       >
         <ThemeProvider>
-          <Providers>
-            <AppShell>{props.children}</AppShell>
-          </Providers>
-          <div className="fixed bottom-[calc(4.5rem+env(safe-area-inset-bottom))] left-4 z-30 md:right-4 md:bottom-4 md:left-auto">
-            <ThemeToggle />
-          </div>
+          {props.children}
+          {/* Outside `Providers` deliberately — no QueryClient dependency, and
+              it renders nothing until a toast fires. */}
           <Toaster />
         </ThemeProvider>
       </body>
