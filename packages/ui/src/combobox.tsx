@@ -63,6 +63,12 @@ export interface ComboboxProps<T extends ComboboxItem> {
   blurDelayMs?: number;
   /** Force the list open — the palette wants it open while loading. */
   forceOpen?: boolean;
+  /**
+   * Escape with the list already closed. Escape always closes the list first
+   * (what a combobox is expected to do); callers that also want Escape to
+   * mean "clear the box" get it on the second press.
+   */
+  onEscape?: () => void;
 }
 
 export function Combobox<T extends ComboboxItem>({
@@ -80,6 +86,7 @@ export function Combobox<T extends ComboboxItem>({
   listClassName,
   blurDelayMs = 120,
   forceOpen = false,
+  onEscape,
 }: ComboboxProps<T>) {
   const [highlight, setHighlight] = useState(0);
   const [focused, setFocused] = useState(false);
@@ -125,7 +132,8 @@ export function Combobox<T extends ComboboxItem>({
       return;
     }
     if (e.key === "Escape") {
-      setFocused(false);
+      if (open) setFocused(false);
+      else onEscape?.();
       return;
     }
     inputProps?.onKeyDownCapture?.(e);

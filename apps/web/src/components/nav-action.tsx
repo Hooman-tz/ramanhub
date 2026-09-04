@@ -1,11 +1,17 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Plus, Search, X } from "lucide-react";
 
+import { suggest } from "@ramanhub/api-client";
+import { Combobox } from "@ramanhub/ui/combobox";
+
 import { NewDatasetDialog } from "~/components/lab/data-management";
+import { useDebounced } from "~/hooks/use-debounced";
 import { ComposeFab } from "./compose-fab";
+import { hrefForSuggestion } from "./search/href-for-suggestion";
 
 /**
  * The header's primary action, which depends on where you are.
@@ -43,6 +49,28 @@ function FeedSearch() {
     router.replace(qs ? `/?${qs}` : "/", { scroll: false });
   };
 
+  const debounced = useDebounced(value.trim(), 200);
+  const results = useQuery({
+    queryKey: ["suggest", debounced],
+    queryFn: ({ signal }) => suggest({ q: debounced, limit: 4 }, { signal }),
+    enabled: debounced.length >= 2,
+    placeholderData: keepPreviousData,
+    staleTime: 60_000,
+  });
+
+  const items = useMemo(
+    () =>
+      (results.data?.groups ?? []).flatMap((g) =>
+        g.items.map((item) => ({ ...item, group: g.label })),
+      ),
+    [results.data],
+  );
+
+  const clear = () => {
+    setValue("");
+    submit("");
+  };
+
   return (
     <form
       role="search"
@@ -50,40 +78,59 @@ function FeedSearch() {
         e.preventDefault();
         submit(value);
       }}
-      className="border-border/70 bg-card/60 focus-within:border-primary/40 flex min-w-0 flex-1 items-center gap-1.5 rounded-xl border px-2.5 py-1 backdrop-blur transition-colors motion-reduce:transition-none sm:max-w-xs"
+      className="min-w-0 flex-1 sm:max-w-xs"
     >
-      <Search className="text-muted-foreground size-4 shrink-0" aria-hidden />
       <label htmlFor="nav-feed-search" className="sr-only">
         Search the feed
       </label>
-      <input
-        id="nav-feed-search"
-        type="search"
+      <Combobox
+        items={items}
         value={value}
-        onChange={(e) => setValue(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === "Escape") {
-            e.preventDefault();
-            setValue("");
-            submit("");
-          }
+        onValueChange={setValue}
+        // A picked suggestion goes to that thing; typing and pressing Enter
+        // still searches the feed, which is what the box has always done.
+        onSelect={(item) => {
+          setValue("");
+          router.push(hrefForSuggestion(item));
         }}
-        placeholder="Search the feed — or @author, #tag"
-        className="placeholder:text-muted-foreground w-full min-w-0 bg-transparent py-1 text-sm focus:outline-none [&::-webkit-search-cancel-button]:hidden"
-      />
-      {value && (
-        <button
-          type="button"
-          onClick={() => {
-            setValue("");
-            submit("");
-          }}
-          aria-label="Clear search"
-          className="bg-muted text-muted-foreground hover:text-foreground flex size-5 shrink-0 items-center justify-center rounded-full"
-        >
-          <X className="size-3" aria-hidden />
-        </button>
-      )}
+        onSubmitRaw={submit}
+        onEscape={clear}
+        listboxId="nav-feed-search-suggestions"
+        inputProps={{
+          id: "nav-feed-search",
+          type: "search",
+          placeholder: "Search the feed — or @author, #tag",
+          className:
+            "placeholder:text-muted-foreground w-full min-w-0 bg-transparent py-1 text-sm focus:outline-none [&::-webkit-search-cancel-button]:hidden",
+        }}
+        renderItem={(item) => (
+          <span className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm">
+            <span className="min-w-0 flex-1 truncate">{item.title}</span>
+            {item.subtitle && (
+              <span className="text-muted-foreground shrink-0 truncate text-xs">
+                {item.subtitle}
+              </span>
+            )}
+          </span>
+        )}
+      >
+        {(input) => (
+          <div className="border-border/70 bg-card/60 focus-within:border-primary/40 flex min-w-0 items-center gap-1.5 rounded-xl border px-2.5 py-1 backdrop-blur transition-colors motion-reduce:transition-none">
+            <Search className="text-muted-foreground size-4 shrink-0" aria-hidden />
+            {input}
+            {value && (
+              <button
+                type="button"
+                onClick={clear}
+                aria-label="Clear search"
+                className="bg-muted text-muted-foreground hover:text-foreground flex size-5 shrink-0 items-center justify-center rounded-full"
+              >
+                <X className="size-3" aria-hidden />
+              </button>
+            )}
+          </div>
+        )}
+      </Combobox>
     </form>
   );
 }

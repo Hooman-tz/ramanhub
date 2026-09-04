@@ -6,12 +6,14 @@ import { useRouter } from "next/navigation";
 import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { Atom, FileText, User, Waves } from "lucide-react";
 
-import type { SuggestItem, SuggestKind } from "@ramanhub/api-client";
+import type { SuggestKind } from "@ramanhub/api-client";
 import { suggest } from "@ramanhub/api-client";
 import { Combobox } from "@ramanhub/ui/combobox";
 import { Dialog, DialogContent, DialogTitle } from "@ramanhub/ui/dialog";
 
 import { useDebounced } from "~/hooks/use-debounced";
+
+import { hrefForSuggestion } from "./href-for-suggestion";
 
 /**
  * Search everything from anywhere: ⌘K (or `/`), one box, results grouped by
@@ -33,31 +35,12 @@ const ICONS: Record<SuggestKind, ComponentType<{ className?: string }>> = {
   person: User,
 };
 
-/**
- * Where a result lives. Deliberately here rather than in the API response:
- * mobile will route differently, so this is the web app's answer, not the
- * server's. Compounds have no detail route of their own yet, so they open the
- * library's browse tab with the name already searched.
- */
-function hrefFor(item: SuggestItem): string {
-  switch (item.kind) {
-    case "compound":
-      return `/library?tab=browse&q=${encodeURIComponent(item.title)}`;
-    case "spectrum":
-      return `/spectra/${item.id}`;
-    case "finding":
-      return `/findings/${item.id}`;
-    case "person":
-      return `/u/${item.handle}`;
-  }
-}
-
 const OPEN_EVENT = "ramanhub:open-search";
 
 /**
  * Open the palette from anywhere. An event rather than context: the only
- * shared state is one boolean, and a provider around the whole app to carry
- * it would be more machinery than the problem deserves.
+ * shared state is one boolean, and a provider wrapped around the whole app to
+ * carry it would be more machinery than the problem deserves.
  */
 export function openCommandPalette() {
   window.dispatchEvent(new CustomEvent(OPEN_EVENT));
@@ -141,7 +124,7 @@ export function CommandPalette() {
           items={items}
           value={value}
           onValueChange={setValue}
-          onSelect={(item) => go(hrefFor(item))}
+          onSelect={(item) => go(hrefForSuggestion(item))}
           // Enter with nothing highlighted falls through to the feed, so the
           // palette always has somewhere to send you.
           onSubmitRaw={(raw) =>
