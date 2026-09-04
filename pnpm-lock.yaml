@@ -114,8 +114,8 @@ importers:
         specifier: ~6.0.8
         version: 6.0.8(expo@54.0.20)(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))(supports-color@8.1.1)
       expo-web-browser:
-        specifier: ~15.0.8
-        version: 15.0.8(expo@54.0.20)(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))
+        specifier: ~57.0.2
+        version: 57.0.2(expo@54.0.20)(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))
       nativewind:
         specifier: 5.0.0-preview.2
         version: 5.0.0-preview.2(react-native-css@3.0.1(@expo/metro-config@54.0.7(bufferutil@4.0.8)(expo@54.0.20)(supports-color@8.1.1))(lightningcss@1.30.1)(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))(react@19.1.4)(supports-color@8.1.1))(tailwindcss@4.1.16)
@@ -3909,8 +3909,8 @@ packages:
     peerDependencies:
       expo: '*'
 
-  expo-web-browser@15.0.8:
-    resolution: {integrity: sha512-gn+Y2ABQr6/EvFN/XSjTuzwsSPLU1vNVVV0wNe4xXkcSnYGdHxt9kHxs9uLfoCyPByoaGF4VxzAhHIMI7yDcSg==}
+  expo-web-browser@57.0.2:
+    resolution: {integrity: sha512-3vl5kvd7PB48ub6PpNIJUuPxO8xVa6D8RnIgNba6SXRwqFprOfeEZgwTgtm41kz0AAtvMOztUVNEUkwrHKjqMQ==}
     peerDependencies:
       expo: '*'
       react-native: '*'
@@ -10687,7 +10687,7 @@ snapshots:
     dependencies:
       expo: 54.0.20(@babel/core@7.28.5(supports-color@8.1.1))(@expo/metro-runtime@6.1.2)(bufferutil@4.0.8)(expo-router@6.0.13)(graphql@15.8.0)(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))(react@19.1.4)(supports-color@8.1.1)
 
-  expo-web-browser@15.0.8(expo@54.0.20)(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1)):
+  expo-web-browser@57.0.2(expo@54.0.20)(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1)):
     dependencies:
       expo: 54.0.20(@babel/core@7.28.5(supports-color@8.1.1))(@expo/metro-runtime@6.1.2)(bufferutil@4.0.8)(expo-router@6.0.13)(graphql@15.8.0)(react-native@0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1))(react@19.1.4)(supports-color@8.1.1)
       react-native: 0.81.5(@babel/core@7.28.5(supports-color@8.1.1))(@types/react@19.1.12)(bufferutil@4.0.8)(react@19.1.4)(supports-color@8.1.1)
