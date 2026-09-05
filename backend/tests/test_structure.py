@@ -516,3 +516,41 @@ def test_patch_sampling_does_not_change_the_layout_cache_key():
     assert compute_structure_hash(build_preview(raw)) == compute_structure_hash(
         build_preview(raw, max_rows=40, max_columns=25)
     )
+
+
+# ---------------------------------------------------------------------------
+# reading the numbers out must not inherit the detection window
+# ---------------------------------------------------------------------------
+
+
+def test_a_large_file_extracts_every_point():
+    """`extract_trace` used to share the 256 KB structure-sniff window, so a
+    747 KB export silently yielded 20,978 of its 60,000 points — no error, no
+    QC flag, and `verify_layout` passed. A short spectrum is worse than a
+    rejected one, because nothing downstream can tell it was short."""
+    points = 60_000
+    raw = ("\n".join(f"{200 + i * 0.1:.1f}\t{(i * 37) % 900}.5" for i in range(points))).encode()
+    assert len(raw) > structure.STRUCTURE_SNIFF_BYTES, "fixture must exceed the sniff window"
+
+    preview = build_preview(raw)
+    layout = FileLayout(
+        orientation="column_major",
+        delimiter=preview.delimiter,
+        decimal_separator=preview.decimal_separator,
+        comment_prefixes=["#"],
+        header_rows=preview.header_rows,
+        x_index=0,
+        traces=[TraceSpec(index=1, label=None)],
+        confidence=1.0,
+        source="user",
+    )
+    x, y = extract_trace(raw, layout, 1)
+    assert x.size == points
+    assert y.size == points
+
+
+def test_detection_still_only_reads_the_sniff_window():
+    """The bound is right for detection — it just must not reach extraction."""
+    big = ("\n".join(f"{200 + i * 0.1:.1f}\t{i}.5" for i in range(60_000))).encode()
+    assert len(structure.decode_text(big)) <= structure.STRUCTURE_SNIFF_BYTES
+    assert len(structure.decode_text(big, whole_file=True)) > structure.STRUCTURE_SNIFF_BYTES

@@ -63,9 +63,10 @@ from app.schemas.ingestion import (
 
 logger = logging.getLogger(__name__)
 
-# Bytes of the file used for structure detection. The layout of a spectral
+# Bytes of the file used for structure DETECTION. The layout of a spectral
 # export is always visible in its first lines; reading more would only cost
-# memory.
+# memory. This bound must never be applied when actually reading the numbers
+# out — see `decode_text`.
 STRUCTURE_SNIFF_BYTES = 262_144
 
 # Cells are truncated in the preview: the model needs to see the *shape* of a
@@ -92,10 +93,22 @@ class LayoutError(Exception):
 # ---------------------------------------------------------------------------
 
 
-def decode_text(raw_bytes: bytes) -> str:
-    """Decode the leading structure-sniff window. Lossy by design — a binary
-    vendor format has its own parser and never reaches this module."""
-    return raw_bytes[:STRUCTURE_SNIFF_BYTES].decode("utf-8", errors="ignore")
+def decode_text(raw_bytes: bytes, *, whole_file: bool = False) -> str:
+    """Decode the file as text.
+
+    By default only the leading structure-sniff window, which is all that
+    detection needs. Pass `whole_file=True` when the decoded text is used to
+    read the actual numbers out: a 50 MB upload is allowed (MAX_UPLOAD_SIZE_MB)
+    and truncating it there silently drops the tail of the spectrum — measured
+    at 39,022 of 60,000 points lost on a 747 KB file, with no error raised and
+    `verify_layout` still passing. A short spectrum is worse than a rejected
+    one, because nothing downstream can tell it was short.
+
+    Lossy for binary input by design — a binary vendor format has its own
+    parser and should not reach this module.
+    """
+    window = raw_bytes if whole_file else raw_bytes[:STRUCTURE_SNIFF_BYTES]
+    return window.decode("utf-8", errors="ignore")
 
 
 def _is_comment(line: str, prefixes: list[str]) -> bool:
@@ -457,7 +470,8 @@ def extract_trace(
     the permissive behaviour callers already rely on for ragged exports.
     Raises `LayoutError` only when the layout cannot address this trace at all.
     """
-    text = decode_text(raw_bytes)
+    # The whole file: this is the read that produces the stored spectrum.
+    text = decode_text(raw_bytes, whole_file=True)
     decimal = layout.decimal_separator
 
     if layout.orientation == "stacked_blocks":
