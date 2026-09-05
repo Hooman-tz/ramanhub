@@ -362,6 +362,21 @@ def _column_major_bytes(traces: int = 3, points: int = 30) -> bytes:
     return "\n".join(lines).encode()
 
 
+def _undetectable_bytes(rows: int = 40) -> bytes:
+    """A file every deterministic rung declines: no column or row is monotonic
+    (so ranking has no axis to propose) and one column is text (so the
+    heuristic bails on a mixed export). Row-major files used to serve this
+    purpose, but ranking resolves those now.
+    """
+    return "\n".join(
+        ",".join(
+            "tag" if column == 1 else str((index * 7 + column * 13) % 23)
+            for column in range(4)
+        )
+        for index in range(rows)
+    ).encode()
+
+
 def _row_major_bytes(traces: int = 3, points: int = 30) -> bytes:
     axis = ["wavenumber"] + [f"{100 + index * 0.5:.4f}" for index in range(points)]
     lines = [",".join(axis)]
@@ -420,7 +435,7 @@ def test_a_multi_spectrum_file_becomes_one_draft_per_trace(test_app, db_session,
 
     job = db_session.get(IngestionJob, uuid.UUID(job_id))
     assert job.status == IngestionStatus.succeeded
-    assert job.layout_source == "heuristic"
+    assert job.layout_source in {"ranked", "heuristic"}
     assert len(job.file_layout["traces"]) == 3
     assert job.sanity_check_flags["array.multi_trace"]
 
@@ -521,18 +536,18 @@ def _declare(test_app, user, job_id: str, layout: dict):
 def test_an_unresolvable_file_asks_the_owner_instead_of_failing(
     test_app, db_session, fake_storage
 ):
-    """A row-major file defeats the heuristics, and with no LLM key there is
+    """A file no deterministic rung can explain, and with no LLM key there is
     no rung left. The upload must survive as a question, not die as a
     failure."""
     user = _make_user(db_session, "sub-layout-1", "layout1@example.com")
-    job_id = _ingest(test_app, db_session, user, _row_major_bytes(), "transposed.csv", llm=False)
+    job_id = _ingest(test_app, db_session, user, _undetectable_bytes(), "opaque.csv", llm=False)
 
     job = db_session.get(IngestionJob, uuid.UUID(job_id))
     assert job.status == IngestionStatus.needs_input
     assert job.layout_source == "unresolved"
     # Everything already worked out is kept, so answering is the only work left.
     assert job.extracted_metadata_raw is not None
-    assert job.structure_preview["column_count"] == 31
+    assert job.structure_preview["column_count"] == 4
     raw_file = db_session.get(RawFile, job.raw_file_id)
     assert raw_file.upload_status.value == "uploaded"
 
@@ -540,7 +555,7 @@ def test_an_unresolvable_file_asks_the_owner_instead_of_failing(
 @requires_db
 def test_a_declared_layout_that_cannot_be_read_is_refused(test_app, db_session, fake_storage):
     user = _make_user(db_session, "sub-layout-2", "layout2@example.com")
-    job_id = _ingest(test_app, db_session, user, _row_major_bytes(), "transposed.csv", llm=False)
+    job_id = _ingest(test_app, db_session, user, _undetectable_bytes(), "opaque.csv", llm=False)
 
     resp = _declare(
         test_app,

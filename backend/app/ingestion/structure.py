@@ -142,6 +142,83 @@ def to_float(cell: str, decimal_separator: str = ".") -> float | None:
     return value
 
 
+# A Raman shift axis lives in this window. Generous on both ends: anti-Stokes
+# runs negative, and some exports carry an absolute-wavenumber axis. Used only
+# to score plausibility, never to reject data.
+_AXIS_MIN_CM1 = -1000.0
+_AXIS_MAX_CM1 = 6000.0
+# Below this span a "monotonic" column is more likely an index or a timestamp
+# than a spectral axis.
+_AXIS_MIN_SPAN = 50.0
+# Fewer points than this and monotonicity proves nothing.
+_AXIS_MIN_POINTS = 8
+
+
+def axis_score(values: list[float | None]) -> float:
+    """How much does this series look like a spectral axis? 0.0 to 1.0.
+
+    This is the discriminator the pipeline was missing. `verify_layout` is a
+    soundness check — it asks "does this produce a valid ascending array",
+    which almost any numeric column can. Measured on one wide matrix it
+    accepted the axis at column 0 *through* column 7, and row-major as well.
+    Something has to say which of those is *right*, and the physics does:
+
+    * A real axis arrives ALREADY ordered. Sorting is a repair
+      (`canonicalize_raman_arrays`), not evidence — so monotonicity is tested
+      before any sort, and is a hard gate. An intensity column is a signal;
+      it goes up and down.
+    * Spectrometer axes are near-evenly spaced.
+    * Raman shifts occupy a known range, and span more than a few wavenumbers.
+    * An axis does not repeat a value.
+
+    A useful second reading: a column that is numeric and looks axis-shaped
+    but scores 0 *because it restarts* is the signature of stacked blocks.
+    `axis_restarts` below uses that.
+    """
+    series = [value for value in values if value is not None]
+    if len(series) < _AXIS_MIN_POINTS:
+        return 0.0
+    array = np.asarray(series, dtype=float)
+    steps = np.diff(array)
+    if not (np.all(steps > 0) or np.all(steps < 0)):
+        return 0.0
+
+    magnitude = np.abs(steps)
+    mean_step = float(magnitude.mean())
+    if mean_step <= 0:
+        return 0.0
+    evenness = 1.0 - min(1.0, float(magnitude.std()) / mean_step)
+
+    low, high = float(array.min()), float(array.max())
+    span = high - low
+    in_range = float(low >= _AXIS_MIN_CM1 and high <= _AXIS_MAX_CM1 and span >= _AXIS_MIN_SPAN)
+    unique = float(np.unique(array).size == array.size)
+
+    return round(0.45 * evenness + 0.35 * in_range + 0.20 * unique, 4)
+
+
+def axis_restarts(values: list[float | None]) -> list[int]:
+    """Indexes where a monotonic run restarts — the block boundaries of a
+    stacked export.
+
+    This is how stacked blocks are found when nothing separates them. A blank
+    line is the easy case and `blank_separated_blocks` already counts it; an
+    export that simply concatenates blocks has no marker at all except the
+    axis going back to where it started.
+    """
+    series = [value for value in values if value is not None]
+    if len(series) < _AXIS_MIN_POINTS * 2:
+        return []
+    array = np.asarray(series, dtype=float)
+    steps = np.diff(array)
+    if not steps.size:
+        return []
+    # The dominant direction of the runs, so a descending axis works too.
+    forward = float(np.median(steps)) >= 0
+    breaks = np.flatnonzero(steps < 0 if forward else steps > 0)
+    return [int(index) + 1 for index in breaks]
+
+
 def _numeric_ratio(cells: list[str], decimal_separator: str) -> float:
     if not cells:
         return 0.0
@@ -428,9 +505,26 @@ def _content_rows(text: str, layout: FileLayout) -> list[list[str]]:
 
 
 def _blocks(text: str, layout: FileLayout) -> list[list[list[str]]]:
-    """Split into blank-line-separated blocks of content rows."""
+    """Split into blocks of content rows.
+
+    Blank lines are the usual separator. When `block_rows` is set the blocks
+    are simply concatenated — nothing marks the boundary except the axis
+    starting over — so they are cut by count instead.
+    """
     blocks: list[list[list[str]]] = []
     current: list[list[str]] = []
+
+    if layout.block_rows:
+        rows = [
+            split_cells(line, layout.delimiter)
+            for line in text.splitlines()
+            if line.strip() and not _is_comment(line, layout.comment_prefixes)
+        ]
+        rows = rows[layout.header_rows :]
+        size = layout.block_rows
+        blocks = [rows[start : start + size] for start in range(0, len(rows), size)]
+        return [block for block in blocks if len(block) >= MIN_CANONICAL_POINTS]
+
     for line in text.splitlines():
         if not line.strip():
             if current:
@@ -554,6 +648,196 @@ def verify_layout(raw_bytes: bytes, layout: FileLayout) -> bool:
 # ---------------------------------------------------------------------------
 # Rung 1: heuristics
 # ---------------------------------------------------------------------------
+
+
+# A candidate axis must clear this to be proposed at all. Below it we would be
+# guessing, and a wrong deterministic answer is worse than an LLM call because
+# nothing downstream questions it.
+_MIN_AXIS_SCORE = 0.5
+# Ranking reads the sniff window only — this is detection, not extraction.
+_RANK_MAX_ROWS = 2000
+
+
+def _body_rows(text: str, preview: PreviewGrid) -> list[list[str]]:
+    """Data rows as split cells, past the preamble."""
+    lines = [
+        line
+        for line in text.splitlines()
+        if line.strip() and not _is_comment(line, _DEFAULT_COMMENT_PREFIXES)
+    ]
+    body = lines[preview.header_rows :][:_RANK_MAX_ROWS]
+    return [split_cells(line, preview.delimiter) for line in body]
+
+
+def _columns(rows: list[list[str]], decimal: str, width: int) -> dict[int, list[float | None]]:
+    columns: dict[int, list[float | None]] = {index: [] for index in range(width)}
+    for cells in rows:
+        for index in range(width):
+            columns[index].append(to_float(cells[index], decimal) if index < len(cells) else None)
+    return columns
+
+
+def rank_candidates(raw_bytes: bytes, preview: PreviewGrid) -> list[tuple[float, FileLayout]]:
+    """Plausible layouts for this file, best first.
+
+    The pipeline already had a sound gate (`verify_layout`) and no way to
+    choose between the many layouts that pass it. This supplies the choice,
+    deterministically: propose the layouts the file's own numbers suggest,
+    score each by how much its axis actually behaves like a spectral axis, and
+    let `verify_layout` reject whatever survives ranking but not arithmetic.
+
+    Cheap enough to be unconditional — scoring is pure numpy over the sniff
+    window, and verification measured 3.5-8 ms per candidate.
+    """
+    if preview.column_count < 2 or not preview.rows:
+        return []
+
+    text = decode_text(raw_bytes)
+    rows = _body_rows(text, preview)
+    # Enough numbers to judge, in *either* direction: a row-major file has few
+    # rows and many columns, so a rows-only guard would reject exactly the
+    # shape the ranker exists to catch.
+    widest = max((len(cells) for cells in rows), default=0)
+    if not rows or (len(rows) < _AXIS_MIN_POINTS and widest < _AXIS_MIN_POINTS):
+        return []
+
+    decimal = preview.decimal_separator
+    width = preview.column_count
+    columns = _columns(rows, decimal, width)
+    scores = {index: axis_score(values) for index, values in columns.items()}
+    numeric = [
+        index
+        for index in range(width)
+        if index < len(preview.numeric_fraction) and preview.numeric_fraction[index] >= 0.9
+    ]
+
+    base = {
+        "delimiter": preview.delimiter,
+        "decimal_separator": decimal,
+        "comment_prefixes": list(_DEFAULT_COMMENT_PREFIXES),
+        "header_rows": preview.header_rows,
+        "source": "heuristic",
+    }
+    candidates: list[tuple[float, FileLayout]] = []
+
+    # --- stacked blocks -------------------------------------------------
+    # An axis-shaped column that scores zero *because it restarts*. Catches the
+    # exports that simply concatenate blocks with nothing between them, which
+    # `blank_separated_blocks` cannot see.
+    for index in sorted(columns):
+        restarts = axis_restarts(columns[index])
+        if not restarts:
+            continue
+        first_run = [value for value in columns[index][: restarts[0]] if value is not None]
+        run_score = axis_score(first_run)
+        if run_score < _MIN_AXIS_SCORE:
+            continue
+        blocks = len(restarts) + 1
+        # Evenly-sized runs mean the blocks are concatenated on a fixed
+        # period, which is what lets `extract_trace` find them without a
+        # separator. Ragged runs are left to the blank-line path.
+        bounds = [0, *restarts, len(columns[index])]
+        sizes = {bounds[i + 1] - bounds[i] for i in range(len(bounds) - 1)}
+        block_rows = sizes.pop() if len(sizes) == 1 else None
+        if 1 < blocks <= MAX_TRACES:
+            candidates.append(
+                (
+                    round(run_score * 0.95, 4),  # a shade under a clean single-block read
+                    FileLayout(
+                        orientation="stacked_blocks",
+                        x_index=0,
+                        block_rows=block_rows,
+                        traces=[TraceSpec(index=block, label=None) for block in range(blocks)],
+                        confidence=round(run_score * 0.95, 4),
+                        **base,
+                    ),
+                )
+            )
+        break
+
+    # --- column-major, axis anywhere -------------------------------------
+    labels = preview.header_cells[-1] if preview.header_cells else []
+    for index in sorted(scores, key=lambda i: (-scores[i], i)):
+        if scores[index] < _MIN_AXIS_SCORE:
+            continue
+        traces = [
+            TraceSpec(
+                index=column,
+                label=(labels[column] if column < len(labels) else None) or None,
+            )
+            for column in (numeric or range(width))
+            if column != index
+        ]
+        if not traces or len(traces) > MAX_TRACES:
+            continue
+        candidates.append(
+            (
+                scores[index],
+                FileLayout(
+                    orientation="column_major",
+                    x_index=index,
+                    traces=traces,
+                    confidence=scores[index],
+                    **base,
+                ),
+            )
+        )
+
+    # --- row-major --------------------------------------------------------
+    # The transposed case: a row that behaves like an axis while the columns do
+    # not. The first cell of each row is usually its name, so it is excluded
+    # before scoring.
+    if rows and max(scores.values(), default=0.0) < _MIN_AXIS_SCORE:
+        leading_text = all(to_float(cells[0], decimal) is None for cells in rows[:5] if cells)
+        label_index = 0 if leading_text else None
+        for axis_row in range(min(2, len(rows))):
+            series = [
+                to_float(cell, decimal)
+                for position, cell in enumerate(rows[axis_row])
+                if label_index is None or position != label_index
+            ]
+            score = axis_score(series)
+            if score < _MIN_AXIS_SCORE:
+                continue
+            traces = [
+                TraceSpec(index=row, label=None)
+                for row in range(len(rows))
+                if row != axis_row
+            ]
+            if not traces or len(traces) > MAX_TRACES:
+                continue
+            candidates.append(
+                (
+                    score,
+                    FileLayout(
+                        orientation="row_major",
+                        x_index=axis_row,
+                        label_index=label_index,
+                        traces=traces,
+                        confidence=score,
+                        **base,
+                    ),
+                )
+            )
+            break
+
+    candidates.sort(key=lambda item: -item[0])
+    return candidates
+
+
+def detect_layout_by_ranking(raw_bytes: bytes, preview: PreviewGrid) -> FileLayout | None:
+    """Best-ranked candidate that also survives arithmetic, or None."""
+    for score, layout in rank_candidates(raw_bytes, preview):
+        if verify_layout(raw_bytes, layout):
+            logger.info(
+                "Layout resolved deterministically: orientation=%s x_index=%s traces=%d score=%s",
+                layout.orientation,
+                layout.x_index,
+                len(layout.traces),
+                score,
+            )
+            return layout
+    return None
 
 
 def detect_layout_heuristic(preview: PreviewGrid) -> FileLayout | None:
@@ -914,7 +1198,7 @@ async def resolve_layout(
 ) -> tuple[FileLayout | None, str]:
     """Work out this file's layout, cheapest rung first.
 
-    Returns `(layout, source)` where source is one of `"cache"`,
+    Returns `(layout, source)` where source is one of `"cache"`, `"ranked"`,
     `"heuristic"`, `"llm"`, `"llm-wide"`, or `"unresolved"`. `unresolved`
     means the caller should ask the user — it is not an error.
 
@@ -933,6 +1217,18 @@ async def resolve_layout(
     if cached is not None and verify_layout(raw_bytes, cached):
         return cached, "cache"
 
+    # Ranking runs BEFORE the narrow heuristic, not after it. The heuristic
+    # assumes the axis is column 0 and returns layouts that verify while being
+    # wrong: on a file whose real axis is column 2 it reads an index column as
+    # the axis, which sorts and dedupes to a handful of points and passes
+    # `verify_layout` — a 300-point spectrum silently stored as 7. Ranking
+    # asks which column actually behaves like an axis, so it has to win.
+    ranked = detect_layout_by_ranking(raw_bytes, preview)
+    if ranked is not None:
+        store_layout(db, structure_hash, ranked)
+        return ranked, "ranked"
+
+    # Kept as a cheap safety net for anything ranking declines to propose.
     heuristic = detect_layout_heuristic(preview)
     if heuristic is not None and verify_layout(raw_bytes, heuristic):
         store_layout(db, structure_hash, heuristic)

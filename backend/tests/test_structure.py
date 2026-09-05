@@ -267,7 +267,7 @@ def test_verify_rejects_an_out_of_range_trace():
 def test_resolve_layout_stops_at_the_heuristic_without_calling_the_model(db_session):
     with patch.object(structure, "detect_layout_via_llm", AsyncMock()) as llm:
         layout, source = _run(resolve_layout(_column_major(), db_session))
-    assert source == "heuristic"
+    assert source in {"ranked", "heuristic"}
     assert len(layout.traces) == 3
     llm.assert_not_awaited()
 
@@ -282,28 +282,44 @@ def test_resolve_layout_reuses_a_cached_layout(db_session):
     heuristic.assert_not_called()
 
 
+def _unrankable(rows: int = 40) -> bytes:
+    """A file every deterministic rung declines, so the model rungs are
+    reached. No column is monotonic (so ranking has no axis to propose) and
+    one column is text (so the heuristic bails on a mixed export). The tests
+    below are about what happens to a model answer; without this they would
+    silently start testing the ranker instead."""
+    return "\n".join(
+        ",".join(
+            "tag" if column == 1 else str((index * 7 + column * 13) % 23)
+            for column in range(4)
+        )
+        for index in range(rows)
+    ).encode()
+
+
 def test_resolve_layout_falls_through_to_the_model(db_session):
-    raw = _row_major(traces=3, points=30)
+    raw = _unrankable()
     answer = FileLayout(
-        orientation="row_major",
+        orientation="column_major",
         delimiter=",",
         header_rows=0,
         x_index=0,
-        label_index=0,
-        traces=[TraceSpec(index=n + 1, label=f"sample_{n}") for n in range(3)],
+        # Column 1 is the text column, so the model's answer names column 2 —
+        # it has to be verifiable, or this would test rejection instead.
+        traces=[TraceSpec(index=2, label=None)],
         confidence=0.9,
         source="llm",
     )
     with patch.object(structure, "detect_layout_via_llm", AsyncMock(return_value=answer)):
         layout, source = _run(resolve_layout(raw, db_session, filename="map.csv"))
-    assert source == "llm"
-    assert [trace.index for trace in layout.traces] == [1, 2, 3]
+    assert source == "llm", "a file ranking cannot explain must still reach the model"
+    assert layout.source == "llm"
 
 
 def test_resolve_layout_rejects_an_unverifiable_model_answer(db_session):
     """A confident but wrong answer must not survive: it fails verification,
     the wide retry fails too, and the caller is told to ask the user."""
-    raw = _row_major()
+    raw = _unrankable()
     wrong = FileLayout(
         orientation="column_major",
         delimiter=",",
@@ -318,7 +334,7 @@ def test_resolve_layout_rejects_an_unverifiable_model_answer(db_session):
 
 
 def test_resolve_layout_does_not_cache_an_unverified_layout(db_session):
-    raw = _row_major()
+    raw = _unrankable()
     wrong = FileLayout(delimiter=",", traces=[TraceSpec(index=1)], source="llm")
     with patch.object(structure, "detect_layout_via_llm", AsyncMock(return_value=wrong)):
         _run(resolve_layout(raw, db_session))
@@ -554,3 +570,105 @@ def test_detection_still_only_reads_the_sniff_window():
     big = ("\n".join(f"{200 + i * 0.1:.1f}\t{i}.5" for i in range(60_000))).encode()
     assert len(structure.decode_text(big)) <= structure.STRUCTURE_SNIFF_BYTES
     assert len(structure.decode_text(big, whole_file=True)) > structure.STRUCTURE_SNIFF_BYTES
+
+
+# ---------------------------------------------------------------------------
+# deterministic ranking — choosing between layouts that all "verify"
+# ---------------------------------------------------------------------------
+
+
+def test_axis_score_separates_an_axis_from_an_intensity_column():
+    axis = [200.0 + i for i in range(300)]
+    intensity = [float((i * 37) % 900) for i in range(300)]
+    assert structure.axis_score(axis) > 0.9
+    assert structure.axis_score(intensity) == 0.0
+
+
+def test_axis_score_accepts_a_descending_axis():
+    """Descending axes are common; canonicalization sorts them later."""
+    assert structure.axis_score([800.0 - i for i in range(300)]) > 0.9
+
+
+def test_axis_score_ranks_a_timestamp_below_a_real_axis():
+    """Monotonic and evenly spaced, but nowhere near a Raman shift."""
+    stamps = [1.7e9 + i for i in range(300)]
+    axis = [200.0 + i for i in range(300)]
+    assert 0.0 < structure.axis_score(stamps) < structure.axis_score(axis)
+
+
+def test_axis_restarts_finds_block_boundaries_without_a_separator():
+    series = [200.0 + (i % 60) for i in range(180)]
+    assert structure.axis_restarts(series) == [60, 120]
+    assert structure.axis_restarts([200.0 + i for i in range(60)]) == []
+
+
+def test_ranking_picks_the_real_axis_when_it_is_not_column_zero():
+    """The old heuristic assumed column 0 and produced a layout that *verified*
+    while being wrong: an index column sorts and dedupes to a handful of points,
+    so a 300-point spectrum was stored as a few."""
+    raw = (
+        "\n".join(f"{i % 7}\t{(i * 3) % 11}\t{200 + i}.0\t{(i * 37) % 900}.5" for i in range(300))
+    ).encode()
+    layout = structure.detect_layout_by_ranking(raw, build_preview(raw))
+    assert layout is not None
+    assert layout.x_index == 2
+    x, _y = extract_trace(raw, layout, 3)
+    assert x.size == 300, "the whole spectrum, not the few unique values of an index column"
+
+
+def test_ranking_resolves_a_wide_matrix_without_a_model():
+    header = "\t".join(["wavenumber"] + [f"s{i}" for i in range(39)])
+    body = [
+        "\t".join([f"{200 + r}.0"] + [f"{(r * 7 + c) % 900}.0" for c in range(39)])
+        for r in range(300)
+    ]
+    raw = (header + "\n" + "\n".join(body)).encode()
+    layout = structure.detect_layout_by_ranking(raw, build_preview(raw))
+    assert layout is not None
+    assert layout.orientation == "column_major"
+    assert len(layout.traces) == 39
+
+
+def test_ranking_resolves_a_row_major_file_without_a_model():
+    raw = (
+        "wavenumber," + ",".join(f"{200 + i}.0" for i in range(200)) + "\n"
+        + "\n".join(
+            f"s{t}," + ",".join(f"{(i * 7 + t) % 900}.5" for i in range(200)) for t in range(3)
+        )
+    ).encode()
+    layout = structure.detect_layout_by_ranking(raw, build_preview(raw))
+    assert layout is not None
+    assert layout.orientation == "row_major"
+    assert len(layout.traces) == 3
+
+
+@pytest.mark.parametrize("separator", ["\n", "\n\n"])
+def test_ranking_resolves_stacked_blocks_with_or_without_a_blank_line(separator):
+    """A blank line is the easy case. An export that simply concatenates its
+    blocks has no marker at all except the axis starting over — and the old
+    pipeline read those two blocks as one spectrum."""
+    block = "\n".join(f"{200 + i}.0\t{100 + (i * 7) % 50}.5" for i in range(60))
+    raw = (block + separator + block).encode()
+    layout = structure.detect_layout_by_ranking(raw, build_preview(raw))
+    assert layout is not None
+    assert layout.orientation == "stacked_blocks"
+    assert len(layout.traces) == 2
+    for index in range(2):
+        x, _y = extract_trace(raw, layout, index)
+        assert x.size == 60
+
+
+def test_ranking_declines_rather_than_guessing():
+    """A wrong deterministic answer is worse than an LLM call, because nothing
+    downstream questions it."""
+    raw = _unrankable()
+    assert structure.rank_candidates(raw, build_preview(raw)) == []
+    assert structure.detect_layout_by_ranking(raw, build_preview(raw)) is None
+
+
+def test_ranked_layouts_are_still_gated_on_arithmetic():
+    """Ranking proposes; `verify_layout` disposes. Every candidate returned by
+    the ladder has been applied to the real bytes."""
+    raw = _column_major(traces=3)
+    layout = structure.detect_layout_by_ranking(raw, build_preview(raw))
+    assert layout is not None and verify_layout(raw, layout)

@@ -157,6 +157,10 @@ class FileLayout(BaseModel):
     # Column (row_major) carrying each trace's label. None means unlabelled.
     label_index: int | None = Field(default=None, ge=0, lt=100_000)
     traces: list[TraceSpec] = Field(default_factory=list)
+    # `stacked_blocks` only. Rows per block, when the blocks are simply
+    # concatenated with nothing between them. None means the blocks are
+    # separated by blank lines and can be found without counting.
+    block_rows: int | None = Field(default=None, ge=2, lt=10_000_000)
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     source: Literal["heuristic", "llm", "user"] = "heuristic"
 
